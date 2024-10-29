@@ -1,8 +1,9 @@
-FROM --platform=$TARGETPLATFORM alpine:latest
+FROM alpine:latest
 
+ARG TARGETARCH
 WORKDIR /app
 
-COPY proxy-go.$TARGETARCH /app/proxy-go
+COPY proxy-go.${TARGETARCH} /app/proxy-go
 
 RUN mkdir -p /app/data && \
     chmod +x /app/proxy-go && \
