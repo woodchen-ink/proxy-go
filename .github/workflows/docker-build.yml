@@ -73,10 +73,17 @@ jobs:
           mv proxy-go-amd64/proxy-go-amd64 proxy-go-amd64/proxy-go
           mv proxy-go-arm64/proxy-go-arm64 proxy-go-arm64/proxy-go
 
+          - name: Create Docker build context
+          run: |
+            mkdir -p docker-context
+            cp Dockerfile docker-context/
+            cp proxy-go-amd64/proxy-go-amd64 docker-context/proxy-go.amd64
+            cp proxy-go-arm64/proxy-go-arm64 docker-context/proxy-go.arm64
+  
       - name: Build and push Docker images
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: docker-context
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
