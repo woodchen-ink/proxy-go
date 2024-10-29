@@ -1,0 +1,9 @@
+services:
+  proxy:
+    image: woodchen/proxy-go:latest
+    container_name: proxy-go
+    ports:
+      - "3334:80"
+    volumes:
+      - ./data:/app/data
+    restart: always

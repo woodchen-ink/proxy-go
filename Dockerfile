@@ -1,7 +1,9 @@
-FROM alpine:latest
+FROM --platform=$TARGETPLATFORM alpine:latest
 
 WORKDIR /app
-COPY proxy-go /app/
+
+COPY proxy-go.$TARGETARCH /app/proxy-go
+
 RUN mkdir -p /app/data && \
     chmod +x /app/proxy-go && \
     apk add --no-cache ca-certificates tzdata && \
