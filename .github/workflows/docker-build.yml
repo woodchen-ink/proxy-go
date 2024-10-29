@@ -83,4 +83,17 @@ jobs:
           tags: |
             woodchen/proxy-go:latest
             woodchen/proxy-go:${{ steps.date.outputs.date }}
+      - name: Execute deployment commands
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: root
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            docker pull woodchen/proxy-go:latest
+
+            docker stop proxy-go || true
+            docker rm proxy-go || true
+
+            docker compose -f /opt/1panel/docker/compose/proxy-go/docker-compose.yml up -d
 
