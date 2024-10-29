@@ -2,6 +2,8 @@
 
 A simple reverse proxy server written in Go.
 
+使用方法: https://q58.org/t/topic/165?u=wood
+
 ## Configuration
 
 Create a `config.json` file in the `data` directory:
@@ -14,3 +16,5 @@ Create a `config.json` file in the `data` directory:
     }
 }
 ```
+
+
