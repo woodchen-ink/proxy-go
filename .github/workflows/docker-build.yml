@@ -67,18 +67,12 @@ jobs:
         id: date
         run: echo "::set-output name=date::$(date +'%Y%m%d')"
 
-      - name: Prepare binaries
+      - name: Create Docker build context
         run: |
-          chmod +x proxy-go-*/proxy-go-*
-          mv proxy-go-amd64/proxy-go-amd64 proxy-go-amd64/proxy-go
-          mv proxy-go-arm64/proxy-go-arm64 proxy-go-arm64/proxy-go
-
-          - name: Create Docker build context
-          run: |
-            mkdir -p docker-context
-            cp Dockerfile docker-context/
-            cp proxy-go-amd64/proxy-go-amd64 docker-context/proxy-go.amd64
-            cp proxy-go-arm64/proxy-go-arm64 docker-context/proxy-go.arm64
+          mkdir -p docker-context
+          cp Dockerfile docker-context/
+          cp proxy-go-amd64/proxy-go-amd64 docker-context/proxy-go.amd64
+          cp proxy-go-arm64/proxy-go-arm64 docker-context/proxy-go.arm64
   
       - name: Build and push Docker images
         uses: docker/build-push-action@v6
