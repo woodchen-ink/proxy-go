@@ -5,11 +5,11 @@
   },
   "Compression": {
     "Gzip": {
-      "Enabled": true,
+      "Enabled": false,
       "Level": 6
     },
     "Brotli": {
-      "Enabled": true,
+      "Enabled": false,
       "Level": 4
     }
   }
