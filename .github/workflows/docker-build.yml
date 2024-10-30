@@ -63,9 +63,6 @@ jobs:
           username: woodchen
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Get current date
-        id: date
-        run: echo "::set-output name=date::$(date +'%Y%m%d')"
 
       - name: Create Docker build context
         run: |
@@ -82,7 +79,7 @@ jobs:
           push: true
           tags: |
             woodchen/proxy-go:latest
-            woodchen/proxy-go:${{ steps.date.outputs.date }}
+
       - name: Execute deployment commands
         uses: appleboy/ssh-action@master
         with:

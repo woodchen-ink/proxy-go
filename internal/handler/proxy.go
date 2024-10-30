@@ -97,16 +97,8 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 设置接受压缩内容的header
-	proxyReq.Header.Set("Accept-Encoding", r.Header.Get("Accept-Encoding"))
-
 	// 发送代理请求
-	client := &http.Client{
-		Transport: &http.Transport{
-			// 禁用自动处理压缩，让我们能完整传递压缩内容
-			DisableCompression: true,
-		},
-	}
+	client := &http.Client{}
 	resp, err := client.Do(proxyReq)
 	if err != nil {
 		http.Error(w, "Error forwarding request", http.StatusBadGateway)
@@ -116,23 +108,8 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// 复制所有响应头
-	for k, vv := range resp.Header {
-		for _, v := range vv {
-			w.Header().Add(k, v)
-		}
-	}
-
-	// 确保Content-Type正确设置
-	contentType := resp.Header.Get("Content-Type")
-	if contentType != "" {
-		w.Header().Set("Content-Type", contentType)
-	}
-
-	// 保持原始的Content-Encoding
-	if encoding := resp.Header.Get("Content-Encoding"); encoding != "" {
-		w.Header().Set("Content-Encoding", encoding)
-	}
+	// 复制响应 header
+	copyHeader(w.Header(), resp.Header)
 
 	// 设置响应状态码
 	w.WriteHeader(resp.StatusCode)
@@ -161,18 +138,17 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else {
+		// 如果不支持 Flusher，使用普通的 io.Copy
 		bytesCopied, err = io.Copy(w, resp.Body)
 		if err != nil {
 			log.Printf("Error copying response: %v", err)
 		}
 	}
 
-	// 记录访问日志，添加内容类型信息
-	log.Printf("[%s] %s %s -> %s -> %d (%d bytes) [%v] Content-Type: %s, Encoding: %s",
+	// 记录访问日志
+	log.Printf("[%s] %s %s -> %s -> %d (%d bytes) [%v]",
 		getClientIP(r), r.Method, r.URL.Path, targetURL,
-		resp.StatusCode, bytesCopied, time.Since(startTime),
-		resp.Header.Get("Content-Type"),
-		resp.Header.Get("Content-Encoding"))
+		resp.StatusCode, bytesCopied, time.Since(startTime))
 }
 
 func copyHeader(dst, src http.Header) {
