@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -59,6 +60,15 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	targetPath := strings.TrimPrefix(r.URL.Path, matchedPrefix)
 	targetURL := targetBase + targetPath
 
+	// 解析目标 URL 以获取 host
+	parsedURL, err := url.Parse(targetURL)
+	if err != nil {
+		http.Error(w, "Error parsing target URL", http.StatusInternalServerError)
+		log.Printf("[%s] %s %s -> 500 (error parsing URL: %v) [%v]",
+			getClientIP(r), r.Method, r.URL.Path, err, time.Since(startTime))
+		return
+	}
+
 	// 创建新的请求
 	proxyReq, err := http.NewRequest(r.Method, targetURL, r.Body)
 	if err != nil {
@@ -71,9 +81,21 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 复制原始请求的 header
 	copyHeader(proxyReq.Header, r.Header)
 
-	// 设置一些必要的头部
-	proxyReq.Header.Set("X-Forwarded-Host", r.Host)
+	// 设置必要的头部，使用目标站点的 Host
+	proxyReq.Host = parsedURL.Host
+	proxyReq.Header.Set("Host", parsedURL.Host)
 	proxyReq.Header.Set("X-Real-IP", getClientIP(r))
+	proxyReq.Header.Set("X-Forwarded-Host", r.Host)
+	proxyReq.Header.Set("X-Forwarded-Proto", r.URL.Scheme)
+
+	// 添加或更新 X-Forwarded-For
+	if clientIP := getClientIP(r); clientIP != "" {
+		if prior := proxyReq.Header.Get("X-Forwarded-For"); prior != "" {
+			proxyReq.Header.Set("X-Forwarded-For", prior+", "+clientIP)
+		} else {
+			proxyReq.Header.Set("X-Forwarded-For", clientIP)
+		}
+	}
 
 	// 发送代理请求
 	client := &http.Client{}
