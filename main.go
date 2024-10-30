@@ -45,14 +45,18 @@ func main() {
 
 	// 创建主处理器
 	mainHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/cdnjs") {
-			// CDNJS 请求使用 CDNJS 中间件处理
-			handler := middleware.CDNJSMiddleware(cdnjsConfigs)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-			handler.ServeHTTP(w, r)
-		} else {
-			// 非 CDNJS 请求使用普通代理处理器
-			proxyHandler.ServeHTTP(w, r)
+		// 检查是否匹配任何固定路径配置
+		for _, cfg := range cdnjsConfigs {
+			if strings.HasPrefix(r.URL.Path, cfg.Path) {
+				// 使用 CDNJS 中间件处理
+				handler := middleware.CDNJSMiddleware(cdnjsConfigs)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+				handler.ServeHTTP(w, r)
+				return
+			}
 		}
+
+		// 如果没有匹配的固定路径，使用普通代理处理器
+		proxyHandler.ServeHTTP(w, r)
 	})
 
 	// 对非 CDNJS 请求添加压缩中间件
