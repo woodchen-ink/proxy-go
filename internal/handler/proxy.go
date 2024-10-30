@@ -58,7 +58,22 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 构建目标 URL
 	targetPath := strings.TrimPrefix(r.URL.Path, matchedPrefix)
-	targetURL := targetBase + targetPath
+	// URL 解码，然后重新编码，确保特殊字符被正确处理
+	decodedPath, err := url.QueryUnescape(targetPath)
+	if err != nil {
+		http.Error(w, "Error decoding path", http.StatusInternalServerError)
+		log.Printf("[%s] %s %s -> 500 (error decoding path: %v) [%v]",
+			getClientIP(r), r.Method, r.URL.Path, err, time.Since(startTime))
+		return
+	}
+
+	// 重新编码路径，保留 '/'
+	parts := strings.Split(decodedPath, "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	encodedPath := strings.Join(parts, "/")
+	targetURL := targetBase + encodedPath
 
 	// 解析目标 URL 以获取 host
 	parsedURL, err := url.Parse(targetURL)
@@ -98,8 +113,13 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 发送代理请求
-	client := &http.Client{}
+	client := &http.Client{
+		Transport: &http.Transport{
+			DisableCompression: true, // 禁用自动压缩
+		},
+	}
 	resp, err := client.Do(proxyReq)
+
 	if err != nil {
 		http.Error(w, "Error forwarding request", http.StatusBadGateway)
 		log.Printf("[%s] %s %s -> 502 (proxy error: %v) [%v]",
@@ -108,7 +128,13 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// 复制响应 header
+	// 设置正确的 Content-Type
+	if strings.HasSuffix(strings.ToLower(decodedPath), ".mp4") {
+		w.Header().Set("Content-Type", "video/mp4")
+	} else if ct := resp.Header.Get("Content-Type"); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+
 	copyHeader(w.Header(), resp.Header)
 
 	// 设置响应状态码
