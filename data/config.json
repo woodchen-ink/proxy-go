@@ -12,5 +12,17 @@
       "Enabled": false,
       "Level": 4
     }
-  }
+  },
+  "FixedPaths": [
+      {
+          "Path": "/cdnjs",
+          "TargetHost": "cdnjs.cloudflare.com",
+          "TargetURL": "https://cdnjs.cloudflare.com"
+      },
+      {
+          "Path": "/jsdelivr",
+          "TargetHost": "cdn.jsdelivr.net",
+          "TargetURL": "https://cdn.jsdelivr.net"
+      }
+  ]
 }

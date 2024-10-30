@@ -5,17 +5,17 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"proxy-go/internal/config"
 	"strings"
 )
 
-type CDNJSConfig struct {
-	Path       string // 固定路径，例如 "/cdnjs"
-	TargetHost string // 目标主机，例如 "cdnjs.cloudflare.com"
-	TargetURL  string // 目标URL，例如 "https://cdnjs.cloudflare.com"
+type FixedPathConfig struct {
+	Path       string `json:"Path"`
+	TargetHost string `json:"TargetHost"`
+	TargetURL  string `json:"TargetURL"`
 }
 
-// CDNJSMiddleware 处理固定路径的代理
-func CDNJSMiddleware(configs []CDNJSConfig) func(http.Handler) http.Handler {
+func FixedPathProxyMiddleware(configs []config.FixedPathConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// 检查是否匹配任何固定路径

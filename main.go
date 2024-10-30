@@ -29,37 +29,40 @@ func main() {
 	// 创建代理处理器
 	proxyHandler := handler.NewProxyHandler(cfg.MAP)
 
-	// 创建 CDNJS 中间件配置
-	cdnjsConfigs := []middleware.CDNJSConfig{
+	// 创建处理器链
+	handlers := []struct {
+		pathPrefix string
+		handler    http.Handler
+	}{
+		// 固定路径处理器
 		{
-			Path:       "/cdnjs",
-			TargetHost: "cdnjs.cloudflare.com",
-			TargetURL:  "https://cdnjs.cloudflare.com",
+			pathPrefix: "", // 空字符串表示检查所有 FixedPaths 配置
+			handler:    middleware.FixedPathProxyMiddleware(cfg.FixedPaths)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})),
 		},
+		// 可以在这里添加其他固定路径处理器
+		// {
+		//     pathPrefix: "/something",
+		//     handler:    someOtherMiddleware(config)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})),
+		// },
+		// 默认代理处理器放在最后
 		{
-			Path:       "/jsdelivr",
-			TargetHost: "cdn.jsdelivr.net",
-			TargetURL:  "https://cdn.jsdelivr.net",
+			pathPrefix: "",
+			handler:    proxyHandler,
 		},
 	}
 
 	// 创建主处理器
 	mainHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 检查是否匹配任何固定路径配置
-		for _, cfg := range cdnjsConfigs {
-			if strings.HasPrefix(r.URL.Path, cfg.Path) {
-				// 使用 CDNJS 中间件处理
-				handler := middleware.CDNJSMiddleware(cdnjsConfigs)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-				handler.ServeHTTP(w, r)
+		// 遍历所有处理器
+		for _, h := range handlers {
+			if h.pathPrefix == "" || strings.HasPrefix(r.URL.Path, h.pathPrefix) {
+				h.handler.ServeHTTP(w, r)
 				return
 			}
 		}
-
-		// 如果没有匹配的固定路径，使用普通代理处理器
-		proxyHandler.ServeHTTP(w, r)
 	})
 
-	// 对非 CDNJS 请求添加压缩中间件
+	// 添加压缩中间件
 	var handler http.Handler = mainHandler
 	if cfg.Compression.Gzip.Enabled || cfg.Compression.Brotli.Enabled {
 		handler = middleware.CompressionMiddleware(compManager)(handler)
