@@ -6,4 +6,6 @@ services:
       - "3334:80"
     volumes:
       - ./data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
     restart: always
