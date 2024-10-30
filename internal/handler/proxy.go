@@ -3,9 +3,15 @@ package handler
 import (
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
+	"time"
+)
+
+const (
+	defaultBufferSize = 32 * 1024 // 32KB
 )
 
 type ProxyHandler struct {
@@ -19,10 +25,14 @@ func NewProxyHandler(pathMap map[string]string) *ProxyHandler {
 }
 
 func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+
 	// 处理根路径请求
 	if r.URL.Path == "/" {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "Welcome to CZL proxy.")
+		log.Printf("[%s] %s %s -> %d (root path) [%v]",
+			getClientIP(r), r.Method, r.URL.Path, http.StatusOK, time.Since(startTime))
 		return
 	}
 
@@ -40,6 +50,8 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 如果没有匹配的路径，返回 404
 	if matchedPrefix == "" {
 		http.NotFound(w, r)
+		log.Printf("[%s] %s %s -> 404 (not found) [%v]",
+			getClientIP(r), r.Method, r.URL.Path, time.Since(startTime))
 		return
 	}
 
@@ -51,6 +63,8 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxyReq, err := http.NewRequest(r.Method, targetURL, r.Body)
 	if err != nil {
 		http.Error(w, "Error creating proxy request", http.StatusInternalServerError)
+		log.Printf("[%s] %s %s -> 500 (error: %v) [%v]",
+			getClientIP(r), r.Method, r.URL.Path, err, time.Since(startTime))
 		return
 	}
 
@@ -66,6 +80,8 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	resp, err := client.Do(proxyReq)
 	if err != nil {
 		http.Error(w, "Error forwarding request", http.StatusBadGateway)
+		log.Printf("[%s] %s %s -> 502 (proxy error: %v) [%v]",
+			getClientIP(r), r.Method, r.URL.Path, err, time.Since(startTime))
 		return
 	}
 	defer resp.Body.Close()
@@ -76,11 +92,41 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 设置响应状态码
 	w.WriteHeader(resp.StatusCode)
 
-	// 复制响应体
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		// 这里只记录错误，不返回给客户端，因为响应头已经发送
-		fmt.Printf("Error copying response: %v\n", err)
+	// 使用流式传输复制响应体
+	var bytesCopied int64
+	if f, ok := w.(http.Flusher); ok {
+		buf := make([]byte, defaultBufferSize)
+		for {
+			n, rerr := resp.Body.Read(buf)
+			if n > 0 {
+				bytesCopied += int64(n)
+				_, werr := w.Write(buf[:n])
+				if werr != nil {
+					log.Printf("Error writing response: %v", werr)
+					return
+				}
+				f.Flush()
+			}
+			if rerr == io.EOF {
+				break
+			}
+			if rerr != nil {
+				log.Printf("Error reading response: %v", rerr)
+				break
+			}
+		}
+	} else {
+		// 如果不支持 Flusher，使用普通的 io.Copy
+		bytesCopied, err = io.Copy(w, resp.Body)
+		if err != nil {
+			log.Printf("Error copying response: %v", err)
+		}
 	}
+
+	// 记录访问日志
+	log.Printf("[%s] %s %s -> %s -> %d (%d bytes) [%v]",
+		getClientIP(r), r.Method, r.URL.Path, targetURL,
+		resp.StatusCode, bytesCopied, time.Since(startTime))
 }
 
 func copyHeader(dst, src http.Header) {
@@ -92,14 +138,12 @@ func copyHeader(dst, src http.Header) {
 }
 
 func getClientIP(r *http.Request) string {
-	// 检查各种可能的请求头
 	if ip := r.Header.Get("X-Real-IP"); ip != "" {
 		return ip
 	}
 	if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
 		return strings.Split(ip, ",")[0]
 	}
-	// 从RemoteAddr获取
 	if ip, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return ip
 	}
