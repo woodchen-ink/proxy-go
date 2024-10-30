@@ -9,6 +9,7 @@ import (
 	"proxy-go/internal/config"
 	"proxy-go/internal/handler"
 	"proxy-go/internal/middleware"
+	"strings"
 	"syscall"
 )
 
@@ -19,7 +20,7 @@ func main() {
 		log.Fatal("Error loading config:", err)
 	}
 
-	// 创建压缩管理器，直接使用配置文件中的压缩配置
+	// 创建压缩管理器
 	compManager := compression.NewManager(compression.Config{
 		Gzip:   compression.CompressorConfig(cfg.Compression.Gzip),
 		Brotli: compression.CompressorConfig(cfg.Compression.Brotli),
@@ -28,8 +29,34 @@ func main() {
 	// 创建代理处理器
 	proxyHandler := handler.NewProxyHandler(cfg.MAP)
 
-	// 添加中间件
-	var handler http.Handler = proxyHandler
+	// 创建 CDNJS 中间件配置
+	cdnjsConfigs := []middleware.CDNJSConfig{
+		{
+			Path:       "/cdnjs",
+			TargetHost: "cdnjs.cloudflare.com",
+			TargetURL:  "https://cdnjs.cloudflare.com",
+		},
+		{
+			Path:       "/jsdelivr",
+			TargetHost: "cdn.jsdelivr.net",
+			TargetURL:  "https://cdn.jsdelivr.net",
+		},
+	}
+
+	// 创建主处理器
+	mainHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/cdnjs") {
+			// CDNJS 请求使用 CDNJS 中间件处理
+			handler := middleware.CDNJSMiddleware(cdnjsConfigs)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+			handler.ServeHTTP(w, r)
+		} else {
+			// 非 CDNJS 请求使用普通代理处理器
+			proxyHandler.ServeHTTP(w, r)
+		}
+	})
+
+	// 对非 CDNJS 请求添加压缩中间件
+	var handler http.Handler = mainHandler
 	if cfg.Compression.Gzip.Enabled || cfg.Compression.Brotli.Enabled {
 		handler = middleware.CompressionMiddleware(compManager)(handler)
 	}
