@@ -128,13 +128,6 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// 设置正确的 Content-Type
-	if strings.HasSuffix(strings.ToLower(decodedPath), ".mp4") {
-		w.Header().Set("Content-Type", "video/mp4")
-	} else if ct := resp.Header.Get("Content-Type"); ct != "" {
-		w.Header().Set("Content-Type", ct)
-	}
-
 	copyHeader(w.Header(), resp.Header)
 
 	// 设置响应状态码
@@ -172,9 +165,9 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 记录访问日志
-	log.Printf("[%s] %s %s -> %s -> %d (%d bytes) [%v]",
+	log.Printf("[%s] %s %s -> %s -> %d (%s) [%v]",
 		getClientIP(r), r.Method, r.URL.Path, targetURL,
-		resp.StatusCode, bytesCopied, time.Since(startTime))
+		resp.StatusCode, formatBytes(bytesCopied), time.Since(startTime))
 }
 
 func copyHeader(dst, src http.Header) {
@@ -196,4 +189,20 @@ func getClientIP(r *http.Request) string {
 		return ip
 	}
 	return r.RemoteAddr
+}
+
+func formatBytes(bytes int64) string {
+	const (
+		MB = 1024 * 1024
+		KB = 1024
+	)
+
+	switch {
+	case bytes >= MB:
+		return fmt.Sprintf("%.2f MB", float64(bytes)/MB)
+	case bytes >= KB:
+		return fmt.Sprintf("%.2f KB", float64(bytes)/KB)
+	default:
+		return fmt.Sprintf("%d Bytes", bytes)
+	}
 }
