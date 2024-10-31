@@ -31,23 +31,27 @@ func main() {
 
 	// 创建处理器链
 	handlers := []struct {
-		pathPrefix string
-		handler    http.Handler
+		matcher func(*http.Request) bool
+		handler http.Handler
 	}{
 		// 固定路径处理器
 		{
-			pathPrefix: "", // 空字符串表示检查所有 FixedPaths 配置
-			handler:    middleware.FixedPathProxyMiddleware(cfg.FixedPaths)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})),
+			matcher: func(r *http.Request) bool {
+				for _, fp := range cfg.FixedPaths {
+					if strings.HasPrefix(r.URL.Path, fp.Path) {
+						return true
+					}
+				}
+				return false
+			},
+			handler: middleware.FixedPathProxyMiddleware(cfg.FixedPaths)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})),
 		},
-		// 可以在这里添加其他固定路径处理器
-		// {
-		//     pathPrefix: "/something",
-		//     handler:    someOtherMiddleware(config)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})),
-		// },
-		// 默认代理处理器放在最后
+		// 默认代理处理器
 		{
-			pathPrefix: "",
-			handler:    proxyHandler,
+			matcher: func(r *http.Request) bool {
+				return true // 总是匹配，作为默认处理器
+			},
+			handler: proxyHandler,
 		},
 	}
 
@@ -55,7 +59,7 @@ func main() {
 	mainHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// 遍历所有处理器
 		for _, h := range handlers {
-			if h.pathPrefix == "" || strings.HasPrefix(r.URL.Path, h.pathPrefix) {
+			if h.matcher(r) {
 				h.handler.ServeHTTP(w, r)
 				return
 			}
