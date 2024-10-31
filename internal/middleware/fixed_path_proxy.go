@@ -2,12 +2,11 @@ package middleware
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"proxy-go/internal/config"
+	"proxy-go/internal/utils"
 	"strings"
 	"syscall"
 	"time"
@@ -34,7 +33,7 @@ func FixedPathProxyMiddleware(configs []config.FixedPathConfig) func(http.Handle
 					if err != nil {
 						http.Error(w, "Error creating proxy request", http.StatusInternalServerError)
 						log.Printf("[%s] %s %s -> 500 (error creating request: %v) [%v]",
-							getClientIP(r), r.Method, r.URL.Path, err, time.Since(startTime))
+							utils.GetClientIP(r), r.Method, r.URL.Path, err, time.Since(startTime))
 						return
 					}
 
@@ -48,7 +47,7 @@ func FixedPathProxyMiddleware(configs []config.FixedPathConfig) func(http.Handle
 					// 设置必要的头部
 					proxyReq.Host = cfg.TargetHost
 					proxyReq.Header.Set("Host", cfg.TargetHost)
-					proxyReq.Header.Set("X-Real-IP", getClientIP(r))
+					proxyReq.Header.Set("X-Real-IP", utils.GetClientIP(r))
 					proxyReq.Header.Set("X-Scheme", r.URL.Scheme)
 
 					// 发送代理请求
@@ -57,7 +56,7 @@ func FixedPathProxyMiddleware(configs []config.FixedPathConfig) func(http.Handle
 					if err != nil {
 						http.Error(w, "Error forwarding request", http.StatusBadGateway)
 						log.Printf("[%s] %s %s -> 502 (proxy error: %v) [%v]",
-							getClientIP(r), r.Method, r.URL.Path, err, time.Since(startTime))
+							utils.GetClientIP(r), r.Method, r.URL.Path, err, time.Since(startTime))
 						return
 					}
 					defer resp.Body.Close()
@@ -75,13 +74,13 @@ func FixedPathProxyMiddleware(configs []config.FixedPathConfig) func(http.Handle
 					// 复制响应体
 					bytesCopied, err := io.Copy(w, resp.Body)
 					if err := handleCopyError(err); err != nil {
-						log.Printf("[%s] Error copying response: %v", getClientIP(r), err)
+						log.Printf("[%s] Error copying response: %v", utils.GetClientIP(r), err)
 					}
 
 					// 记录成功的请求
-					log.Printf("[%s] %s %s -> %s -> %d (%s) [%v]",
-						getClientIP(r), r.Method, r.URL.Path, targetURL,
-						resp.StatusCode, formatBytes(bytesCopied), time.Since(startTime))
+					log.Printf("[%s] %s %s%s -> %s -> %d (%s) [%v]",
+						utils.GetClientIP(r), r.Method, r.URL.Path, utils.GetRequestSource(r), targetURL,
+						resp.StatusCode, utils.FormatBytes(bytesCopied), time.Since(startTime))
 
 					return
 				}
@@ -91,20 +90,6 @@ func FixedPathProxyMiddleware(configs []config.FixedPathConfig) func(http.Handle
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-// getClientIP 获取客户端IP
-func getClientIP(r *http.Request) string {
-	if ip := r.Header.Get("X-Real-IP"); ip != "" {
-		return ip
-	}
-	if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
-		return strings.Split(ip, ",")[0]
-	}
-	if ip, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return ip
-	}
-	return r.RemoteAddr
 }
 
 func handleCopyError(err error) error {
@@ -121,21 +106,4 @@ func handleCopyError(err error) error {
 	}
 
 	return err
-}
-
-// formatBytes 将字节数转换为可读的格式（MB/KB/Bytes）
-func formatBytes(bytes int64) string {
-	const (
-		MB = 1024 * 1024
-		KB = 1024
-	)
-
-	switch {
-	case bytes >= MB:
-		return fmt.Sprintf("%.2f MB", float64(bytes)/MB)
-	case bytes >= KB:
-		return fmt.Sprintf("%.2f KB", float64(bytes)/KB)
-	default:
-		return fmt.Sprintf("%d Bytes", bytes)
-	}
 }

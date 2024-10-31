@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/url"
+	"proxy-go/internal/utils"
 	"strings"
 	"time"
 )
@@ -33,7 +33,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "Welcome to CZL proxy.")
 		log.Printf("[%s] %s %s -> %d (root path) [%v]",
-			getClientIP(r), r.Method, r.URL.Path, http.StatusOK, time.Since(startTime))
+			utils.GetClientIP(r), r.Method, r.URL.Path, http.StatusOK, time.Since(startTime))
 		return
 	}
 
@@ -52,7 +52,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if matchedPrefix == "" {
 		http.NotFound(w, r)
 		log.Printf("[%s] %s %s -> 404 (not found) [%v]",
-			getClientIP(r), r.Method, r.URL.Path, time.Since(startTime))
+			utils.GetClientIP(r), r.Method, r.URL.Path, time.Since(startTime))
 		return
 	}
 
@@ -63,7 +63,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "Error decoding path", http.StatusInternalServerError)
 		log.Printf("[%s] %s %s -> 500 (error decoding path: %v) [%v]",
-			getClientIP(r), r.Method, r.URL.Path, err, time.Since(startTime))
+			utils.GetClientIP(r), r.Method, r.URL.Path, err, time.Since(startTime))
 		return
 	}
 
@@ -80,7 +80,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "Error parsing target URL", http.StatusInternalServerError)
 		log.Printf("[%s] %s %s -> 500 (error parsing URL: %v) [%v]",
-			getClientIP(r), r.Method, r.URL.Path, err, time.Since(startTime))
+			utils.GetClientIP(r), r.Method, r.URL.Path, err, time.Since(startTime))
 		return
 	}
 
@@ -89,7 +89,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "Error creating proxy request", http.StatusInternalServerError)
 		log.Printf("[%s] %s %s -> 500 (error: %v) [%v]",
-			getClientIP(r), r.Method, r.URL.Path, err, time.Since(startTime))
+			utils.GetClientIP(r), r.Method, r.URL.Path, err, time.Since(startTime))
 		return
 	}
 
@@ -99,12 +99,12 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 设置必要的头部，使用目标站点的 Host
 	proxyReq.Host = parsedURL.Host
 	proxyReq.Header.Set("Host", parsedURL.Host)
-	proxyReq.Header.Set("X-Real-IP", getClientIP(r))
+	proxyReq.Header.Set("X-Real-IP", utils.GetClientIP(r))
 	proxyReq.Header.Set("X-Forwarded-Host", r.Host)
 	proxyReq.Header.Set("X-Forwarded-Proto", r.URL.Scheme)
 
 	// 添加或更新 X-Forwarded-For
-	if clientIP := getClientIP(r); clientIP != "" {
+	if clientIP := utils.GetClientIP(r); clientIP != "" {
 		if prior := proxyReq.Header.Get("X-Forwarded-For"); prior != "" {
 			proxyReq.Header.Set("X-Forwarded-For", prior+", "+clientIP)
 		} else {
@@ -123,7 +123,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "Error forwarding request", http.StatusBadGateway)
 		log.Printf("[%s] %s %s -> 502 (proxy error: %v) [%v]",
-			getClientIP(r), r.Method, r.URL.Path, err, time.Since(startTime))
+			utils.GetClientIP(r), r.Method, r.URL.Path, err, time.Since(startTime))
 		return
 	}
 	defer resp.Body.Close()
@@ -165,9 +165,9 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 记录访问日志
-	log.Printf("[%s] %s %s -> %s -> %d (%s) [%v]",
-		getClientIP(r), r.Method, r.URL.Path, targetURL,
-		resp.StatusCode, formatBytes(bytesCopied), time.Since(startTime))
+	log.Printf("[%s] %s %s%s -> %s -> %d (%s) [%v]",
+		utils.GetClientIP(r), r.Method, r.URL.Path, utils.GetRequestSource(r), targetURL,
+		resp.StatusCode, utils.FormatBytes(bytesCopied), time.Since(startTime))
 }
 
 func copyHeader(dst, src http.Header) {
@@ -175,34 +175,5 @@ func copyHeader(dst, src http.Header) {
 		for _, v := range vv {
 			dst.Add(k, v)
 		}
-	}
-}
-
-func getClientIP(r *http.Request) string {
-	if ip := r.Header.Get("X-Real-IP"); ip != "" {
-		return ip
-	}
-	if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
-		return strings.Split(ip, ",")[0]
-	}
-	if ip, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return ip
-	}
-	return r.RemoteAddr
-}
-
-func formatBytes(bytes int64) string {
-	const (
-		MB = 1024 * 1024
-		KB = 1024
-	)
-
-	switch {
-	case bytes >= MB:
-		return fmt.Sprintf("%.2f MB", float64(bytes)/MB)
-	case bytes >= KB:
-		return fmt.Sprintf("%.2f KB", float64(bytes)/KB)
-	default:
-		return fmt.Sprintf("%d Bytes", bytes)
 	}
 }
