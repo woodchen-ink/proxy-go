@@ -165,15 +165,15 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 记录访问日志
-	log.Printf("%s | %3d | %12s | %15s | %-6s | %-50s -> %s%s",
-		time.Now().Format("2006/01/02 - 15:04:05"), // 时间戳
-		resp.StatusCode,           // 状态码，占3位
-		time.Since(startTime),     // 处理时间，占12位
-		utils.GetClientIP(r),      // IP地址，占15位
-		r.Method,                  // HTTP方法，左对齐占6位
-		r.URL.Path,                // 请求路径，左对齐占50位
-		targetURL,                 // 目标URL
-		utils.GetRequestSource(r), // 请求来源
+	log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | %-50s -> %s",
+		r.Method,                       // HTTP方法，左对齐占6位
+		resp.StatusCode,                // 状态码，占3位
+		time.Since(startTime),          // 处理时间，占12位
+		utils.GetClientIP(r),           // IP地址，占15位
+		utils.FormatBytes(bytesCopied), // 传输大小，占10位
+		utils.GetRequestSource(r),      // 请求来源
+		r.URL.Path,                     // 请求路径，左对齐占50位
+		targetURL,                      // 目标URL
 	)
 
 }
