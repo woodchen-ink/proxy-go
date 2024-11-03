@@ -78,9 +78,16 @@ func FixedPathProxyMiddleware(configs []config.FixedPathConfig) func(http.Handle
 					}
 
 					// 记录成功的请求
-					log.Printf("[%s] %s %s%s -> %s -> %d (%s) [%v]",
-						utils.GetClientIP(r), r.Method, r.URL.Path, utils.GetRequestSource(r), targetURL,
-						resp.StatusCode, utils.FormatBytes(bytesCopied), time.Since(startTime))
+					log.Printf("%s | %3d | %10s | %12s | %15s | %-6s | %-50s -> %-50s",
+						time.Now().Format("2006/01/02 - 15:04:05"), // 时间戳
+						resp.StatusCode,                // 状态码
+						utils.FormatBytes(bytesCopied), // 传输大小
+						time.Since(startTime),          // 处理时间
+						utils.GetClientIP(r),           // IP地址
+						r.Method,                       // HTTP方法
+						r.URL.Path,                     // 原始请求路径
+						targetURL,                      // 目标URL
+					)
 
 					return
 				}
