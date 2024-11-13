@@ -2,9 +2,11 @@
 package handler
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"proxy-go/internal/utils"
 	"strings"
 	"time"
@@ -23,10 +25,8 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH")
 	w.Header().Set("Access-Control-Allow-Headers", "*")
-	// 如果需要允许发送凭证（cookies等），可以设置：
-	// w.Header().Set("Access-Control-Allow-Credentials", "true")
 
-	// 处理 OPTIONS 请求（预检请求）
+	// 处理 OPTIONS 请求
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
 		log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | CORS Preflight",
@@ -36,16 +36,35 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 从路径中提取实际URL
-	// 例如：/mirror/https://example.com/path 变成 https://example.com/path
 	actualURL := strings.TrimPrefix(r.URL.Path, "/mirror/")
 	if actualURL == "" || actualURL == r.URL.Path {
 		http.Error(w, "Invalid URL", http.StatusBadRequest)
+		log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | Invalid URL",
+			r.Method, http.StatusBadRequest, time.Since(startTime),
+			utils.GetClientIP(r), "-", r.URL.Path)
 		return
 	}
 
-	// 添加原始请求中的查询参数和片段
 	if r.URL.RawQuery != "" {
 		actualURL += "?" + r.URL.RawQuery
+	}
+
+	// 解析目标 URL 以获取 host
+	parsedURL, err := url.Parse(actualURL)
+	if err != nil {
+		http.Error(w, "Invalid URL", http.StatusBadRequest)
+		log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | Parse URL error: %v",
+			r.Method, http.StatusBadRequest, time.Since(startTime),
+			utils.GetClientIP(r), "-", actualURL, err)
+		return
+	}
+
+	// 确保有 scheme
+	scheme := parsedURL.Scheme
+	if scheme == "" {
+		scheme = "https"
+		actualURL = "https://" + actualURL
+		parsedURL, _ = url.Parse(actualURL)
 	}
 
 	// 创建新的请求
@@ -61,11 +80,24 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 复制原始请求的header
 	copyHeader(proxyReq.Header, r.Header)
 
+	// 设置必要的请求头
+	proxyReq.Header.Set("Origin", fmt.Sprintf("%s://%s", scheme, parsedURL.Host))
+	proxyReq.Header.Set("Referer", fmt.Sprintf("%s://%s/", scheme, parsedURL.Host))
+	if ua := r.Header.Get("User-Agent"); ua != "" {
+		proxyReq.Header.Set("User-Agent", ua)
+	} else {
+		proxyReq.Header.Set("User-Agent", "Mozilla/5.0")
+	}
+	proxyReq.Header.Set("Host", parsedURL.Host)
+	proxyReq.Host = parsedURL.Host
+
 	// 发送请求
 	client := &http.Client{
 		Transport: &http.Transport{
 			DisableCompression: true,
+			// 可以添加其他传输设置，如TLS配置等
 		},
+		Timeout: 30 * time.Second,
 	}
 	resp, err := client.Do(proxyReq)
 	if err != nil {
@@ -76,9 +108,6 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
-
-	// 设置CORS头
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	// 复制响应头
 	copyHeader(w.Header(), resp.Header)
