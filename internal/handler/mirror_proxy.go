@@ -19,6 +19,22 @@ func NewMirrorProxyHandler() *MirrorProxyHandler {
 func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 
+	// 设置 CORS 头
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH")
+	w.Header().Set("Access-Control-Allow-Headers", "*")
+	// 如果需要允许发送凭证（cookies等），可以设置：
+	// w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+	// 处理 OPTIONS 请求（预检请求）
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | CORS Preflight",
+			r.Method, http.StatusOK, time.Since(startTime),
+			utils.GetClientIP(r), "-", r.URL.Path)
+		return
+	}
+
 	// 从路径中提取实际URL
 	// 例如：/mirror/https://example.com/path 变成 https://example.com/path
 	actualURL := strings.TrimPrefix(r.URL.Path, "/mirror/")
