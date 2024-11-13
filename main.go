@@ -27,6 +27,7 @@ func main() {
 	})
 
 	// 创建代理处理器
+	mirrorHandler := handler.NewMirrorProxyHandler()
 	proxyHandler := handler.NewProxyHandler(cfg.MAP)
 
 	// 创建处理器链
@@ -34,6 +35,13 @@ func main() {
 		matcher func(*http.Request) bool
 		handler http.Handler
 	}{
+		// Mirror代理处理器
+		{
+			matcher: func(r *http.Request) bool {
+				return strings.HasPrefix(r.URL.Path, "/mirror/")
+			},
+			handler: mirrorHandler,
+		},
 		// 固定路径处理器
 		{
 			matcher: func(r *http.Request) bool {
