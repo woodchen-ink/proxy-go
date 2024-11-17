@@ -79,9 +79,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ext := strings.ToLower(path.Ext(decodedPath))
 		if ext != "" {
 			ext = ext[1:] // 移除开头的点
-			if alternativeTarget, exists := pathConfig.ExtensionMap[ext]; exists {
-				targetBase = alternativeTarget
-			}
+			targetBase = pathConfig.GetTargetForExt(ext)
 		}
 	}
 

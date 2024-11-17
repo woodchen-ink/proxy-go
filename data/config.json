@@ -3,8 +3,8 @@
     "/path1": {
       "DefaultTarget": "https://path1.com/path/path/path",
       "ExtensionMap": {
-        "jpg": "https://path1-img.com/path/path/path",
-        "png": "https://path1-img.com/path/path/path"
+        "jpg,png,avif": "https://path1-img.com/path/path/path",
+        "mp4,webm": "https://path1-video.com/path/path/path"
       }
     },
     "/path2": "https://path2.com",

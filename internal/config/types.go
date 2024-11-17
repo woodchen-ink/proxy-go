@@ -1,6 +1,9 @@
 package config
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 type Config struct {
 	MAP         map[string]PathConfig `json:"MAP"` // 改为使用PathConfig
@@ -9,8 +12,9 @@ type Config struct {
 }
 
 type PathConfig struct {
-	DefaultTarget string            `json:"DefaultTarget"` // 默认回源地址
-	ExtensionMap  map[string]string `json:"ExtensionMap"`  // 特定后缀的回源地址
+	DefaultTarget   string            `json:"DefaultTarget"` // 默认回源地址
+	ExtensionMap    map[string]string `json:"ExtensionMap"`  // 特定后缀的回源地址
+	processedExtMap map[string]string // 内部使用，存储拆分后的映射
 }
 
 type CompressionConfig struct {
@@ -51,9 +55,11 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 		// 尝试作为字符串解析
 		var strValue string
 		if err := json.Unmarshal(raw, &strValue); err == nil {
-			c.MAP[key] = PathConfig{
+			pathConfig := PathConfig{
 				DefaultTarget: strValue,
 			}
+			pathConfig.ProcessExtensionMap() // 处理扩展名映射
+			c.MAP[key] = pathConfig
 			continue
 		}
 
@@ -62,6 +68,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 		if err := json.Unmarshal(raw, &pathConfig); err != nil {
 			return err
 		}
+		pathConfig.ProcessExtensionMap() // 处理扩展名映射
 		c.MAP[key] = pathConfig
 	}
 
@@ -70,4 +77,33 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	c.FixedPaths = temp.FixedPaths
 
 	return nil
+}
+
+// 添加处理扩展名映射的方法
+func (p *PathConfig) ProcessExtensionMap() {
+	if p.ExtensionMap == nil {
+		return
+	}
+
+	p.processedExtMap = make(map[string]string)
+	for exts, target := range p.ExtensionMap {
+		// 分割扩展名
+		for _, ext := range strings.Split(exts, ",") {
+			ext = strings.TrimSpace(ext) // 移除可能的空格
+			if ext != "" {
+				p.processedExtMap[ext] = target
+			}
+		}
+	}
+}
+
+// 添加获取目标URL的方法
+func (p *PathConfig) GetTargetForExt(ext string) string {
+	if p.processedExtMap == nil {
+		p.ProcessExtensionMap()
+	}
+	if target, exists := p.processedExtMap[ext]; exists {
+		return target
+	}
+	return p.DefaultTarget
 }
