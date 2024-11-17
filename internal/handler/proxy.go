@@ -112,37 +112,37 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 特别处理图片请求
 	// if utils.IsImageRequest(r.URL.Path) {
-	// 	// 获取 Accept 头
+	// 	// 设置优化的 Accept 头
 	// 	accept := r.Header.Get("Accept")
-
-	// 	// 根据 Accept 头设置合适的图片格式
-	// 	if strings.Contains(accept, "image/avif") {
-	// 		proxyReq.Header.Set("Accept", "image/avif")
-	// 	} else if strings.Contains(accept, "image/webp") {
-	// 		proxyReq.Header.Set("Accept", "image/webp")
+	// 	if accept != "" {
+	// 		proxyReq.Header.Set("Accept", accept)
+	// 	} else {
+	// 		proxyReq.Header.Set("Accept", "image/avif,image/webp,image/jpeg,image/png,*/*;q=0.8")
 	// 	}
 
 	// 	// 设置 Cloudflare 特定的头部
-	// 	proxyReq.Header.Set("CF-Image-Format", "auto") // 让 Cloudflare 根据 Accept 头自动选择格式
+	// 	proxyReq.Header.Set("CF-Accept-Content", "image/avif,image/webp")
+	// 	proxyReq.Header.Set("CF-Optimize-Images", "on")
+
+	// 	// 删除可能影响缓存的头部
+	// 	proxyReq.Header.Del("If-None-Match")
+	// 	proxyReq.Header.Del("If-Modified-Since")
+	// 	proxyReq.Header.Set("Cache-Control", "no-cache")
 	// }
 	// 特别处理图片请求
 	if utils.IsImageRequest(r.URL.Path) {
-		// 设置优化的 Accept 头
+		// 获取 Accept 头
 		accept := r.Header.Get("Accept")
-		if accept != "" {
-			proxyReq.Header.Set("Accept", accept)
-		} else {
-			proxyReq.Header.Set("Accept", "image/avif,image/webp,image/jpeg,image/png,*/*;q=0.8")
+
+		// 根据 Accept 头设置合适的图片格式
+		if strings.Contains(accept, "image/avif") {
+			proxyReq.Header.Set("Accept", "image/avif")
+		} else if strings.Contains(accept, "image/webp") {
+			proxyReq.Header.Set("Accept", "image/webp")
 		}
 
 		// 设置 Cloudflare 特定的头部
-		proxyReq.Header.Set("CF-Accept-Content", "image/avif,image/webp")
-		proxyReq.Header.Set("CF-Optimize-Images", "on")
-
-		// 删除可能影响缓存的头部
-		proxyReq.Header.Del("If-None-Match")
-		proxyReq.Header.Del("If-Modified-Since")
-		proxyReq.Header.Set("Cache-Control", "no-cache")
+		proxyReq.Header.Set("CF-Image-Format", "auto") // 让 Cloudflare 根据 Accept 头自动选择格式
 	}
 
 	// 设置其他必要的头部
