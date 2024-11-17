@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 )
 
@@ -43,4 +44,18 @@ func FormatBytes(bytes int64) string {
 	default:
 		return fmt.Sprintf("%d Bytes", bytes)
 	}
+}
+
+// 判断是否是图片请求
+func IsImageRequest(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	imageExts := map[string]bool{
+		".jpg":  true,
+		".jpeg": true,
+		".png":  true,
+		".gif":  true,
+		".webp": true,
+		".avif": true,
+	}
+	return imageExts[ext]
 }
