@@ -11,6 +11,7 @@ A simple reverse proxy server written in Go.
 3. 回源Host修改
 4. 大文件使用流式传输, 小文件直接提供
 5. 可以按照文件后缀名代理不同站点, 方便图片处理等
+6. 适配Cloudflare Images的图片自适应功能, 支持`format=auto`
 
 
 ## TIPS
