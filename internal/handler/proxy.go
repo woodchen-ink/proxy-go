@@ -107,47 +107,35 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 复制所有原始请求头
+	// 复制原始请求头
 	copyHeader(proxyReq.Header, r.Header)
 
-	// 特别确保这些重要的头部被正确传递
-	if accept := r.Header.Get("Accept"); accept != "" {
-		proxyReq.Header.Set("Accept", accept)
-	}
-	// 其他可能影响图片优化的重要头部
-	importantHeaders := []string{
-		"Accept-Encoding",
-		"User-Agent",
-		"Viewport-Width",
-		"Width",
-		"DPR",
-		"Device-Memory",
-		"Save-Data",
-		"Sec-CH-DPR",
-		"Sec-CH-Width",
-		"Sec-CH-Viewport-Width",
-		"Sec-CH-Device-Memory",
-	}
-	for _, header := range importantHeaders {
-		if value := r.Header.Get(header); value != "" {
-			proxyReq.Header.Set(header, value)
+	// 特别处理图片请求
+	if utils.IsImageRequest(r.URL.Path) {
+		// 设置优化的 Accept 头
+		accept := r.Header.Get("Accept")
+		if accept != "" {
+			proxyReq.Header.Set("Accept", accept)
+		} else {
+			proxyReq.Header.Set("Accept", "image/avif,image/webp,image/jpeg,image/png,*/*;q=0.8")
 		}
+
+		// 设置 Cloudflare 特定的头部
+		proxyReq.Header.Set("CF-Accept-Content", "image/avif,image/webp")
+		proxyReq.Header.Set("CF-Optimize-Images", "on")
+
+		// 删除可能影响缓存的头部
+		proxyReq.Header.Del("If-None-Match")
+		proxyReq.Header.Del("If-Modified-Since")
+		proxyReq.Header.Set("Cache-Control", "no-cache")
 	}
 
-	// 设置必要的代理头部
+	// 设置其他必要的头部
 	proxyReq.Host = parsedURL.Host
 	proxyReq.Header.Set("Host", parsedURL.Host)
 	proxyReq.Header.Set("X-Real-IP", utils.GetClientIP(r))
 	proxyReq.Header.Set("X-Forwarded-Host", r.Host)
 	proxyReq.Header.Set("X-Forwarded-Proto", r.URL.Scheme)
-
-	// 如果是图片请求，添加 Cloudflare-specific 头部
-	if utils.IsImageRequest(r.URL.Path) {
-		// 保持原始的 Accept 头部，让 Cloudflare 可以根据客户端支持的格式来优化
-		if accept := r.Header.Get("Accept"); accept != "" {
-			proxyReq.Header.Set("Accept", accept)
-		}
-	}
 
 	// 添加或更新 X-Forwarded-For
 	if clientIP := utils.GetClientIP(r); clientIP != "" {
