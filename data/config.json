@@ -1,7 +1,16 @@
 {
   "MAP": {
-    "/path1": "https://path1.com/path/path/path",
-    "/path2": "https://path2.com"
+    "/path1": {
+      "DefaultTarget": "https://path1.com/path/path/path",
+      "ExtensionMap": {
+        "jpg": "https://path1-img.com/path/path/path",
+        "png": "https://path1-img.com/path/path/path"
+      }
+    },
+    "/path2": "https://path2.com",
+    "/path3": {
+      "DefaultTarget": "https://path3.com"
+    }
   },
   "Compression": {
     "Gzip": {
@@ -14,15 +23,15 @@
     }
   },
   "FixedPaths": [
-      {
-          "Path": "/cdnjs",
-          "TargetHost": "cdnjs.cloudflare.com",
-          "TargetURL": "https://cdnjs.cloudflare.com"
-      },
-      {
-          "Path": "/jsdelivr",
-          "TargetHost": "cdn.jsdelivr.net",
-          "TargetURL": "https://cdn.jsdelivr.net"
-      }
+    {
+      "Path": "/cdnjs",
+      "TargetHost": "cdnjs.cloudflare.com",
+      "TargetURL": "https://cdnjs.cloudflare.com"
+    },
+    {
+      "Path": "/jsdelivr",
+      "TargetHost": "cdn.jsdelivr.net",
+      "TargetURL": "https://cdn.jsdelivr.net"
+    }
   ]
 }

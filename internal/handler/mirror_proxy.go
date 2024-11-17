@@ -1,4 +1,3 @@
-// handler/mirror_proxy.go
 package handler
 
 import (

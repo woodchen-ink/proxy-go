@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"path"
+	"proxy-go/internal/config"
 	"proxy-go/internal/utils"
 	"strings"
 	"time"
@@ -16,12 +18,18 @@ const (
 )
 
 type ProxyHandler struct {
-	pathMap map[string]string
+	pathMap map[string]config.PathConfig
 }
 
-func NewProxyHandler(pathMap map[string]string) *ProxyHandler {
+func NewProxyHandler(pathMap map[string]interface{}) *ProxyHandler {
+	convertedMap := make(map[string]config.PathConfig)
+
+	for path, target := range pathMap {
+		convertedMap[path] = config.NewPathConfig(target)
+	}
+
 	return &ProxyHandler{
-		pathMap: pathMap,
+		pathMap: convertedMap,
 	}
 }
 
@@ -39,11 +47,11 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 查找匹配的代理路径
 	var matchedPrefix string
-	var targetBase string
-	for prefix, target := range h.pathMap {
+	var pathConfig config.PathConfig
+	for prefix, cfg := range h.pathMap {
 		if strings.HasPrefix(r.URL.Path, prefix) {
 			matchedPrefix = prefix
-			targetBase = target
+			pathConfig = cfg
 			break
 		}
 	}
@@ -58,6 +66,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 构建目标 URL
 	targetPath := strings.TrimPrefix(r.URL.Path, matchedPrefix)
+
 	// URL 解码，然后重新编码，确保特殊字符被正确处理
 	decodedPath, err := url.QueryUnescape(targetPath)
 	if err != nil {
@@ -65,6 +74,20 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[%s] %s %s -> 500 (error decoding path: %v) [%v]",
 			utils.GetClientIP(r), r.Method, r.URL.Path, err, time.Since(startTime))
 		return
+	}
+
+	// 确定目标基础URL
+	targetBase := pathConfig.DefaultTarget
+
+	// 检查文件扩展名
+	if pathConfig.ExtensionMap != nil {
+		ext := strings.ToLower(path.Ext(decodedPath))
+		if ext != "" {
+			ext = ext[1:] // 移除开头的点
+			if alternativeTarget, exists := pathConfig.ExtensionMap[ext]; exists {
+				targetBase = alternativeTarget
+			}
+		}
 	}
 
 	// 重新编码路径，保留 '/'
