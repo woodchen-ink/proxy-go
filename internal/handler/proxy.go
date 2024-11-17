@@ -143,11 +143,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 发送代理请求
-	client := &http.Client{
-		Transport: &http.Transport{
-			DisableCompression: true, // 禁用自动压缩
-		},
-	}
+	client := &http.Client{}
 	resp, err := client.Do(proxyReq)
 
 	if err != nil {
@@ -159,6 +155,9 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	copyHeader(w.Header(), resp.Header)
+
+	// 删除严格的 CSP
+	w.Header().Del("Content-Security-Policy")
 
 	// 设置响应状态码
 	w.WriteHeader(resp.StatusCode)
