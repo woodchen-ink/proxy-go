@@ -21,15 +21,10 @@ type ProxyHandler struct {
 	pathMap map[string]config.PathConfig
 }
 
-func NewProxyHandler(pathMap map[string]interface{}) *ProxyHandler {
-	convertedMap := make(map[string]config.PathConfig)
-
-	for path, target := range pathMap {
-		convertedMap[path] = config.NewPathConfig(target)
-	}
-
+// 修改参数类型
+func NewProxyHandler(pathMap map[string]config.PathConfig) *ProxyHandler {
 	return &ProxyHandler{
-		pathMap: convertedMap,
+		pathMap: pathMap,
 	}
 }
 
