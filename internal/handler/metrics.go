@@ -64,6 +64,10 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
+	totalRequests := atomic.LoadInt64(&h.metrics.totalRequests)
+	totalErrors := atomic.LoadInt64(&h.metrics.totalErrors)
+	uptime := time.Since(h.startTime)
+
 	// 获取状态码统计
 	statusStats := make(map[string]int64)
 	for i, v := range h.metrics.statusStats {
@@ -74,41 +78,34 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 	var pathMetrics []PathMetrics
 	h.metrics.pathStats.Range(func(key, value interface{}) bool {
 		stats := value.(*PathStats)
+		if stats.requests.Load() == 0 {
+			return true
+		}
 		pathMetrics = append(pathMetrics, PathMetrics{
 			Path:             key.(string),
 			RequestCount:     stats.requests.Load(),
 			ErrorCount:       stats.errors.Load(),
-			AvgLatency:       formatDuration(time.Duration(stats.latencySum.Load() / stats.requests.Load())),
+			AvgLatency:       formatDuration(time.Duration(stats.latencySum.Load()) / time.Duration(stats.requests.Load())),
 			BytesTransferred: stats.bytes.Load(),
 		})
 		return len(pathMetrics) < 10
 	})
 
-	// 获取最近的请求
-	var recentReqs []RequestLog
-	h.recentRequests.RLock()
-	cursor := h.recentRequests.cursor.Load()
-	for i := 0; i < 10; i++ {
-		idx := (cursor - int64(i) + 1000) % 1000
-		if h.recentRequests.items[idx] != nil {
-			recentReqs = append(recentReqs, *h.recentRequests.items[idx])
-		}
-	}
-	h.recentRequests.RUnlock()
-
 	metrics := Metrics{
-		Uptime:          time.Since(h.startTime).String(),
-		ActiveRequests:  atomic.LoadInt64(&h.metrics.activeRequests),
-		TotalRequests:   atomic.LoadInt64(&h.metrics.totalRequests),
-		TotalErrors:     atomic.LoadInt64(&h.metrics.totalErrors),
-		ErrorRate:       float64(h.metrics.totalErrors) / float64(h.metrics.totalRequests),
-		NumGoroutine:    runtime.NumGoroutine(),
-		MemoryUsage:     formatBytes(m.Alloc),
-		TotalBytes:      h.metrics.totalBytes.Load(),
-		BytesPerSecond:  float64(h.metrics.totalBytes.Load()) / time.Since(h.startTime).Seconds(),
-		StatusCodeStats: statusStats,
-		TopPaths:        pathMetrics,
-		RecentRequests:  recentReqs,
+		Uptime:         uptime.String(),
+		ActiveRequests: atomic.LoadInt64(&h.metrics.activeRequests),
+		TotalRequests:  totalRequests,
+		TotalErrors:    totalErrors,
+		ErrorRate:      getErrorRate(totalErrors, totalRequests),
+		NumGoroutine:   runtime.NumGoroutine(),
+		MemoryUsage:    formatBytes(m.Alloc),
+
+		TotalBytes:        h.metrics.totalBytes.Load(),
+		BytesPerSecond:    float64(h.metrics.totalBytes.Load()) / max(uptime.Seconds(), 1),
+		RequestsPerSecond: float64(totalRequests) / max(uptime.Seconds(), 1),
+		StatusCodeStats:   statusStats,
+		TopPaths:          pathMetrics,
+		RecentRequests:    getRecentRequests(h),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -444,6 +441,18 @@ var metricsTemplate = `
             return date.toLocaleTimeString();
         }
 
+        function formatLatency(nanoseconds) {
+            if (nanoseconds < 1000) {
+                return nanoseconds + ' ns';
+            } else if (nanoseconds < 1000000) {
+                return (nanoseconds / 1000).toFixed(2) + ' µs';
+            } else if (nanoseconds < 1000000000) {
+                return (nanoseconds / 1000000).toFixed(2) + ' ms';
+            } else {
+                return (nanoseconds / 1000000000).toFixed(2) + ' s';
+            }
+        }
+
         function updateMetrics(data) {
             // 更新现有指标
             document.getElementById('uptime').textContent = data.uptime;
@@ -492,7 +501,7 @@ var metricsTemplate = `
                     '<td>' + formatDate(req.Time) + '</td>' +
                     '<td>' + req.Path + '</td>' +
                     '<td><span class="status-badge status-' + Math.floor(req.Status/100) + 'xx">' + req.Status + '</span></td>' +
-                    '<td>' + req.Latency + '</td>' +
+                    '<td>' + formatLatency(req.Latency) + '</td>' +
                     '<td>' + formatBytes(req.BytesSent) + '</td>' +
                     '<td>' + req.ClientIP + '</td>' +
                 '</tr>'
@@ -589,4 +598,35 @@ func (h *ProxyHandler) MetricsAuthHandler(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]string{
 		"token": token,
 	})
+}
+
+// 添加辅助函数
+func getErrorRate(errors, total int64) float64 {
+	if total == 0 {
+		return 0
+	}
+	return float64(errors) / float64(total)
+}
+
+func getRecentRequests(h *ProxyHandler) []RequestLog {
+	var recentReqs []RequestLog
+	h.recentRequests.RLock()
+	defer h.recentRequests.RUnlock()
+
+	cursor := h.recentRequests.cursor.Load()
+	for i := 0; i < 10; i++ {
+		idx := (cursor - int64(i) + 1000) % 1000
+		if h.recentRequests.items[idx] != nil {
+			recentReqs = append(recentReqs, *h.recentRequests.items[idx])
+		}
+	}
+	return recentReqs
+}
+
+// 添加辅助函数
+func max(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
 }
