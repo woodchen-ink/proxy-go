@@ -293,6 +293,31 @@ var metricsTemplate = `
             right: 140px;
             color: #666;
         }
+        /* 添加表格样式 */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+        }
+        th, td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+        th {
+            background: #f8f9fa;
+            color: #666;
+        }
+        .status-badge {
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            color: white;
+        }
+        .status-2xx { background: #28a745; }
+        .status-3xx { background: #17a2b8; }
+        .status-4xx { background: #ffc107; }
+        .status-5xx { background: #dc3545; }
     </style>
 </head>
 <body>
@@ -346,6 +371,56 @@ var metricsTemplate = `
         </div>
     </div>
 
+    <div class="card">
+        <h2>流量统计</h2>
+        <div class="metric">
+            <span class="metric-label">总传输字节</span>
+            <span class="metric-value" id="totalBytes"></span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">每秒传输</span>
+            <span class="metric-value" id="bytesPerSecond"></span>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>状态码统计</h2>
+        <div id="statusCodes"></div>
+    </div>
+
+    <div class="card">
+        <h2>热门路径 (Top 10)</h2>
+        <table id="topPaths">
+            <thead>
+                <tr>
+                    <th>路径</th>
+                    <th>请求数</th>
+                    <th>错误数</th>
+                    <th>平均延迟</th>
+                    <th>传输大小</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>最近请求</h2>
+        <table id="recentRequests">
+            <thead>
+                <tr>
+                    <th>时间</th>
+                    <th>路径</th>
+                    <th>状态</th>
+                    <th>延迟</th>
+                    <th>大小</th>
+                    <th>客户端IP</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
     <span id="lastUpdate"></span>
     <button class="refresh" onclick="refreshMetrics()">刷新</button>
 
@@ -354,6 +429,77 @@ var metricsTemplate = `
         const token = localStorage.getItem('metricsToken');
         if (!token) {
             window.location.href = '/metrics/ui';
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function formatDate(dateStr) {
+            const date = new Date(dateStr);
+            return date.toLocaleTimeString();
+        }
+
+        function updateMetrics(data) {
+            // 更新现有指标
+            document.getElementById('uptime').textContent = data.uptime;
+            document.getElementById('activeRequests').textContent = data.active_requests;
+            document.getElementById('totalRequests').textContent = data.total_requests;
+            document.getElementById('totalErrors').textContent = data.total_errors;
+            document.getElementById('errorRate').textContent = (data.error_rate * 100).toFixed(2) + '%';
+            document.getElementById('numGoroutine').textContent = data.num_goroutine;
+            document.getElementById('memoryUsage').textContent = data.memory_usage;
+            document.getElementById('avgResponseTime').textContent = data.avg_response_time;
+            document.getElementById('requestsPerSecond').textContent = data.requests_per_second.toFixed(2);
+            
+            // 更新流量统计
+            document.getElementById('totalBytes').textContent = formatBytes(data.total_bytes);
+            document.getElementById('bytesPerSecond').textContent = formatBytes(data.bytes_per_second) + '/s';
+
+            // 更新状态码统计
+            const statusCodesHtml = Object.entries(data.status_code_stats)
+                .map(([status, count]) => {
+                    const statusClass = 'status-' + status.charAt(0) + 'xx';
+                    return '<div class="metric">' +
+                        '<span class="metric-label">' +
+                        '<span class="status-badge ' + statusClass + '">' + status + '</span>' +
+                        '</span>' +
+                        '<span class="metric-value">' + count + '</span>' +
+                        '</div>';
+                })
+                .join('');
+            document.getElementById('statusCodes').innerHTML = statusCodesHtml;
+
+            // 更新热门路径
+            const topPathsHtml = data.top_paths.map(path => 
+                '<tr>' +
+                    '<td>' + path.path + '</td>' +
+                    '<td>' + path.request_count + '</td>' +
+                    '<td>' + path.error_count + '</td>' +
+                    '<td>' + path.avg_latency + '</td>' +
+                    '<td>' + formatBytes(path.bytes_transferred) + '</td>' +
+                '</tr>'
+            ).join('');
+            document.querySelector('#topPaths tbody').innerHTML = topPathsHtml;
+
+            // 更新最近请求
+            const recentRequestsHtml = data.recent_requests.map(req => 
+                '<tr>' +
+                    '<td>' + formatDate(req.Time) + '</td>' +
+                    '<td>' + req.Path + '</td>' +
+                    '<td><span class="status-badge status-' + Math.floor(req.Status/100) + 'xx">' + req.Status + '</span></td>' +
+                    '<td>' + req.Latency + '</td>' +
+                    '<td>' + formatBytes(req.BytesSent) + '</td>' +
+                    '<td>' + req.ClientIP + '</td>' +
+                '</tr>'
+            ).join('');
+            document.querySelector('#recentRequests tbody').innerHTML = recentRequestsHtml;
+
+            document.getElementById('lastUpdate').textContent = '最后更新: ' + new Date().toLocaleTimeString();
         }
 
         function refreshMetrics() {
@@ -375,19 +521,6 @@ var metricsTemplate = `
                 if (data) updateMetrics(data);
             })
             .catch(error => console.error('Error:', error));
-        }
-
-        function updateMetrics(data) {
-            document.getElementById('uptime').textContent = data.uptime;
-            document.getElementById('activeRequests').textContent = data.active_requests;
-            document.getElementById('totalRequests').textContent = data.total_requests;
-            document.getElementById('totalErrors').textContent = data.total_errors;
-            document.getElementById('errorRate').textContent = (data.error_rate * 100).toFixed(2) + '%';
-            document.getElementById('numGoroutine').textContent = data.num_goroutine;
-            document.getElementById('memoryUsage').textContent = data.memory_usage;
-            document.getElementById('avgResponseTime').textContent = data.avg_response_time;
-            document.getElementById('requestsPerSecond').textContent = data.requests_per_second.toFixed(2);
-            document.getElementById('lastUpdate').textContent = '最后更新: ' + new Date().toLocaleTimeString();
         }
 
         // 初始加载
