@@ -109,7 +109,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 确定���标基础URL
+	// 确定标基础URL
 	targetBase := pathConfig.DefaultTarget
 
 	// 检查文件扩展名
@@ -228,7 +228,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		written, _ := w.Write(body)
-		collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(start), int64(written), utils.GetClientIP(r))
+		collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(start), int64(written), utils.GetClientIP(r), r)
 	} else {
 		// 大响应使用流式传输
 		var bytesCopied int64
@@ -274,7 +274,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			targetURL,                      // 目标URL
 		)
 
-		collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(start), bytesCopied, utils.GetClientIP(r))
+		collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(start), bytesCopied, utils.GetClientIP(r), r)
 	}
 }
 

@@ -32,6 +32,7 @@ type Metrics struct {
 	LatencyPercentiles map[string]float64    `json:"latency_percentiles"`
 	TopPaths           []metrics.PathMetrics `json:"top_paths"`
 	RecentRequests     []metrics.RequestLog  `json:"recent_requests"`
+	TopReferers        []metrics.PathMetrics `json:"top_referers"`
 }
 
 func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +60,7 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 		StatusCodeStats:     stats["status_code_stats"].(map[string]int64),
 		TopPaths:            stats["top_paths"].([]metrics.PathMetrics),
 		RecentRequests:      stats["recent_requests"].([]metrics.RequestLog),
+		TopReferers:         stats["top_referers"].([]metrics.PathMetrics),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -259,68 +261,79 @@ var metricsTemplate = `
         .status-3xx { background: #17a2b8; }
         .status-4xx { background: #ffc107; }
         .status-5xx { background: #dc3545; }
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .grid-container .card {
+            margin-bottom: 0;
+        }
     </style>
 </head>
 <body>
     <h1>Proxy-Go Metrics</h1>
 
-    <div class="card">
-        <h2>基础指标</h2>
-        <div class="metric">
-            <span class="metric-label">运行时间</span>
-            <span class="metric-value" id="uptime"></span>
+    <div class="grid-container">
+        <div class="card">
+            <h2>基础指标</h2>
+            <div class="metric">
+                <span class="metric-label">运行时间</span>
+                <span class="metric-value" id="uptime"></span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">当前活跃请求</span>
+                <span class="metric-value" id="activeRequests"></span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">总请求数</span>
+                <span class="metric-value" id="totalRequests"></span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">错误数</span>
+                <span class="metric-value" id="totalErrors"></span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">错误率</span>
+                <span class="metric-value" id="errorRate"></span>
+            </div>
         </div>
-        <div class="metric">
-            <span class="metric-label">当前活跃请求</span>
-            <span class="metric-value" id="activeRequests"></span>
-        </div>
-        <div class="metric">
-            <span class="metric-label">总请求数</span>
-            <span class="metric-value" id="totalRequests"></span>
-        </div>
-        <div class="metric">
-            <span class="metric-label">错误数</span>
-            <span class="metric-value" id="totalErrors"></span>
-        </div>
-        <div class="metric">
-            <span class="metric-label">错误率</span>
-            <span class="metric-value" id="errorRate"></span>
-        </div>
-    </div>
 
-    <div class="card">
-        <h2>系统指标</h2>
-        <div class="metric">
-            <span class="metric-label">Goroutine数量</span>
-            <span class="metric-value" id="numGoroutine"></span>
+        <div class="card">
+            <h2>系统指标</h2>
+            <div class="metric">
+                <span class="metric-label">Goroutine数量</span>
+                <span class="metric-value" id="numGoroutine"></span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">内存使用</span>
+                <span class="metric-value" id="memoryUsage"></span>
+            </div>
         </div>
-        <div class="metric">
-            <span class="metric-label">内存使用</span>
-            <span class="metric-value" id="memoryUsage"></span>
-        </div>
-    </div>
 
-    <div class="card">
-        <h2>性能指标</h2>
-        <div class="metric">
-            <span class="metric-label">平均响应时间</span>
-            <span class="metric-value" id="avgResponseTime"></span>
+        <div class="card">
+            <h2>性能指标</h2>
+            <div class="metric">
+                <span class="metric-label">平均响应时间</span>
+                <span class="metric-value" id="avgResponseTime"></span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">每秒请求数</span>
+                <span class="metric-value" id="requestsPerSecond"></span>
+            </div>
         </div>
-        <div class="metric">
-            <span class="metric-label">每秒请求数</span>
-            <span class="metric-value" id="requestsPerSecond"></span>
-        </div>
-    </div>
 
-    <div class="card">
-        <h2>流量统计</h2>
-        <div class="metric">
-            <span class="metric-label">总传输字节</span>
-            <span class="metric-value" id="totalBytes"></span>
-        </div>
-        <div class="metric">
-            <span class="metric-label">每秒传输</span>
-            <span class="metric-value" id="bytesPerSecond"></span>
+        <div class="card">
+            <h2>流量统计</h2>
+            <div class="metric">
+                <span class="metric-label">总传输字节</span>
+                <span class="metric-value" id="totalBytes"></span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">每秒传输</span>
+                <span class="metric-value" id="bytesPerSecond"></span>
+            </div>
         </div>
     </div>
 
@@ -356,6 +369,19 @@ var metricsTemplate = `
                     <th>延迟</th>
                     <th>大小</th>
                     <th>客户端IP</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>热门引用来源 (Top 10)</h2>
+        <table id="topReferers">
+            <thead>
+                <tr>
+                    <th>来源</th>
+                    <th>请求数</th>
                 </tr>
             </thead>
             <tbody></tbody>
@@ -451,6 +477,15 @@ var metricsTemplate = `
                 '</tr>'
             ).join('');
             document.querySelector('#recentRequests tbody').innerHTML = recentRequestsHtml;
+
+            // 更新热门引用来源
+            const topReferersHtml = data.top_referers.map(referer => 
+                '<tr>' +
+                    '<td>' + referer.path + '</td>' +
+                    '<td>' + referer.request_count + '</td>' +
+                '</tr>'
+            ).join('');
+            document.querySelector('#topReferers tbody').innerHTML = topReferersHtml;
 
             document.getElementById('lastUpdate').textContent = '最后更新: ' + new Date().toLocaleTimeString();
         }

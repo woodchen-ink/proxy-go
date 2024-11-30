@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"fmt"
+	"net/http"
 	"runtime"
 	"sort"
 	"sync"
@@ -17,6 +18,7 @@ type Collector struct {
 	totalBytes     atomic.Int64
 	latencySum     atomic.Int64
 	pathStats      sync.Map
+	refererStats   sync.Map
 	statusStats    [6]atomic.Int64
 	latencyBuckets [10]atomic.Int64
 	recentRequests struct {
@@ -45,7 +47,7 @@ func (c *Collector) EndRequest() {
 	atomic.AddInt64(&c.activeRequests, -1)
 }
 
-func (c *Collector) RecordRequest(path string, status int, latency time.Duration, bytes int64, clientIP string) {
+func (c *Collector) RecordRequest(path string, status int, latency time.Duration, bytes int64, clientIP string, r *http.Request) {
 	// 更新总请求数
 	atomic.AddInt64(&c.totalRequests, 1)
 
@@ -86,6 +88,17 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 		newStats.bytes.Add(bytes)
 		newStats.latencySum.Add(int64(latency))
 		c.pathStats.Store(path, newStats)
+	}
+
+	// 更新引用来源统计
+	if referer := r.Header.Get("Referer"); referer != "" {
+		if stats, ok := c.refererStats.Load(referer); ok {
+			stats.(*PathStats).requests.Add(1)
+		} else {
+			newStats := &PathStats{}
+			newStats.requests.Add(1)
+			c.refererStats.Store(referer, newStats)
+		}
 	}
 
 	// 记录最近的请求
@@ -151,6 +164,33 @@ func (c *Collector) GetStats() map[string]interface{} {
 		pathMetrics = allPaths
 	}
 
+	// 获取Top 10引用来源
+	var refererMetrics []PathMetrics
+	var allReferers []PathMetrics
+	c.refererStats.Range(func(key, value interface{}) bool {
+		stats := value.(*PathStats)
+		if stats.requests.Load() == 0 {
+			return true
+		}
+		allReferers = append(allReferers, PathMetrics{
+			Path:         key.(string),
+			RequestCount: stats.requests.Load(),
+		})
+		return true
+	})
+
+	// 按请求数排序
+	sort.Slice(allReferers, func(i, j int) bool {
+		return allReferers[i].RequestCount > allReferers[j].RequestCount
+	})
+
+	// 取前10个
+	if len(allReferers) > 10 {
+		refererMetrics = allReferers[:10]
+	} else {
+		refererMetrics = allReferers
+	}
+
 	return map[string]interface{}{
 		"uptime":           uptime.String(),
 		"active_requests":  atomic.LoadInt64(&c.activeRequests),
@@ -170,6 +210,7 @@ func (c *Collector) GetStats() map[string]interface{} {
 		"status_code_stats": statusStats,
 		"top_paths":         pathMetrics,
 		"recent_requests":   c.getRecentRequests(),
+		"top_referers":      refererMetrics,
 	}
 }
 

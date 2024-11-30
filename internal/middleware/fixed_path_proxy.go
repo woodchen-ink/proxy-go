@@ -83,7 +83,7 @@ func FixedPathProxyMiddleware(configs []config.FixedPathConfig) func(http.Handle
 					}
 
 					// 记录统计信息
-					collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(startTime), bytesCopied, utils.GetClientIP(r))
+					collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(startTime), bytesCopied, utils.GetClientIP(r), r)
 
 					return
 				}
