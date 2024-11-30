@@ -30,12 +30,6 @@ func main() {
 	mirrorHandler := handler.NewMirrorProxyHandler()
 	proxyHandler := handler.NewProxyHandler(cfg)
 
-	// 添加监控路由
-	http.HandleFunc("/metrics", proxyHandler.AuthMiddleware(proxyHandler.MetricsHandler))
-	http.HandleFunc("/metrics/ui", proxyHandler.MetricsPageHandler)
-	http.HandleFunc("/metrics/auth", proxyHandler.MetricsAuthHandler)
-	http.HandleFunc("/metrics/dashboard", proxyHandler.MetricsDashboardHandler)
-
 	// 创建处理器链
 	handlers := []struct {
 		matcher func(*http.Request) bool
@@ -71,6 +65,22 @@ func main() {
 
 	// 创建主处理器
 	mainHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 先处理监控路由
+		switch r.URL.Path {
+		case "/metrics":
+			proxyHandler.AuthMiddleware(proxyHandler.MetricsHandler)(w, r)
+			return
+		case "/metrics/ui":
+			proxyHandler.MetricsPageHandler(w, r)
+			return
+		case "/metrics/auth":
+			proxyHandler.MetricsAuthHandler(w, r)
+			return
+		case "/metrics/dashboard":
+			proxyHandler.MetricsDashboardHandler(w, r)
+			return
+		}
+
 		// 遍历所有处理器
 		for _, h := range handlers {
 			if h.matcher(r) {
