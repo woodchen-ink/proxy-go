@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"proxy-go/internal/compression"
 	"strings"
+	"sync"
 )
 
 const (
@@ -22,6 +23,12 @@ type CompressResponseWriter struct {
 	statusCode     int
 	written        bool
 	compressed     bool
+}
+
+var writerPool = sync.Pool{
+	New: func() interface{} {
+		return bufio.NewWriterSize(nil, defaultBufferSize)
+	},
 }
 
 func CompressionMiddleware(manager compression.Manager) func(http.Handler) http.Handler {
@@ -106,15 +113,21 @@ func (cw *CompressResponseWriter) Write(b []byte) (int, error) {
 
 	// 延迟初始化压缩写入器
 	if cw.writer == nil {
-		var err error
-		cw.writer, err = cw.compressor.Compress(cw.ResponseWriter)
+		writer, err := cw.compressor.Compress(cw.ResponseWriter)
 		if err != nil {
 			return 0, err
 		}
-		cw.bufferedWriter = bufio.NewWriterSize(cw.writer, defaultBufferSize)
+		cw.writer = writer
+		bw := writerPool.Get().(*bufio.Writer)
+		bw.Reset(writer)
+		cw.bufferedWriter = bw
 	}
 
-	return cw.bufferedWriter.Write(b)
+	n, err := cw.bufferedWriter.Write(b)
+	if err != nil {
+		writerPool.Put(cw.bufferedWriter)
+	}
+	return n, err
 }
 
 // 实现 http.Hijacker 接口

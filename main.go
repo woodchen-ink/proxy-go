@@ -28,7 +28,7 @@ func main() {
 
 	// 创建代理处理器
 	mirrorHandler := handler.NewMirrorProxyHandler()
-	proxyHandler := handler.NewProxyHandler(cfg.MAP)
+	proxyHandler := handler.NewProxyHandler(cfg)
 
 	// 创建处理器链
 	handlers := []struct {
@@ -79,6 +79,12 @@ func main() {
 	if cfg.Compression.Gzip.Enabled || cfg.Compression.Brotli.Enabled {
 		handler = middleware.CompressionMiddleware(compManager)(handler)
 	}
+
+	// 添加监控路由
+	http.HandleFunc("/metrics", proxyHandler.AuthMiddleware(proxyHandler.MetricsHandler))
+	http.HandleFunc("/metrics/ui", proxyHandler.MetricsPageHandler)
+	http.HandleFunc("/metrics/auth", proxyHandler.MetricsAuthHandler)
+	http.HandleFunc("/metrics/dashboard", proxyHandler.MetricsDashboardHandler)
 
 	// 创建服务器
 	server := &http.Server{

@@ -11,10 +11,23 @@ import (
 	"time"
 )
 
-type MirrorProxyHandler struct{}
+type MirrorProxyHandler struct {
+	client *http.Client
+}
 
 func NewMirrorProxyHandler() *MirrorProxyHandler {
-	return &MirrorProxyHandler{}
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+	}
+
+	return &MirrorProxyHandler{
+		client: &http.Client{
+			Transport: transport,
+			Timeout:   30 * time.Second,
+		},
+	}
 }
 
 func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -91,14 +104,7 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxyReq.Host = parsedURL.Host
 
 	// 发送请求
-	client := &http.Client{
-		Transport: &http.Transport{
-			DisableCompression: true,
-			// 可以添加其他传输设置，如TLS配置等
-		},
-		Timeout: 30 * time.Second,
-	}
-	resp, err := client.Do(proxyReq)
+	resp, err := h.client.Do(proxyReq)
 	if err != nil {
 		http.Error(w, "Error forwarding request", http.StatusBadGateway)
 		log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | Error forwarding request: %v",

@@ -33,5 +33,9 @@
       "TargetHost": "cdn.jsdelivr.net",
       "TargetURL": "https://cdn.jsdelivr.net"
     }
-  ]
+  ],
+  "Metrics": {
+    "Password": "admin123",
+    "TokenExpiry": 86400
+  }
 }
