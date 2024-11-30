@@ -296,6 +296,59 @@ var metricsTemplate = `
     </style>
 </head>
 <body>
+    <h1>Proxy-Go Metrics</h1>
+
+    <div class="card">
+        <h2>基础指标</h2>
+        <div class="metric">
+            <span class="metric-label">运行时间</span>
+            <span class="metric-value" id="uptime"></span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">当前活跃请求</span>
+            <span class="metric-value" id="activeRequests"></span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">总请求数</span>
+            <span class="metric-value" id="totalRequests"></span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">错误数</span>
+            <span class="metric-value" id="totalErrors"></span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">错误率</span>
+            <span class="metric-value" id="errorRate"></span>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>系统指标</h2>
+        <div class="metric">
+            <span class="metric-label">Goroutine数量</span>
+            <span class="metric-value" id="numGoroutine"></span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">内存使用</span>
+            <span class="metric-value" id="memoryUsage"></span>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>性能指标</h2>
+        <div class="metric">
+            <span class="metric-label">平均响应时间</span>
+            <span class="metric-value" id="avgResponseTime"></span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">每秒请求数</span>
+            <span class="metric-value" id="requestsPerSecond"></span>
+        </div>
+    </div>
+
+    <span id="lastUpdate"></span>
+    <button class="refresh" onclick="refreshMetrics()">刷新</button>
+
     <script>
         // 检查登录状态
         const token = localStorage.getItem('metricsToken');
