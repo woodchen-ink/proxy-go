@@ -8,10 +8,10 @@ import (
 	"net/url"
 	"path"
 	"proxy-go/internal/config"
+	"proxy-go/internal/metrics"
 	"proxy-go/internal/utils"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -34,38 +34,6 @@ type ProxyHandler struct {
 	startTime time.Time
 	config    *config.Config
 	auth      *authManager
-	metrics   struct {
-		activeRequests int64
-		totalRequests  int64
-		totalErrors    int64
-		totalBytes     atomic.Int64     // 总传输字节数
-		pathStats      sync.Map         // 路径统计 map[string]*PathStats
-		statusStats    [6]atomic.Int64  // HTTP状态码统计(1xx-5xx)
-		latencyBuckets [10]atomic.Int64 // 延迟分布(0-100ms, 100-200ms...)
-	}
-	recentRequests struct {
-		sync.RWMutex
-		items  [1000]*RequestLog // 固定大小的环形缓冲区
-		cursor atomic.Int64      // 当前位置
-	}
-}
-
-// 单个请求的统计信息
-type RequestLog struct {
-	Time      time.Time
-	Path      string
-	Status    int
-	Latency   time.Duration
-	BytesSent int64
-	ClientIP  string
-}
-
-// 路径统计
-type PathStats struct {
-	requests   atomic.Int64
-	errors     atomic.Int64
-	bytes      atomic.Int64
-	latencySum atomic.Int64
 }
 
 // 修改参数类型
@@ -90,9 +58,9 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 }
 
 func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	atomic.AddInt64(&h.metrics.activeRequests, 1)
-	atomic.AddInt64(&h.metrics.totalRequests, 1)
-	defer atomic.AddInt64(&h.metrics.activeRequests, -1)
+	collector := metrics.GetCollector()
+	collector.BeginRequest()
+	defer collector.EndRequest()
 
 	if !h.limiter.Allow() {
 		http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
@@ -141,7 +109,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 确定目标基础URL
+	// 确定���标基础URL
 	targetBase := pathConfig.DefaultTarget
 
 	// 检查文件扩展名
@@ -260,7 +228,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		written, _ := w.Write(body)
-		h.recordStats(r.URL.Path, resp.StatusCode, time.Since(start), int64(written), r)
+		collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(start), int64(written), utils.GetClientIP(r))
 	} else {
 		// 大响应使用流式传输
 		var bytesCopied int64
@@ -306,58 +274,8 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			targetURL,                      // 目标URL
 		)
 
-		h.recordStats(r.URL.Path, resp.StatusCode, time.Since(start), bytesCopied, r)
+		collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(start), bytesCopied, utils.GetClientIP(r))
 	}
-
-	if err != nil {
-		atomic.AddInt64(&h.metrics.totalErrors, 1)
-	}
-}
-
-func (h *ProxyHandler) recordStats(path string, status int, latency time.Duration, bytes int64, r *http.Request) {
-	// 更新总字节数
-	h.metrics.totalBytes.Add(bytes)
-
-	// 更新状态码统计
-	if status >= 100 && status < 600 {
-		h.metrics.statusStats[status/100-1].Add(1)
-	}
-
-	// 更新延迟分布
-	bucket := int(latency.Milliseconds() / 100)
-	if bucket < 10 {
-		h.metrics.latencyBuckets[bucket].Add(1)
-	}
-
-	// 更新路径统计
-	if stats, ok := h.metrics.pathStats.Load(path); ok {
-		pathStats := stats.(*PathStats)
-		pathStats.requests.Add(1)
-		pathStats.bytes.Add(bytes)
-		pathStats.latencySum.Add(int64(latency))
-	} else {
-		// 首次遇到该路径
-		newStats := &PathStats{}
-		newStats.requests.Add(1)
-		newStats.bytes.Add(bytes)
-		newStats.latencySum.Add(int64(latency))
-		h.metrics.pathStats.Store(path, newStats)
-	}
-
-	// 记录最近的请求
-	log := &RequestLog{
-		Time:      time.Now(),
-		Path:      path,
-		Status:    status,
-		Latency:   latency,
-		BytesSent: bytes,
-		ClientIP:  utils.GetClientIP(r),
-	}
-
-	cursor := h.recentRequests.cursor.Add(1) % 1000
-	h.recentRequests.Lock()
-	h.recentRequests.items[cursor] = log
-	h.recentRequests.Unlock()
 }
 
 func copyHeader(dst, src http.Header) {

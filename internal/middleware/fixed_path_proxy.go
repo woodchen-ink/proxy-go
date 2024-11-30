@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"proxy-go/internal/config"
+	"proxy-go/internal/metrics"
 	"proxy-go/internal/utils"
 	"strings"
 	"syscall"
@@ -21,7 +22,11 @@ type FixedPathConfig struct {
 func FixedPathProxyMiddleware(configs []config.FixedPathConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			startTime := time.Now() // 添加时间记录
+			startTime := time.Now()
+			collector := metrics.GetCollector()
+			collector.BeginRequest()
+			defer collector.EndRequest()
+
 			// 检查是否匹配任何固定路径
 			for _, cfg := range configs {
 				if strings.HasPrefix(r.URL.Path, cfg.Path) {
@@ -77,17 +82,8 @@ func FixedPathProxyMiddleware(configs []config.FixedPathConfig) func(http.Handle
 						log.Printf("[%s] Error copying response: %v", utils.GetClientIP(r), err)
 					}
 
-					// 记录成功的请求
-					log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | %-50s -> %s",
-						r.Method,                       // HTTP方法，左对齐占6位
-						resp.StatusCode,                // 状态码，占3位
-						time.Since(startTime),          // 处理时间，占12位
-						utils.GetClientIP(r),           // IP地址，占15位
-						utils.FormatBytes(bytesCopied), // 传输大小，占10位
-						utils.GetRequestSource(r),      // 请求来源
-						r.URL.Path,                     // 请求路径，左对齐占50位
-						targetURL,                      // 目标URL
-					)
+					// 记录统计信息
+					collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(startTime), bytesCopied, utils.GetClientIP(r))
 
 					return
 				}

@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"proxy-go/internal/metrics"
 	"proxy-go/internal/utils"
 	"strings"
 	"time"
@@ -32,6 +33,9 @@ func NewMirrorProxyHandler() *MirrorProxyHandler {
 
 func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
+	collector := metrics.GetCollector()
+	collector.BeginRequest()
+	defer collector.EndRequest()
 
 	// 设置 CORS 头
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -132,4 +136,7 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Method, resp.StatusCode, time.Since(startTime),
 		utils.GetClientIP(r), utils.FormatBytes(bytesCopied),
 		utils.GetRequestSource(r), actualURL)
+
+	// 记录统计信息
+	collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(startTime), bytesCopied, utils.GetClientIP(r))
 }

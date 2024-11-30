@@ -2,11 +2,10 @@ package handler
 
 import (
 	"encoding/json"
-	"fmt"
+	"log"
 	"net/http"
-	"runtime"
+	"proxy-go/internal/metrics"
 	"strings"
-	"sync/atomic"
 	"time"
 )
 
@@ -27,100 +26,45 @@ type Metrics struct {
 	RequestsPerSecond   float64 `json:"requests_per_second"`
 
 	// 新增字段
-	TotalBytes         int64              `json:"total_bytes"`
-	BytesPerSecond     float64            `json:"bytes_per_second"`
-	StatusCodeStats    map[string]int64   `json:"status_code_stats"`
-	LatencyPercentiles map[string]float64 `json:"latency_percentiles"`
-	TopPaths           []PathMetrics      `json:"top_paths"`
-	RecentRequests     []RequestLog       `json:"recent_requests"`
-}
-
-type PathMetrics struct {
-	Path             string `json:"path"`
-	RequestCount     int64  `json:"request_count"`
-	ErrorCount       int64  `json:"error_count"`
-	AvgLatency       string `json:"avg_latency"`
-	BytesTransferred int64  `json:"bytes_transferred"`
-}
-
-// 添加格式化字节的辅助函数
-func formatBytes(bytes uint64) string {
-	const (
-		MB = 1024 * 1024
-		KB = 1024
-	)
-
-	switch {
-	case bytes >= MB:
-		return fmt.Sprintf("%.2f MB", float64(bytes)/MB)
-	case bytes >= KB:
-		return fmt.Sprintf("%.2f KB", float64(bytes)/KB)
-	default:
-		return fmt.Sprintf("%d Bytes", bytes)
-	}
+	TotalBytes         int64                 `json:"total_bytes"`
+	BytesPerSecond     float64               `json:"bytes_per_second"`
+	StatusCodeStats    map[string]int64      `json:"status_code_stats"`
+	LatencyPercentiles map[string]float64    `json:"latency_percentiles"`
+	TopPaths           []metrics.PathMetrics `json:"top_paths"`
+	RecentRequests     []metrics.RequestLog  `json:"recent_requests"`
 }
 
 func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-
-	totalRequests := atomic.LoadInt64(&h.metrics.totalRequests)
-	totalErrors := atomic.LoadInt64(&h.metrics.totalErrors)
 	uptime := time.Since(h.startTime)
+	collector := metrics.GetCollector()
+	stats := collector.GetStats()
 
-	// 获取状态码统计
-	statusStats := make(map[string]int64)
-	for i, v := range h.metrics.statusStats {
-		statusStats[fmt.Sprintf("%dxx", i+1)] = v.Load()
+	if stats == nil {
+		http.Error(w, "Failed to get metrics", http.StatusInternalServerError)
+		return
 	}
 
-	// 获取Top 10路径统计
-	var pathMetrics []PathMetrics
-	h.metrics.pathStats.Range(func(key, value interface{}) bool {
-		stats := value.(*PathStats)
-		if stats.requests.Load() == 0 {
-			return true
-		}
-		pathMetrics = append(pathMetrics, PathMetrics{
-			Path:             key.(string),
-			RequestCount:     stats.requests.Load(),
-			ErrorCount:       stats.errors.Load(),
-			AvgLatency:       formatDuration(time.Duration(stats.latencySum.Load()) / time.Duration(stats.requests.Load())),
-			BytesTransferred: stats.bytes.Load(),
-		})
-		return len(pathMetrics) < 10
-	})
-
 	metrics := Metrics{
-		Uptime:         uptime.String(),
-		ActiveRequests: atomic.LoadInt64(&h.metrics.activeRequests),
-		TotalRequests:  totalRequests,
-		TotalErrors:    totalErrors,
-		ErrorRate:      getErrorRate(totalErrors, totalRequests),
-		NumGoroutine:   runtime.NumGoroutine(),
-		MemoryUsage:    formatBytes(m.Alloc),
-
-		TotalBytes:        h.metrics.totalBytes.Load(),
-		BytesPerSecond:    float64(h.metrics.totalBytes.Load()) / max(uptime.Seconds(), 1),
-		RequestsPerSecond: float64(totalRequests) / max(uptime.Seconds(), 1),
-		StatusCodeStats:   statusStats,
-		TopPaths:          pathMetrics,
-		RecentRequests:    getRecentRequests(h),
+		Uptime:              uptime.String(),
+		ActiveRequests:      stats["active_requests"].(int64),
+		TotalRequests:       stats["total_requests"].(int64),
+		TotalErrors:         stats["total_errors"].(int64),
+		ErrorRate:           float64(stats["total_errors"].(int64)) / float64(stats["total_requests"].(int64)),
+		NumGoroutine:        stats["num_goroutine"].(int),
+		MemoryUsage:         stats["memory_usage"].(string),
+		AverageResponseTime: metrics.FormatDuration(time.Duration(stats["avg_latency"].(int64))),
+		TotalBytes:          stats["total_bytes"].(int64),
+		BytesPerSecond:      float64(stats["total_bytes"].(int64)) / metrics.Max(uptime.Seconds(), 1),
+		RequestsPerSecond:   float64(stats["total_requests"].(int64)) / metrics.Max(uptime.Seconds(), 1),
+		StatusCodeStats:     stats["status_code_stats"].(map[string]int64),
+		TopPaths:            stats["top_paths"].([]metrics.PathMetrics),
+		RecentRequests:      stats["recent_requests"].([]metrics.RequestLog),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(metrics)
-}
-
-// 添加格式化时间的辅助函数
-func formatDuration(d time.Duration) string {
-	if d < time.Millisecond {
-		return fmt.Sprintf("%.2f μs", float64(d.Microseconds()))
+	if err := json.NewEncoder(w).Encode(metrics); err != nil {
+		log.Printf("Error encoding metrics: %v", err)
 	}
-	if d < time.Second {
-		return fmt.Sprintf("%.2f ms", float64(d.Milliseconds()))
-	}
-	return fmt.Sprintf("%.2f s", d.Seconds())
 }
 
 // 修改模板,添加登录页面
@@ -598,35 +542,4 @@ func (h *ProxyHandler) MetricsAuthHandler(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]string{
 		"token": token,
 	})
-}
-
-// 添加辅助函数
-func getErrorRate(errors, total int64) float64 {
-	if total == 0 {
-		return 0
-	}
-	return float64(errors) / float64(total)
-}
-
-func getRecentRequests(h *ProxyHandler) []RequestLog {
-	var recentReqs []RequestLog
-	h.recentRequests.RLock()
-	defer h.recentRequests.RUnlock()
-
-	cursor := h.recentRequests.cursor.Load()
-	for i := 0; i < 10; i++ {
-		idx := (cursor - int64(i) + 1000) % 1000
-		if h.recentRequests.items[idx] != nil {
-			recentReqs = append(recentReqs, *h.recentRequests.items[idx])
-		}
-	}
-	return recentReqs
-}
-
-// 添加辅助函数
-func max(a, b float64) float64 {
-	if a > b {
-		return a
-	}
-	return b
 }
