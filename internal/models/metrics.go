@@ -2,6 +2,8 @@ package models
 
 import (
 	"database/sql"
+	"log"
+	"proxy-go/internal/constants"
 	"sync/atomic"
 	"time"
 
@@ -50,7 +52,119 @@ func NewMetricsDB(dbPath string) (*MetricsDB, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// 创建必要的表
+	if err := initTables(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	return &MetricsDB{DB: db}, nil
+}
+
+func initTables(db *sql.DB) error {
+	// 创建指标历史表
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS metrics_history (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+			total_requests INTEGER,
+			total_errors INTEGER,
+			total_bytes INTEGER,
+			avg_latency INTEGER,
+			error_rate REAL
+		)
+	`)
+	if err != nil {
+		return err
+	}
+
+	// 创建状态码统计表
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS status_stats (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+			status_group TEXT,
+			count INTEGER
+		)
+	`)
+	if err != nil {
+		return err
+	}
+
+	// 创建路径统计表
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS path_stats (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+			path TEXT,
+			requests INTEGER,
+			errors INTEGER,
+			bytes INTEGER,
+			avg_latency INTEGER
+		)
+	`)
+	if err != nil {
+		return err
+	}
+
+	// 添加索引以提高查询性能
+	_, err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics_history(timestamp);
+		CREATE INDEX IF NOT EXISTS idx_status_timestamp ON status_stats(timestamp);
+		CREATE INDEX IF NOT EXISTS idx_path_timestamp ON path_stats(timestamp);
+	`)
+	if err != nil {
+		return err
+	}
+
+	// 启动定期清理任务
+	go cleanupRoutine(db)
+
+	return nil
+}
+
+// 定期清理旧数据
+func cleanupRoutine(db *sql.DB) {
+	ticker := time.NewTicker(constants.CleanupInterval)
+	for range ticker.C {
+		// 开始事务
+		tx, err := db.Begin()
+		if err != nil {
+			log.Printf("Error starting cleanup transaction: %v", err)
+			continue
+		}
+
+		// 删除超过保留期限的数据
+		cutoff := time.Now().Add(-constants.DataRetention)
+		_, err = tx.Exec(`DELETE FROM metrics_history WHERE timestamp < ?`, cutoff)
+		if err != nil {
+			tx.Rollback()
+			log.Printf("Error cleaning metrics_history: %v", err)
+			continue
+		}
+
+		_, err = tx.Exec(`DELETE FROM status_stats WHERE timestamp < ?`, cutoff)
+		if err != nil {
+			tx.Rollback()
+			log.Printf("Error cleaning status_stats: %v", err)
+			continue
+		}
+
+		_, err = tx.Exec(`DELETE FROM path_stats WHERE timestamp < ?`, cutoff)
+		if err != nil {
+			tx.Rollback()
+			log.Printf("Error cleaning path_stats: %v", err)
+			continue
+		}
+
+		// 提交事务
+		if err := tx.Commit(); err != nil {
+			log.Printf("Error committing cleanup transaction: %v", err)
+		} else {
+			log.Printf("Successfully cleaned up old metrics data")
+		}
+	}
 }
 
 func (db *MetricsDB) SaveMetrics(stats map[string]interface{}) error {
