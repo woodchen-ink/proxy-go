@@ -326,6 +326,34 @@ var metricsTemplate = `
             border: 1px solid #ddd;
             margin-bottom: 15px;
         }
+        .time-range-buttons {
+            margin: 15px 0;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: flex-start;
+        }
+        
+        .time-btn {
+            padding: 8px 16px;
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.3s;
+            min-width: 80px;
+            text-align: center;
+        }
+        
+        .time-btn:hover {
+            background: #f8f9fa;
+        }
+        
+        .time-btn.active {
+            background: #007bff;
+            color: white;
+            border-color: #0056b3;
+        }
     </style>
 </head>
 <body>
@@ -446,14 +474,30 @@ var metricsTemplate = `
 
     <div class="card">
         <h2>历史数据</h2>
-        <select id="timeRange">
-            <option value="1">最近1小时</option>
-            <option value="6">最近6小时</option>
-            <option value="24">最近24小时</option>
-            <option value="168">最近7天</option>
-            <option value="720">最近30天</option>
-        </select>
-        <div id="historyChart"></div>
+        <div class="time-range-buttons">
+            <button class="time-btn" data-hours="1">1小时</button>
+            <button class="time-btn" data-hours="6">6小时</button>
+            <button class="time-btn" data-hours="12">12小时</button>
+            <button class="time-btn active" data-hours="24">24小时</button>
+            <button class="time-btn" data-hours="72">3天</button>
+            <button class="time-btn" data-hours="120">5天</button>
+            <button class="time-btn" data-hours="168">7天</button>
+            <button class="time-btn" data-hours="360">15天</button>
+            <button class="time-btn" data-hours="720">30天</button>
+        </div>
+        <div id="historyChart">
+            <div class="chart-container">
+                <div class="chart">
+                    <canvas id="requestsChart"></canvas>
+                </div>
+                <div class="chart">
+                    <canvas id="errorRateChart"></canvas>
+                </div>
+                <div class="chart">
+                    <canvas id="bytesChart"></canvas>
+                </div>
+            </div>
+        </div>
     </div>
 
     <span id="lastUpdate"></span>
@@ -585,9 +629,14 @@ var metricsTemplate = `
         // 每5秒自动刷新
         setInterval(refreshMetrics, 5000);
 
-        // ��加图表相关代码
-        function loadHistoryData() {
-            const hours = document.getElementById('timeRange').value;
+        // 修改图表加载相关代码
+        let currentCharts = {
+            requests: null,
+            errorRate: null,
+            bytes: null
+        };
+
+        function loadHistoryData(hours) {
             fetch('/metrics/history?hours=' + hours, {
                 headers: {
                     'Authorization': 'Bearer ' + token
@@ -606,102 +655,67 @@ var metricsTemplate = `
                     }
                 });
 
-                // 清除旧图表
-                document.getElementById('historyChart').innerHTML = '';
-
-                // 创建新图表
-                document.getElementById('historyChart').innerHTML = '<div class="chart-container">' +
-                    '<h3>请求数</h3>' +
-                    '<div class="chart">' +
-                    '<canvas id="requestsChart"></canvas>' +
-                    '</div>' +
-                    '<h3>错误率</h3>' +
-                    '<div class="chart">' +
-                    '<canvas id="errorRateChart"></canvas>' +
-                    '</div>' +
-                    '<h3>流量</h3>' +
-                    '<div class="chart">' +
-                    '<canvas id="bytesChart"></canvas>' +
-                    '</div>' +
-                    '</div>';
-
-                // 绘制图表
-                new Chart(document.getElementById('requestsChart'), {
-                    type: 'line',
-                    data: {
-                        labels: labels,
-                        datasets: [{
-                            label: '总请求数',
-                            data: data.map(m => m.total_requests),
-                            borderColor: '#4CAF50',
-                            fill: false
-                        }]
-                    },
-                    options: {
-                        scales: {
-                            x: {
-                                ticks: {
-                                    maxRotation: 45,
-                                    minRotation: 45
-                                }
-                            }
-                        }
-                    }
-                });
-
-                new Chart(document.getElementById('errorRateChart'), {
-                    type: 'line',
-                    data: {
-                        labels: labels,
-                        datasets: [{
-                            label: '错误率',
-                            data: data.map(m => (m.error_rate * 100).toFixed(2)),
-                            borderColor: '#dc3545',
-                            fill: false
-                        }]
-                    },
-                    options: {
-                        scales: {
-                            x: {
-                                ticks: {
-                                    maxRotation: 45,
-                                    minRotation: 45
-                                }
-                            }
-                        }
-                    }
-                });
-
-                new Chart(document.getElementById('bytesChart'), {
-                    type: 'line',
-                    data: {
-                        labels: labels,
-                        datasets: [{
-                            label: '传输字节',
-                            data: data.map(m => m.total_bytes / 1024 / 1024), // 转换为MB
-                            borderColor: '#17a2b8',
-                            fill: false
-                        }]
-                    },
-                    options: {
-                        scales: {
-                            x: {
-                                ticks: {
-                                    maxRotation: 45,
-                                    minRotation: 45
-                                }
-                            }
-                        }
-                    }
-                });
+                // 更新或创建图表
+                updateChart('requestsChart', currentCharts.requests, labels, data, '请求数', 
+                    m => m.total_requests, '#007bff');
+                updateChart('errorRateChart', currentCharts.errorRate, labels, data, '错误率 (%)', 
+                    m => m.error_rate * 100, '#dc3545');
+                updateChart('bytesChart', currentCharts.bytes, labels, data, '流量 (MB)', 
+                    m => m.total_bytes / (1024 * 1024), '#28a745');
             });
         }
 
-        // 监听时间范围变化
-        document.getElementById('timeRange').addEventListener('change', loadHistoryData);
+        function updateChart(canvasId, chartInstance, labels, data, label, valueGetter, color) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            
+            if (chartInstance) {
+                chartInstance.data.labels = labels;
+                chartInstance.data.datasets[0].data = data.map(valueGetter);
+                chartInstance.update();
+            } else {
+                chartInstance = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: label,
+                            data: data.map(valueGetter),
+                            borderColor: color,
+                            tension: 0.1,
+                            fill: false
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                ticks: {
+                                    maxRotation: 45,
+                                    minRotation: 45
+                                }
+                            }
+                        }
+                    }
+                });
+                
+                if (canvasId === 'requestsChart') currentCharts.requests = chartInstance;
+                if (canvasId === 'errorRateChart') currentCharts.errorRate = chartInstance;
+                if (canvasId === 'bytesChart') currentCharts.bytes = chartInstance;
+            }
+        }
+
+        // 时间范围按钮处理
+        document.querySelectorAll('.time-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                loadHistoryData(this.dataset.hours);
+            });
+        });
 
         // 初始加载历史数据
-        loadHistoryData();
+        loadHistoryData(24);
     </script>
 
     <!-- 添加 Chart.js -->
@@ -745,14 +759,30 @@ func (h *ProxyHandler) MetricsDashboardHandler(w http.ResponseWriter, r *http.Re
 
     <div class="card">
         <h2>历史数据</h2>
-        <select id="timeRange">
-            <option value="1">最近1小时</option>
-            <option value="6">最近6小时</option>
-            <option value="24">最近24小时</option>
-            <option value="168">最近7天</option>
-            <option value="720">最近30天</option>
-        </select>
-        <div id="historyChart"></div>
+        <div class="time-range-buttons">
+            <button class="time-btn" data-hours="1">1小时</button>
+            <button class="time-btn" data-hours="6">6小时</button>
+            <button class="time-btn" data-hours="12">12小时</button>
+            <button class="time-btn active" data-hours="24">24小时</button>
+            <button class="time-btn" data-hours="72">3天</button>
+            <button class="time-btn" data-hours="120">5天</button>
+            <button class="time-btn" data-hours="168">7天</button>
+            <button class="time-btn" data-hours="360">15天</button>
+            <button class="time-btn" data-hours="720">30天</button>
+        </div>
+        <div id="historyChart">
+            <div class="chart-container">
+                <div class="chart">
+                    <canvas id="requestsChart"></canvas>
+                </div>
+                <div class="chart">
+                    <canvas id="errorRateChart"></canvas>
+                </div>
+                <div class="chart">
+                    <canvas id="bytesChart"></canvas>
+                </div>
+            </div>
+        </div>
     </div>
 
     <span id="lastUpdate"></span>`, 1)
