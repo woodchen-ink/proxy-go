@@ -48,9 +48,10 @@ type Monitor struct {
 	alerts         chan Alert
 	handlers       []AlertHandler
 	dedup          sync.Map
-	errorWindow    [12]ErrorStats // 5分钟一个窗口，保存最近1小时
+	lastNotify     sync.Map
+	errorWindow    [12]ErrorStats
 	currentWindow  atomic.Int32
-	transferWindow [12]TransferStats // 5分钟一个窗口，保存最近1小时
+	transferWindow [12]TransferStats
 	currentTWindow atomic.Int32
 }
 
@@ -89,6 +90,15 @@ func (m *Monitor) processAlerts() {
 		if _, ok := m.dedup.LoadOrStore(key, time.Now()); ok {
 			continue
 		}
+
+		// 检查是否在通知间隔内
+		notifyKey := fmt.Sprintf("notify:%s", alert.Level)
+		if lastTime, ok := m.lastNotify.Load(notifyKey); ok {
+			if time.Since(lastTime.(time.Time)) < constants.AlertNotifyInterval {
+				continue
+			}
+		}
+		m.lastNotify.Store(notifyKey, time.Now())
 
 		for _, handler := range m.handlers {
 			handler.HandleAlert(alert)

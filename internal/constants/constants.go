@@ -24,17 +24,18 @@ var (
 	AlertWindowSize           = 12               // 监控窗口数量
 	AlertWindowInterval       = 5 * time.Minute  // 每个窗口时间长度
 	AlertDedupeWindow         = 15 * time.Minute // 告警去重时间窗口
+	AlertNotifyInterval       = 24 * time.Hour   // 告警通知间隔
 	MinRequestsForAlert int64 = 10               // 触发告警的最小请求数
-	ErrorRateThreshold        = 0.5              // 错误率告警阈值 (50%)
+	ErrorRateThreshold        = 0.8              // 错误率告警阈值
 
 	// 延迟告警阈值
 	SmallFileSize  int64 = 1 * MB   // 小文件阈值
 	MediumFileSize int64 = 10 * MB  // 中等文件阈值
 	LargeFileSize  int64 = 100 * MB // 大文件阈值
 
-	SmallFileLatency  = 3 * time.Second   // 小文件最大延迟
-	MediumFileLatency = 8 * time.Second   // 中等文件最大延迟
-	LargeFileLatency  = 30 * time.Second  // 大文件最大延迟
+	SmallFileLatency  = 5 * time.Second   // 小文件最大延迟
+	MediumFileLatency = 10 * time.Second  // 中等文件最大延迟
+	LargeFileLatency  = 50 * time.Second  // 大文件最大延迟
 	HugeFileLatency   = 300 * time.Second // 超大文件最大延迟 (5分钟)
 
 	// 单位常量
@@ -59,6 +60,9 @@ func UpdateFromConfig(cfg *config.Config) {
 	}
 	if cfg.Metrics.Alert.ErrorRate > 0 {
 		ErrorRateThreshold = cfg.Metrics.Alert.ErrorRate
+	}
+	if cfg.Metrics.Alert.AlertInterval > 0 {
+		AlertNotifyInterval = cfg.Metrics.Alert.AlertInterval
 	}
 
 	// 延迟告警配置

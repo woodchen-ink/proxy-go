@@ -47,6 +47,7 @@ type MetricsConfig struct {
 		DedupeWindow   time.Duration `json:"DedupeWindow"`   // 告警去重时间窗口
 		MinRequests    int64         `json:"MinRequests"`    // 触发告警的最小请求数
 		ErrorRate      float64       `json:"ErrorRate"`      // 错误率告警阈值
+		AlertInterval  time.Duration `json:"AlertInterval"`  // 告警间隔时间
 	} `json:"Alert"`
 	// 延迟告警配置
 	Latency struct {

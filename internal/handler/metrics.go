@@ -47,6 +47,11 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var avgLatency int64
+	if latency, ok := stats["avg_latency"]; ok && latency != nil {
+		avgLatency = latency.(int64)
+	}
+
 	metrics := Metrics{
 		Uptime:              uptime.String(),
 		ActiveRequests:      stats["active_requests"].(int64),
@@ -55,7 +60,7 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 		ErrorRate:           float64(stats["total_errors"].(int64)) / float64(stats["total_requests"].(int64)),
 		NumGoroutine:        stats["num_goroutine"].(int),
 		MemoryUsage:         stats["memory_usage"].(string),
-		AverageResponseTime: metrics.FormatDuration(time.Duration(stats["avg_latency"].(int64))),
+		AverageResponseTime: metrics.FormatDuration(time.Duration(avgLatency)),
 		TotalBytes:          stats["total_bytes"].(int64),
 		BytesPerSecond:      float64(stats["total_bytes"].(int64)) / metrics.Max(uptime.Seconds(), 1),
 		RequestsPerSecond:   float64(stats["total_requests"].(int64)) / metrics.Max(uptime.Seconds(), 1),

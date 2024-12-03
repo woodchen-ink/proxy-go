@@ -45,7 +45,8 @@
       "WindowInterval": "5m",
       "DedupeWindow": "15m",
       "MinRequests": 10,
-      "ErrorRate": 0.5
+      "ErrorRate": 0.8,
+      "AlertInterval": "24h"
     },
     "Latency": {
       "SmallFileSize": 1048576,
