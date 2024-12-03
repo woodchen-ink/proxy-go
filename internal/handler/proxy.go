@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"path"
 	"proxy-go/internal/config"
 	"proxy-go/internal/metrics"
 	"proxy-go/internal/utils"
@@ -22,7 +23,8 @@ const (
 
 var bufferPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, defaultBufferSize)
+		buf := make([]byte, defaultBufferSize)
+		return &buf
 	},
 }
 
@@ -108,8 +110,17 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 确定基础URL
-	targetBase := utils.GetTargetURL(h.client, r, pathConfig, decodedPath)
+	// 确定标基础URL
+	targetBase := pathConfig.DefaultTarget
+
+	// 检查文件扩展名
+	if pathConfig.ExtensionMap != nil {
+		ext := strings.ToLower(path.Ext(decodedPath))
+		if ext != "" {
+			ext = ext[1:] // 移除开头的点
+			targetBase = pathConfig.GetTargetForExt(ext)
+		}
+	}
 
 	// 重新编码路径，保留 '/'
 	parts := strings.Split(decodedPath, "/")
@@ -223,8 +234,10 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// 大响应使用流式传输
 		var bytesCopied int64
 		if f, ok := w.(http.Flusher); ok {
-			buf := bufferPool.Get().([]byte)
-			defer bufferPool.Put(buf)
+			bufPtr := bufferPool.Get().(*[]byte)
+			defer bufferPool.Put(bufPtr)
+			buf := *bufPtr
+
 			for {
 				n, rerr := resp.Body.Read(buf)
 				if n > 0 {

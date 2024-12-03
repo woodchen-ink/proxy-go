@@ -47,23 +47,40 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var avgLatency int64
-	if latency, ok := stats["avg_latency"]; ok && latency != nil {
-		avgLatency = latency.(int64)
+	// 添加安全的类型转换函数
+	safeInt64 := func(v interface{}) int64 {
+		if v == nil {
+			return 0
+		}
+		if i, ok := v.(int64); ok {
+			return i
+		}
+		return 0
 	}
 
+	safeInt := func(v interface{}) int {
+		if v == nil {
+			return 0
+		}
+		if i, ok := v.(int); ok {
+			return i
+		}
+		return 0
+	}
+
+	totalRequests := safeInt64(stats["total_requests"])
 	metrics := Metrics{
 		Uptime:              uptime.String(),
-		ActiveRequests:      stats["active_requests"].(int64),
-		TotalRequests:       stats["total_requests"].(int64),
-		TotalErrors:         stats["total_errors"].(int64),
-		ErrorRate:           float64(stats["total_errors"].(int64)) / float64(stats["total_requests"].(int64)),
-		NumGoroutine:        stats["num_goroutine"].(int),
+		ActiveRequests:      safeInt64(stats["active_requests"]),
+		TotalRequests:       totalRequests,
+		TotalErrors:         safeInt64(stats["total_errors"]),
+		ErrorRate:           float64(safeInt64(stats["total_errors"])) / float64(max(totalRequests, 1)),
+		NumGoroutine:        safeInt(stats["num_goroutine"]),
 		MemoryUsage:         stats["memory_usage"].(string),
-		AverageResponseTime: metrics.FormatDuration(time.Duration(avgLatency)),
-		TotalBytes:          stats["total_bytes"].(int64),
-		BytesPerSecond:      float64(stats["total_bytes"].(int64)) / metrics.Max(uptime.Seconds(), 1),
-		RequestsPerSecond:   float64(stats["total_requests"].(int64)) / metrics.Max(uptime.Seconds(), 1),
+		AverageResponseTime: metrics.FormatDuration(time.Duration(safeInt64(stats["avg_latency"]))),
+		TotalBytes:          safeInt64(stats["total_bytes"]),
+		BytesPerSecond:      float64(safeInt64(stats["total_bytes"])) / metrics.Max(uptime.Seconds(), 1),
+		RequestsPerSecond:   float64(totalRequests) / metrics.Max(uptime.Seconds(), 1),
 		StatusCodeStats:     stats["status_code_stats"].(map[string]int64),
 		TopPaths:            stats["top_paths"].([]models.PathMetrics),
 		RecentRequests:      stats["recent_requests"].([]models.RequestLog),
@@ -74,6 +91,14 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(metrics); err != nil {
 		log.Printf("Error encoding metrics: %v", err)
 	}
+}
+
+// 辅助函数
+func max(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // 修改模板,添加登录页面
