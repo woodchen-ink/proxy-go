@@ -5,6 +5,8 @@ import (
 	"log"
 	"net/http"
 	"proxy-go/internal/metrics"
+	"proxy-go/internal/models"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -26,13 +28,13 @@ type Metrics struct {
 	RequestsPerSecond   float64 `json:"requests_per_second"`
 
 	// 新增字段
-	TotalBytes         int64                 `json:"total_bytes"`
-	BytesPerSecond     float64               `json:"bytes_per_second"`
-	StatusCodeStats    map[string]int64      `json:"status_code_stats"`
-	LatencyPercentiles map[string]float64    `json:"latency_percentiles"`
-	TopPaths           []metrics.PathMetrics `json:"top_paths"`
-	RecentRequests     []metrics.RequestLog  `json:"recent_requests"`
-	TopReferers        []metrics.PathMetrics `json:"top_referers"`
+	TotalBytes         int64                `json:"total_bytes"`
+	BytesPerSecond     float64              `json:"bytes_per_second"`
+	StatusCodeStats    map[string]int64     `json:"status_code_stats"`
+	LatencyPercentiles map[string]float64   `json:"latency_percentiles"`
+	TopPaths           []models.PathMetrics `json:"top_paths"`
+	RecentRequests     []models.RequestLog  `json:"recent_requests"`
+	TopReferers        []models.PathMetrics `json:"top_referers"`
 }
 
 func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
@@ -58,9 +60,9 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 		BytesPerSecond:      float64(stats["total_bytes"].(int64)) / metrics.Max(uptime.Seconds(), 1),
 		RequestsPerSecond:   float64(stats["total_requests"].(int64)) / metrics.Max(uptime.Seconds(), 1),
 		StatusCodeStats:     stats["status_code_stats"].(map[string]int64),
-		TopPaths:            stats["top_paths"].([]metrics.PathMetrics),
-		RecentRequests:      stats["recent_requests"].([]metrics.RequestLog),
-		TopReferers:         stats["top_referers"].([]metrics.PathMetrics),
+		TopPaths:            stats["top_paths"].([]models.PathMetrics),
+		RecentRequests:      stats["recent_requests"].([]models.RequestLog),
+		TopReferers:         stats["top_referers"].([]models.PathMetrics),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -270,6 +272,19 @@ var metricsTemplate = `
         .grid-container .card {
             margin-bottom: 0;
         }
+        .chart-container {
+            margin-top: 20px;
+        }
+        .chart {
+            height: 200px;
+            margin-bottom: 20px;
+        }
+        #timeRange {
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            margin-bottom: 15px;
+        }
     </style>
 </head>
 <body>
@@ -386,6 +401,18 @@ var metricsTemplate = `
             </thead>
             <tbody></tbody>
         </table>
+    </div>
+
+    <div class="card">
+        <h2>历史数据</h2>
+        <select id="timeRange">
+            <option value="1">最近1小时</option>
+            <option value="6">最近6小时</option>
+            <option value="24">最近24小时</option>
+            <option value="168">最近7天</option>
+            <option value="720">最近30天</option>
+        </select>
+        <div id="historyChart"></div>
     </div>
 
     <span id="lastUpdate"></span>
@@ -516,7 +543,128 @@ var metricsTemplate = `
 
         // 每5秒自动刷新
         setInterval(refreshMetrics, 5000);
+
+        // 添加图表相关代码
+        function loadHistoryData() {
+            const hours = document.getElementById('timeRange').value;
+            fetch('/metrics/history?hours=' + hours, {
+                headers: {
+                    'Authorization': 'Bearer ' + token
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                const labels = data.map(m => {
+                    const date = new Date(m.timestamp);
+                    if (hours <= 24) {
+                        return date.toLocaleTimeString();
+                    } else if (hours <= 168) {
+                        return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+                    } else {
+                        return date.toLocaleDateString();
+                    }
+                });
+
+                // 清除旧图表
+                document.getElementById('historyChart').innerHTML = '';
+
+                // 创建新图表
+                document.getElementById('historyChart').innerHTML = '<div class="chart-container">' +
+                    '<h3>请求数</h3>' +
+                    '<div class="chart">' +
+                    '<canvas id="requestsChart"></canvas>' +
+                    '</div>' +
+                    '<h3>错误率</h3>' +
+                    '<div class="chart">' +
+                    '<canvas id="errorRateChart"></canvas>' +
+                    '</div>' +
+                    '<h3>流量</h3>' +
+                    '<div class="chart">' +
+                    '<canvas id="bytesChart"></canvas>' +
+                    '</div>' +
+                    '</div>';
+
+                // 绘制图表
+                new Chart(document.getElementById('requestsChart'), {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: '总请求数',
+                            data: data.map(m => m.total_requests),
+                            borderColor: '#4CAF50',
+                            fill: false
+                        }]
+                    },
+                    options: {
+                        scales: {
+                            x: {
+                                ticks: {
+                                    maxRotation: 45,
+                                    minRotation: 45
+                                }
+                            }
+                        }
+                    }
+                });
+
+                new Chart(document.getElementById('errorRateChart'), {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: '错误率',
+                            data: data.map(m => (m.error_rate * 100).toFixed(2)),
+                            borderColor: '#dc3545',
+                            fill: false
+                        }]
+                    },
+                    options: {
+                        scales: {
+                            x: {
+                                ticks: {
+                                    maxRotation: 45,
+                                    minRotation: 45
+                                }
+                            }
+                        }
+                    }
+                });
+
+                new Chart(document.getElementById('bytesChart'), {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: '传输字节',
+                            data: data.map(m => m.total_bytes / 1024 / 1024), // 转换为MB
+                            borderColor: '#17a2b8',
+                            fill: false
+                        }]
+                    },
+                    options: {
+                        scales: {
+                            x: {
+                                ticks: {
+                                    maxRotation: 45,
+                                    minRotation: 45
+                                }
+                            }
+                        }
+                    }
+                });
+            });
+        }
+
+        // 监听时间范围变化
+        document.getElementById('timeRange').addEventListener('change', loadHistoryData);
+
+        // 初始加载历史数据
+        loadHistoryData();
     </script>
+
+    <!-- 添加 Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </body>
 </html>
 `
@@ -548,6 +696,26 @@ func (h *ProxyHandler) MetricsPageHandler(w http.ResponseWriter, r *http.Request
 
 func (h *ProxyHandler) MetricsDashboardHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	metricsTemplate = strings.Replace(metricsTemplate,
+		`</div>
+
+    <span id="lastUpdate"></span>`,
+		`</div>
+
+    <div class="card">
+        <h2>历史数据</h2>
+        <select id="timeRange">
+            <option value="1">最近1小时</option>
+            <option value="6">最近6小时</option>
+            <option value="24">最近24小时</option>
+            <option value="168">最近7天</option>
+            <option value="720">最近30天</option>
+        </select>
+        <div id="historyChart"></div>
+    </div>
+
+    <span id="lastUpdate"></span>`, 1)
+
 	w.Write([]byte(metricsTemplate))
 }
 
@@ -577,4 +745,24 @@ func (h *ProxyHandler) MetricsAuthHandler(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]string{
 		"token": token,
 	})
+}
+
+// 添加历史数据查询接口
+func (h *ProxyHandler) MetricsHistoryHandler(w http.ResponseWriter, r *http.Request) {
+	hours := 24 // 默认24小时
+	if h := r.URL.Query().Get("hours"); h != "" {
+		if parsed, err := strconv.Atoi(h); err == nil && parsed > 0 {
+			hours = parsed
+		}
+	}
+
+	collector := metrics.GetCollector()
+	metrics, err := collector.GetDB().GetRecentMetrics(hours)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(metrics)
 }

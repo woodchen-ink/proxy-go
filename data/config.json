@@ -5,11 +5,13 @@
       "ExtensionMap": {
         "jpg,png,avif": "https://path1-img.com/path/path/path",
         "mp4,webm": "https://path1-video.com/path/path/path"
-      }
+      },
+      "SizeThreshold": 204800
     },
     "/path2": "https://path2.com",
     "/path3": {
-      "DefaultTarget": "https://path3.com"
+      "DefaultTarget": "https://path3.com",
+      "SizeThreshold": 512000
     }
   },
   "Compression": {
@@ -36,6 +38,23 @@
   ],
   "Metrics": {
     "Password": "admin123",
-    "TokenExpiry": 86400
+    "TokenExpiry": 86400,
+    "FeishuWebhook": "https://open.feishu.cn/open-apis/bot/v2/hook/****",
+    "Alert": {
+      "WindowSize": 12,
+      "WindowInterval": "5m",
+      "DedupeWindow": "15m",
+      "MinRequests": 10,
+      "ErrorRate": 0.5
+    },
+    "Latency": {
+      "SmallFileSize": 1048576,
+      "MediumFileSize": 10485760,
+      "LargeFileSize": 104857600,
+      "SmallLatency": "3s",
+      "MediumLatency": "8s",
+      "LargeLatency": "30s",
+      "HugeLatency": "300s"
+    }
   }
 }

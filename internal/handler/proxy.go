@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"path"
 	"proxy-go/internal/config"
 	"proxy-go/internal/metrics"
 	"proxy-go/internal/utils"
@@ -109,17 +108,8 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 确定标基础URL
-	targetBase := pathConfig.DefaultTarget
-
-	// 检查文件扩展名
-	if pathConfig.ExtensionMap != nil {
-		ext := strings.ToLower(path.Ext(decodedPath))
-		if ext != "" {
-			ext = ext[1:] // 移除开头的点
-			targetBase = pathConfig.GetTargetForExt(ext)
-		}
-	}
+	// 确定基础URL
+	targetBase := utils.GetTargetURL(h.client, r, pathConfig, decodedPath)
 
 	// 重新编码路径，保留 '/'
 	parts := strings.Split(decodedPath, "/")

@@ -7,7 +7,9 @@ import (
 	"os/signal"
 	"proxy-go/internal/compression"
 	"proxy-go/internal/config"
+	"proxy-go/internal/constants"
 	"proxy-go/internal/handler"
+	"proxy-go/internal/metrics"
 	"proxy-go/internal/middleware"
 	"strings"
 	"syscall"
@@ -18,6 +20,14 @@ func main() {
 	cfg, err := config.Load("data/config.json")
 	if err != nil {
 		log.Fatal("Error loading config:", err)
+	}
+
+	// 更新常量配置
+	constants.UpdateFromConfig(cfg)
+
+	// 初始化指标收集器
+	if err := metrics.InitCollector("data/metrics.db", cfg); err != nil {
+		log.Fatal("Error initializing metrics collector:", err)
 	}
 
 	// 创建压缩管理器
@@ -78,6 +88,9 @@ func main() {
 			return
 		case "/metrics/dashboard":
 			proxyHandler.MetricsDashboardHandler(w, r)
+			return
+		case "/metrics/history":
+			proxyHandler.AuthMiddleware(proxyHandler.MetricsHistoryHandler)(w, r)
 			return
 		}
 

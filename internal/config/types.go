@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -15,6 +16,7 @@ type Config struct {
 type PathConfig struct {
 	DefaultTarget   string            `json:"DefaultTarget"` // 默认回源地址
 	ExtensionMap    map[string]string `json:"ExtensionMap"`  // 特定后缀的回源地址
+	SizeThreshold   int64             `json:"SizeThreshold"` // 文件大小阈值(字节)，超过此大小才使用ExtensionMap
 	processedExtMap map[string]string // 内部使用，存储拆分后的映射
 }
 
@@ -35,8 +37,27 @@ type FixedPathConfig struct {
 }
 
 type MetricsConfig struct {
-	Password    string `json:"Password"`
-	TokenExpiry int    `json:"TokenExpiry"` // token有效期(秒)
+	Password      string `json:"Password"`
+	TokenExpiry   int    `json:"TokenExpiry"`
+	FeishuWebhook string `json:"FeishuWebhook"`
+	// 监控告警配置
+	Alert struct {
+		WindowSize     int           `json:"WindowSize"`     // 监控窗口数量
+		WindowInterval time.Duration `json:"WindowInterval"` // 每个窗口时间长度
+		DedupeWindow   time.Duration `json:"DedupeWindow"`   // 告警去重时间窗口
+		MinRequests    int64         `json:"MinRequests"`    // 触发告警的最小请求数
+		ErrorRate      float64       `json:"ErrorRate"`      // 错误率告警阈值
+	} `json:"Alert"`
+	// 延迟告警配置
+	Latency struct {
+		SmallFileSize  int64         `json:"SmallFileSize"`  // 小文件阈值
+		MediumFileSize int64         `json:"MediumFileSize"` // 中等文件阈值
+		LargeFileSize  int64         `json:"LargeFileSize"`  // 大文件阈值
+		SmallLatency   time.Duration `json:"SmallLatency"`   // 小文件最大延迟
+		MediumLatency  time.Duration `json:"MediumLatency"`  // 中等文件最大延迟
+		LargeLatency   time.Duration `json:"LargeLatency"`   // 大文件最大延迟
+		HugeLatency    time.Duration `json:"HugeLatency"`    // 超大文件最大延迟
+	} `json:"Latency"`
 }
 
 // 添加一个辅助方法来处理字符串到 PathConfig 的转换
@@ -114,4 +135,13 @@ func (p *PathConfig) GetTargetForExt(ext string) string {
 		return target
 	}
 	return p.DefaultTarget
+}
+
+// 添加检查扩展名是否存在的方法
+func (p *PathConfig) GetExtensionTarget(ext string) (string, bool) {
+	if p.processedExtMap == nil {
+		p.ProcessExtensionMap()
+	}
+	target, exists := p.processedExtMap[ext]
+	return target, exists
 }

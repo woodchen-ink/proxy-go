@@ -2,7 +2,13 @@ package metrics
 
 import (
 	"fmt"
+	"log"
 	"net/http"
+	"proxy-go/internal/cache"
+	"proxy-go/internal/config"
+	"proxy-go/internal/constants"
+	"proxy-go/internal/models"
+	"proxy-go/internal/monitor"
 	"runtime"
 	"sort"
 	"sync"
@@ -23,16 +29,62 @@ type Collector struct {
 	latencyBuckets [10]atomic.Int64
 	recentRequests struct {
 		sync.RWMutex
-		items  [1000]*RequestLog
+		items  [1000]*models.RequestLog
 		cursor atomic.Int64
 	}
+	db        *models.MetricsDB
+	cache     *cache.Cache
+	monitor   *monitor.Monitor
+	statsPool sync.Pool
 }
 
-var globalCollector = &Collector{
-	startTime:      time.Now(),
-	pathStats:      sync.Map{},
-	statusStats:    [6]atomic.Int64{},
-	latencyBuckets: [10]atomic.Int64{},
+var globalCollector *Collector
+
+func InitCollector(dbPath string, config *config.Config) error {
+	db, err := models.NewMetricsDB(dbPath)
+	if err != nil {
+		return err
+	}
+
+	globalCollector = &Collector{
+		startTime:      time.Now(),
+		pathStats:      sync.Map{},
+		statusStats:    [6]atomic.Int64{},
+		latencyBuckets: [10]atomic.Int64{},
+		db:             db,
+	}
+
+	globalCollector.cache = cache.NewCache(constants.CacheTTL)
+	globalCollector.monitor = monitor.NewMonitor()
+
+	// 如果配置了飞书webhook，则启用飞书告警
+	if config.Metrics.FeishuWebhook != "" {
+		globalCollector.monitor.AddHandler(
+			monitor.NewFeishuHandler(config.Metrics.FeishuWebhook),
+		)
+		log.Printf("Feishu alert enabled")
+	}
+
+	// 启动定时保存
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		for range ticker.C {
+			stats := globalCollector.GetStats()
+			if err := db.SaveMetrics(stats); err != nil {
+				log.Printf("Error saving metrics: %v", err)
+			} else {
+				log.Printf("Metrics saved successfully")
+			}
+		}
+	}()
+
+	globalCollector.statsPool = sync.Pool{
+		New: func() interface{} {
+			return make(map[string]interface{}, 20)
+		},
+	}
+
+	return nil
 }
 
 func GetCollector() *Collector {
@@ -72,37 +124,37 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 
 	// 更新路径统计
 	if stats, ok := c.pathStats.Load(path); ok {
-		pathStats := stats.(*PathStats)
-		pathStats.requests.Add(1)
+		pathStats := stats.(*models.PathStats)
+		pathStats.Requests.Add(1)
 		if status >= 400 {
-			pathStats.errors.Add(1)
+			pathStats.Errors.Add(1)
 		}
-		pathStats.bytes.Add(bytes)
-		pathStats.latencySum.Add(int64(latency))
+		pathStats.Bytes.Add(bytes)
+		pathStats.LatencySum.Add(int64(latency))
 	} else {
-		newStats := &PathStats{}
-		newStats.requests.Add(1)
+		newStats := &models.PathStats{}
+		newStats.Requests.Add(1)
 		if status >= 400 {
-			newStats.errors.Add(1)
+			newStats.Errors.Add(1)
 		}
-		newStats.bytes.Add(bytes)
-		newStats.latencySum.Add(int64(latency))
+		newStats.Bytes.Add(bytes)
+		newStats.LatencySum.Add(int64(latency))
 		c.pathStats.Store(path, newStats)
 	}
 
 	// 更新引用来源统计
 	if referer := r.Header.Get("Referer"); referer != "" {
 		if stats, ok := c.refererStats.Load(referer); ok {
-			stats.(*PathStats).requests.Add(1)
+			stats.(*models.PathStats).Requests.Add(1)
 		} else {
-			newStats := &PathStats{}
-			newStats.requests.Add(1)
+			newStats := &models.PathStats{}
+			newStats.Requests.Add(1)
 			c.refererStats.Store(referer, newStats)
 		}
 	}
 
 	// 记录最近的请求
-	log := &RequestLog{
+	log := &models.RequestLog{
 		Time:      time.Now(),
 		Path:      path,
 		Status:    status,
@@ -117,9 +169,32 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 	c.recentRequests.Unlock()
 
 	c.latencySum.Add(int64(latency))
+
+	// 更新错误统计
+	if status >= 400 {
+		c.monitor.RecordError()
+	}
+	c.monitor.RecordRequest()
+
+	// 检查延迟
+	c.monitor.CheckLatency(latency, bytes)
 }
 
 func (c *Collector) GetStats() map[string]interface{} {
+	stats := c.statsPool.Get().(map[string]interface{})
+	defer func() {
+		// 清空map并放回池中
+		for k := range stats {
+			delete(stats, k)
+		}
+		c.statsPool.Put(stats)
+	}()
+
+	// 先查缓存
+	if stats, ok := c.cache.Get("stats"); ok {
+		return stats.(map[string]interface{})
+	}
+
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
@@ -129,25 +204,25 @@ func (c *Collector) GetStats() map[string]interface{} {
 
 	// 获取状态码统计
 	statusStats := make(map[string]int64)
-	for i, v := range c.statusStats {
-		statusStats[fmt.Sprintf("%dxx", i+1)] = v.Load()
+	for i := range c.statusStats {
+		statusStats[fmt.Sprintf("%dxx", i+1)] = c.statusStats[i].Load()
 	}
 
 	// 获取Top 10路径统计
-	var pathMetrics []PathMetrics
-	var allPaths []PathMetrics
+	var pathMetrics []models.PathMetrics
+	var allPaths []models.PathMetrics
 
 	c.pathStats.Range(func(key, value interface{}) bool {
-		stats := value.(*PathStats)
-		if stats.requests.Load() == 0 {
+		stats := value.(*models.PathStats)
+		if stats.Requests.Load() == 0 {
 			return true
 		}
-		allPaths = append(allPaths, PathMetrics{
+		allPaths = append(allPaths, models.PathMetrics{
 			Path:             key.(string),
-			RequestCount:     stats.requests.Load(),
-			ErrorCount:       stats.errors.Load(),
-			AvgLatency:       FormatDuration(time.Duration(stats.latencySum.Load() / stats.requests.Load())),
-			BytesTransferred: stats.bytes.Load(),
+			RequestCount:     stats.Requests.Load(),
+			ErrorCount:       stats.Errors.Load(),
+			AvgLatency:       FormatDuration(time.Duration(stats.LatencySum.Load() / stats.Requests.Load())),
+			BytesTransferred: stats.Bytes.Load(),
 		})
 		return true
 	})
@@ -165,16 +240,16 @@ func (c *Collector) GetStats() map[string]interface{} {
 	}
 
 	// 获取Top 10引用来源
-	var refererMetrics []PathMetrics
-	var allReferers []PathMetrics
+	var refererMetrics []models.PathMetrics
+	var allReferers []models.PathMetrics
 	c.refererStats.Range(func(key, value interface{}) bool {
-		stats := value.(*PathStats)
-		if stats.requests.Load() == 0 {
+		stats := value.(*models.PathStats)
+		if stats.Requests.Load() == 0 {
 			return true
 		}
-		allReferers = append(allReferers, PathMetrics{
+		allReferers = append(allReferers, models.PathMetrics{
 			Path:         key.(string),
-			RequestCount: stats.requests.Load(),
+			RequestCount: stats.Requests.Load(),
 		})
 		return true
 	})
@@ -191,7 +266,7 @@ func (c *Collector) GetStats() map[string]interface{} {
 		refererMetrics = allReferers
 	}
 
-	return map[string]interface{}{
+	result := map[string]interface{}{
 		"uptime":           uptime.String(),
 		"active_requests":  atomic.LoadInt64(&c.activeRequests),
 		"total_requests":   totalRequests,
@@ -212,10 +287,22 @@ func (c *Collector) GetStats() map[string]interface{} {
 		"recent_requests":   c.getRecentRequests(),
 		"top_referers":      refererMetrics,
 	}
+
+	for k, v := range result {
+		stats[k] = v
+	}
+
+	// 检查告警
+	c.monitor.CheckMetrics(stats)
+
+	// 写入缓存
+	c.cache.Set("stats", stats)
+
+	return stats
 }
 
-func (c *Collector) getRecentRequests() []RequestLog {
-	var recentReqs []RequestLog
+func (c *Collector) getRecentRequests() []models.RequestLog {
+	var recentReqs []models.RequestLog
 	c.recentRequests.RLock()
 	defer c.recentRequests.RUnlock()
 
@@ -261,4 +348,8 @@ func Max(a, b float64) float64 {
 		return a
 	}
 	return b
+}
+
+func (c *Collector) GetDB() *models.MetricsDB {
+	return c.db
 }

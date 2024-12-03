@@ -17,17 +17,8 @@ type RequestLog struct {
 
 // PathStats 记录路径统计信息
 type PathStats struct {
-	requests   atomic.Int64
-	errors     atomic.Int64
-	bytes      atomic.Int64
-	latencySum atomic.Int64
-}
-
-// PathMetrics 用于API返回的路径统计信息
-type PathMetrics struct {
-	Path             string `json:"path"`
-	RequestCount     int64  `json:"request_count"`
-	ErrorCount       int64  `json:"error_count"`
-	AvgLatency       string `json:"avg_latency"`
-	BytesTransferred int64  `json:"bytes_transferred"`
+	Requests   atomic.Int64
+	Errors     atomic.Int64
+	Bytes      atomic.Int64
+	LatencySum atomic.Int64
 }
