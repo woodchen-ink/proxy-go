@@ -751,42 +751,6 @@ func (h *ProxyHandler) MetricsPageHandler(w http.ResponseWriter, r *http.Request
 
 func (h *ProxyHandler) MetricsDashboardHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	metricsTemplate = strings.Replace(metricsTemplate,
-		`</div>
-
-    <span id="lastUpdate"></span>`,
-		`</div>
-
-    <div class="card">
-        <h2>历史数据</h2>
-        <div class="time-range-buttons">
-            <button class="time-btn" data-hours="1">1小时</button>
-            <button class="time-btn" data-hours="6">6小时</button>
-            <button class="time-btn" data-hours="12">12小时</button>
-            <button class="time-btn active" data-hours="24">24小时</button>
-            <button class="time-btn" data-hours="72">3天</button>
-            <button class="time-btn" data-hours="120">5天</button>
-            <button class="time-btn" data-hours="168">7天</button>
-            <button class="time-btn" data-hours="360">15天</button>
-            <button class="time-btn" data-hours="720">30天</button>
-        </div>
-        <div id="historyChart">
-            <div class="chart-container">
-                <div class="chart">
-                    <canvas id="requestsChart"></canvas>
-                </div>
-                <div class="chart">
-                    <canvas id="errorRateChart"></canvas>
-                </div>
-                <div class="chart">
-                    <canvas id="bytesChart"></canvas>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <span id="lastUpdate"></span>`, 1)
-
 	w.Write([]byte(metricsTemplate))
 }
 
