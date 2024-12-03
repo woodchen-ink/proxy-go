@@ -181,32 +181,43 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 }
 
 func (c *Collector) GetStats() map[string]interface{} {
-	stats := c.statsPool.Get().(map[string]interface{})
-	defer func() {
-		// 清空map并放回池中
-		for k := range stats {
-			delete(stats, k)
-		}
-		c.statsPool.Put(stats)
-	}()
-
 	// 先查缓存
 	if stats, ok := c.cache.Get("stats"); ok {
-		return stats.(map[string]interface{})
+		if statsMap, ok := stats.(map[string]interface{}); ok {
+			return statsMap
+		}
 	}
 
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
-	uptime := time.Since(c.startTime)
-	totalRequests := atomic.LoadInt64(&c.totalRequests)
-	totalErrors := atomic.LoadInt64(&c.totalErrors)
+	// 确保所有字段都被初始化
+	stats := make(map[string]interface{})
 
-	// 获取状态码统计
+	// 基础指标
+	stats["active_requests"] = atomic.LoadInt64(&c.activeRequests)
+	stats["total_requests"] = atomic.LoadInt64(&c.totalRequests)
+	stats["total_errors"] = atomic.LoadInt64(&c.totalErrors)
+	stats["total_bytes"] = c.totalBytes.Load()
+
+	// 系统指标
+	stats["num_goroutine"] = runtime.NumGoroutine()
+	stats["memory_usage"] = FormatBytes(m.Alloc)
+
+	// 延迟指标
+	totalRequests := atomic.LoadInt64(&c.totalRequests)
+	if totalRequests > 0 {
+		stats["avg_latency"] = c.latencySum.Load() / totalRequests
+	} else {
+		stats["avg_latency"] = int64(0)
+	}
+
+	// 状态码统计
 	statusStats := make(map[string]int64)
 	for i := range c.statusStats {
 		statusStats[fmt.Sprintf("%dxx", i+1)] = c.statusStats[i].Load()
 	}
+	stats["status_code_stats"] = statusStats
 
 	// 获取Top 10路径统计
 	var pathMetrics []models.PathMetrics
@@ -227,17 +238,20 @@ func (c *Collector) GetStats() map[string]interface{} {
 		return true
 	})
 
-	// 按请求数排序
+	// 按请求数排序并获取前10个
 	sort.Slice(allPaths, func(i, j int) bool {
 		return allPaths[i].RequestCount > allPaths[j].RequestCount
 	})
 
-	// 取前10个
 	if len(allPaths) > 10 {
 		pathMetrics = allPaths[:10]
 	} else {
 		pathMetrics = allPaths
 	}
+	stats["top_paths"] = pathMetrics
+
+	// 获取最近请求
+	stats["recent_requests"] = c.getRecentRequests()
 
 	// 获取Top 10引用来源
 	var refererMetrics []models.PathMetrics
@@ -254,43 +268,17 @@ func (c *Collector) GetStats() map[string]interface{} {
 		return true
 	})
 
-	// 按请求数排序
+	// 按请求数排序并获取前10个
 	sort.Slice(allReferers, func(i, j int) bool {
 		return allReferers[i].RequestCount > allReferers[j].RequestCount
 	})
 
-	// 取前10个
 	if len(allReferers) > 10 {
 		refererMetrics = allReferers[:10]
 	} else {
 		refererMetrics = allReferers
 	}
-
-	result := map[string]interface{}{
-		"uptime":           uptime.String(),
-		"active_requests":  atomic.LoadInt64(&c.activeRequests),
-		"total_requests":   totalRequests,
-		"total_errors":     totalErrors,
-		"error_rate":       float64(totalErrors) / float64(totalRequests),
-		"num_goroutine":    runtime.NumGoroutine(),
-		"memory_usage":     FormatBytes(m.Alloc),
-		"total_bytes":      c.totalBytes.Load(),
-		"bytes_per_second": float64(c.totalBytes.Load()) / Max(uptime.Seconds(), 1),
-		"avg_latency": func() int64 {
-			if totalRequests > 0 {
-				return int64(c.latencySum.Load() / totalRequests)
-			}
-			return 0
-		}(),
-		"status_code_stats": statusStats,
-		"top_paths":         pathMetrics,
-		"recent_requests":   c.getRecentRequests(),
-		"top_referers":      refererMetrics,
-	}
-
-	for k, v := range result {
-		stats[k] = v
-	}
+	stats["top_referers"] = refererMetrics
 
 	// 检查告警
 	c.monitor.CheckMetrics(stats)

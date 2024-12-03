@@ -68,6 +68,17 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 		return 0
 	}
 
+	// 添加安全的字符串转换函数
+	safeString := func(v interface{}) string {
+		if v == nil {
+			return "0 B" // 返回默认值
+		}
+		if s, ok := v.(string); ok {
+			return s
+		}
+		return "0 B" // 返回默认值
+	}
+
 	totalRequests := safeInt64(stats["total_requests"])
 	metrics := Metrics{
 		Uptime:              uptime.String(),
@@ -76,15 +87,15 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 		TotalErrors:         safeInt64(stats["total_errors"]),
 		ErrorRate:           float64(safeInt64(stats["total_errors"])) / float64(max(totalRequests, 1)),
 		NumGoroutine:        safeInt(stats["num_goroutine"]),
-		MemoryUsage:         stats["memory_usage"].(string),
+		MemoryUsage:         safeString(stats["memory_usage"]), // 使用安全转换
 		AverageResponseTime: metrics.FormatDuration(time.Duration(safeInt64(stats["avg_latency"]))),
 		TotalBytes:          safeInt64(stats["total_bytes"]),
 		BytesPerSecond:      float64(safeInt64(stats["total_bytes"])) / metrics.Max(uptime.Seconds(), 1),
 		RequestsPerSecond:   float64(totalRequests) / metrics.Max(uptime.Seconds(), 1),
-		StatusCodeStats:     stats["status_code_stats"].(map[string]int64),
-		TopPaths:            stats["top_paths"].([]models.PathMetrics),
-		RecentRequests:      stats["recent_requests"].([]models.RequestLog),
-		TopReferers:         stats["top_referers"].([]models.PathMetrics),
+		StatusCodeStats:     safeStatusCodeStats(stats["status_code_stats"]), // 添加安全转换
+		TopPaths:            safePathMetrics(stats["top_paths"]),             // 添加安全转换
+		RecentRequests:      safeRequestLogs(stats["recent_requests"]),       // 添加安全转换
+		TopReferers:         safePathMetrics(stats["top_referers"]),          // 添加安全转换
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -574,7 +585,7 @@ var metricsTemplate = `
         // 每5秒自动刷新
         setInterval(refreshMetrics, 5000);
 
-        // 添加图表相关代码
+        // ��加图表相关代码
         function loadHistoryData() {
             const hours = document.getElementById('timeRange').value;
             fetch('/metrics/history?hours=' + hours, {
@@ -795,4 +806,35 @@ func (h *ProxyHandler) MetricsHistoryHandler(w http.ResponseWriter, r *http.Requ
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(metrics)
+}
+
+// 添加安全的类型转换辅助函数
+func safeStatusCodeStats(v interface{}) map[string]int64 {
+	if v == nil {
+		return make(map[string]int64)
+	}
+	if m, ok := v.(map[string]int64); ok {
+		return m
+	}
+	return make(map[string]int64)
+}
+
+func safePathMetrics(v interface{}) []models.PathMetrics {
+	if v == nil {
+		return []models.PathMetrics{}
+	}
+	if m, ok := v.([]models.PathMetrics); ok {
+		return m
+	}
+	return []models.PathMetrics{}
+}
+
+func safeRequestLogs(v interface{}) []models.RequestLog {
+	if v == nil {
+		return []models.RequestLog{}
+	}
+	if m, ok := v.([]models.RequestLog); ok {
+		return m
+	}
+	return []models.RequestLog{}
 }
