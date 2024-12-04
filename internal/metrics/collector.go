@@ -18,12 +18,17 @@ import (
 )
 
 type Collector struct {
-	startTime      time.Time
-	activeRequests int64
-	totalRequests  int64
-	totalErrors    int64
-	totalBytes     atomic.Int64
-	latencySum     atomic.Int64
+	startTime       time.Time
+	activeRequests  int64
+	totalRequests   int64
+	totalErrors     int64
+	totalBytes      atomic.Int64
+	latencySum      atomic.Int64
+	persistentStats struct {
+		totalRequests atomic.Int64
+		totalErrors   atomic.Int64
+		totalBytes    atomic.Int64
+	}
 	pathStats      sync.Map
 	refererStats   sync.Map
 	statusStats    [6]atomic.Int64
@@ -53,6 +58,15 @@ func InitCollector(dbPath string, config *config.Config) error {
 		statusStats:    [6]atomic.Int64{},
 		latencyBuckets: [10]atomic.Int64{},
 		db:             db,
+	}
+
+	// 加载历史数据
+	if lastMetrics, err := db.GetLastMetrics(); err == nil && lastMetrics != nil {
+		globalCollector.persistentStats.totalRequests.Store(lastMetrics.TotalRequests)
+		globalCollector.persistentStats.totalErrors.Store(lastMetrics.TotalErrors)
+		globalCollector.persistentStats.totalBytes.Store(lastMetrics.TotalBytes)
+		log.Printf("Loaded historical metrics: requests=%d, errors=%d, bytes=%d",
+			lastMetrics.TotalRequests, lastMetrics.TotalErrors, lastMetrics.TotalBytes)
 	}
 
 	globalCollector.cache = cache.NewCache(constants.CacheTTL)
@@ -95,13 +109,28 @@ func InitCollector(dbPath string, config *config.Config) error {
 	// 设置程序退出时的处理
 	utils.SetupCloseHandler(func() {
 		log.Println("Saving final metrics before shutdown...")
+		// 确保所有正在进行的操作完成
+		time.Sleep(time.Second)
+
 		stats := globalCollector.GetStats()
-		if err := db.SaveFullMetrics(stats); err != nil {
+		if err := db.SaveMetrics(stats); err != nil {
 			log.Printf("Error saving final metrics: %v", err)
 		} else {
-			log.Printf("Final metrics saved successfully")
+			log.Printf("Basic metrics saved successfully")
 		}
+
+		// 保存完整统计数据
+		if err := db.SaveFullMetrics(stats); err != nil {
+			log.Printf("Error saving full metrics: %v", err)
+		} else {
+			log.Printf("Full metrics saved successfully")
+		}
+
+		// 等待数据写入完成
+		time.Sleep(time.Second)
+
 		db.Close()
+		log.Println("Database closed successfully")
 	})
 
 	globalCollector.statsPool = sync.Pool{
@@ -220,20 +249,33 @@ func (c *Collector) GetStats() map[string]interface{} {
 	// 确保所有字段都被初始化
 	stats := make(map[string]interface{})
 
-	// 基础指标
+	// 基础指标 - 合并当前会话和持久化的数据
+	currentRequests := atomic.LoadInt64(&c.totalRequests)
+	currentErrors := atomic.LoadInt64(&c.totalErrors)
+	currentBytes := c.totalBytes.Load()
+
+	totalRequests := currentRequests + c.persistentStats.totalRequests.Load()
+	totalErrors := currentErrors + c.persistentStats.totalErrors.Load()
+	totalBytes := currentBytes + c.persistentStats.totalBytes.Load()
+
+	// 计算每秒指标
+	uptime := time.Since(c.startTime).Seconds()
+	stats["requests_per_second"] = float64(currentRequests) / Max(uptime, 1)
+	stats["bytes_per_second"] = float64(currentBytes) / Max(uptime, 1)
+
 	stats["active_requests"] = atomic.LoadInt64(&c.activeRequests)
-	stats["total_requests"] = atomic.LoadInt64(&c.totalRequests)
-	stats["total_errors"] = atomic.LoadInt64(&c.totalErrors)
-	stats["total_bytes"] = c.totalBytes.Load()
+	stats["total_requests"] = totalRequests
+	stats["total_errors"] = totalErrors
+	stats["total_bytes"] = totalBytes
 
 	// 系统指标
 	stats["num_goroutine"] = runtime.NumGoroutine()
 	stats["memory_usage"] = FormatBytes(m.Alloc)
 
 	// 延迟指标
-	totalRequests := atomic.LoadInt64(&c.totalRequests)
-	if totalRequests > 0 {
-		stats["avg_latency"] = c.latencySum.Load() / totalRequests
+	currentTotalRequests := atomic.LoadInt64(&c.totalRequests)
+	if currentTotalRequests > 0 {
+		stats["avg_latency"] = c.latencySum.Load() / currentTotalRequests
 	} else {
 		stats["avg_latency"] = int64(0)
 	}
@@ -366,4 +408,36 @@ func Max(a, b float64) float64 {
 
 func (c *Collector) GetDB() *models.MetricsDB {
 	return c.db
+}
+
+func (c *Collector) SaveMetrics(stats map[string]interface{}) error {
+	// 更新持久化数据
+	c.persistentStats.totalRequests.Store(stats["total_requests"].(int64))
+	c.persistentStats.totalErrors.Store(stats["total_errors"].(int64))
+	c.persistentStats.totalBytes.Store(stats["total_bytes"].(int64))
+
+	// 重置当前会话计数器
+	atomic.StoreInt64(&c.totalRequests, 0)
+	atomic.StoreInt64(&c.totalErrors, 0)
+	c.totalBytes.Store(0)
+	c.latencySum.Store(0)
+
+	// 重置状态码统计
+	for i := range c.statusStats {
+		c.statusStats[i].Store(0)
+	}
+
+	// 重置路径统计
+	c.pathStats.Range(func(key, _ interface{}) bool {
+		c.pathStats.Delete(key)
+		return true
+	})
+
+	// 重置引用来源统计
+	c.refererStats.Range(func(key, _ interface{}) bool {
+		c.refererStats.Delete(key)
+		return true
+	})
+
+	return c.db.SaveMetrics(stats)
 }

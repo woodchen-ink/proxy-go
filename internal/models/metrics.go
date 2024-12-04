@@ -2,8 +2,10 @@ package models
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"proxy-go/internal/constants"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -47,11 +49,30 @@ type MetricsDB struct {
 	DB *sql.DB
 }
 
+type PerformanceMetrics struct {
+	Timestamp         string  `json:"timestamp"`
+	AvgResponseTime   int64   `json:"avg_response_time"`
+	RequestsPerSecond float64 `json:"requests_per_second"`
+	BytesPerSecond    float64 `json:"bytes_per_second"`
+}
+
 func NewMetricsDB(dbPath string) (*MetricsDB, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, err
 	}
+
+	// 设置连接池参数
+	db.SetMaxOpenConns(1) // SQLite 只支持一个写连接
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(time.Hour)
+
+	// 设置数据库优化参数
+	db.Exec("PRAGMA busy_timeout = 5000")  // 设置忙等待超时
+	db.Exec("PRAGMA journal_mode = WAL")   // 使用 WAL 模式提高并发性能
+	db.Exec("PRAGMA synchronous = NORMAL") // 在保证安全的前提下提高性能
+	db.Exec("PRAGMA cache_size = -2000")   // 使用2MB缓存
+	db.Exec("PRAGMA temp_store = MEMORY")  // 临时表使用内存
 
 	// 创建必要的表
 	if err := initTables(db); err != nil {
@@ -194,45 +215,80 @@ func initTables(db *sql.DB) error {
 
 // 定期清理旧数据
 func cleanupRoutine(db *sql.DB) {
+	// 避免在启动时就立即清理
+	time.Sleep(5 * time.Minute)
+
 	ticker := time.NewTicker(constants.CleanupInterval)
 	for range ticker.C {
-		// 开始事务
+		start := time.Now()
+		var totalDeleted int64
+
+		// 检查数据库大小
+		var dbSize int64
+		row := db.QueryRow("SELECT page_count * page_size FROM pragma_page_count, pragma_page_size")
+		row.Scan(&dbSize)
+		log.Printf("Current database size: %s", FormatBytes(uint64(dbSize)))
+
 		tx, err := db.Begin()
 		if err != nil {
 			log.Printf("Error starting cleanup transaction: %v", err)
 			continue
 		}
 
-		// 删除超过保留期限的数据
+		// 优化清理性能
+		tx.Exec("PRAGMA synchronous = NORMAL")
+		tx.Exec("PRAGMA journal_mode = WAL")
+		tx.Exec("PRAGMA temp_store = MEMORY")
+		tx.Exec("PRAGMA cache_size = -2000")
+
+		// 先清理索引
+		tx.Exec("ANALYZE")
+		tx.Exec("PRAGMA optimize")
+
 		cutoff := time.Now().Add(-constants.DataRetention)
-		_, err = tx.Exec(`DELETE FROM metrics_history WHERE timestamp < ?`, cutoff)
-		if err != nil {
-			tx.Rollback()
-			log.Printf("Error cleaning metrics_history: %v", err)
-			continue
+		tables := []string{
+			"metrics_history",
+			"status_stats",
+			"path_stats",
+			"performance_metrics",
+			"status_code_history",
+			"popular_paths_history",
+			"referer_history",
 		}
 
-		_, err = tx.Exec(`DELETE FROM status_stats WHERE timestamp < ?`, cutoff)
-		if err != nil {
-			tx.Rollback()
-			log.Printf("Error cleaning status_stats: %v", err)
-			continue
+		for _, table := range tables {
+			// 使用批量删除提高性能
+			for {
+				result, err := tx.Exec(`DELETE FROM `+table+` WHERE timestamp < ? LIMIT 1000`, cutoff)
+				if err != nil {
+					tx.Rollback()
+					log.Printf("Error cleaning %s: %v", table, err)
+					break
+				}
+				rows, _ := result.RowsAffected()
+				totalDeleted += rows
+				if rows < 1000 {
+					break
+				}
+			}
 		}
 
-		_, err = tx.Exec(`DELETE FROM path_stats WHERE timestamp < ?`, cutoff)
-		if err != nil {
-			tx.Rollback()
-			log.Printf("Error cleaning path_stats: %v", err)
-			continue
-		}
-
-		// 提交事务
 		if err := tx.Commit(); err != nil {
 			log.Printf("Error committing cleanup transaction: %v", err)
 		} else {
-			log.Printf("Successfully cleaned up old metrics data")
+			log.Printf("Cleaned up %d old records in %v, freed %s",
+				totalDeleted, time.Since(start),
+				FormatBytes(uint64(dbSize-getDBSize(db))))
 		}
 	}
+}
+
+// 获取数据库大小
+func getDBSize(db *sql.DB) int64 {
+	var size int64
+	row := db.QueryRow("SELECT page_count * page_size FROM pragma_page_count, pragma_page_size")
+	row.Scan(&size)
+	return size
 }
 
 func (db *MetricsDB) SaveMetrics(stats map[string]interface{}) error {
@@ -291,6 +347,21 @@ func (db *MetricsDB) SaveMetrics(stats map[string]interface{}) error {
 		}
 	}
 
+	// 同时保存性能指标
+	_, err = tx.Exec(`
+		INSERT INTO performance_metrics (
+			avg_response_time,
+			requests_per_second,
+			bytes_per_second
+		) VALUES (?, ?, ?)`,
+		stats["avg_latency"],
+		stats["requests_per_second"],
+		stats["bytes_per_second"],
+	)
+	if err != nil {
+		return err
+	}
+
 	return tx.Commit()
 }
 
@@ -299,9 +370,18 @@ func (db *MetricsDB) Close() error {
 }
 
 func (db *MetricsDB) GetRecentMetrics(hours int) ([]HistoricalMetrics, error) {
+	// 设置查询优化参数
+	db.DB.Exec("PRAGMA temp_store = MEMORY")
+	db.DB.Exec("PRAGMA cache_size = -4000")    // 使用4MB缓存
+	db.DB.Exec("PRAGMA mmap_size = 268435456") // 使用256MB内存映射
+
 	var interval string
 	if hours <= 24 {
-		interval = "%Y-%m-%d %H:%M:00" // 按分钟分组
+		if hours <= 1 {
+			interval = "%Y-%m-%d %H:%M:00" // 按分钟分组
+		} else {
+			interval = "%Y-%m-%d %H:00:00" // 按小时分组
+		}
 	} else if hours <= 168 {
 		interval = "%Y-%m-%d %H:00:00" // 按小时分组
 	} else {
@@ -411,6 +491,26 @@ func (db *MetricsDB) SaveFullMetrics(stats map[string]interface{}) error {
 	}
 	defer tx.Rollback()
 
+	// 开始时记录数据库大小
+	startSize := getDBSize(db.DB)
+
+	// 优化写入性能
+	tx.Exec("PRAGMA synchronous = NORMAL")
+	tx.Exec("PRAGMA journal_mode = WAL")
+	tx.Exec("PRAGMA temp_store = MEMORY")
+	tx.Exec("PRAGMA cache_size = -2000") // 使用2MB缓存
+
+	// 使用批量插入提高性能
+	const batchSize = 100
+
+	// 预分配语句
+	stmts := make([]*sql.Stmt, 0, 4)
+	defer func() {
+		for _, stmt := range stmts {
+			stmt.Close()
+		}
+	}()
+
 	// 保存性能指标
 	_, err = tx.Exec(`
 		INSERT INTO performance_metrics (
@@ -426,26 +526,30 @@ func (db *MetricsDB) SaveFullMetrics(stats map[string]interface{}) error {
 		return err
 	}
 
+	// 使用事务提高写入性能
+	tx.Exec("PRAGMA synchronous = OFF")
+	tx.Exec("PRAGMA journal_mode = MEMORY")
+
 	// 保存状态码统计
 	statusStats := stats["status_code_stats"].(map[string]int64)
-	stmt, err := tx.Prepare(`
-		INSERT INTO status_code_history (status_group, count)
-		VALUES (?, ?)
-	`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
+	values := make([]string, 0, len(statusStats))
+	args := make([]interface{}, 0, len(statusStats)*2)
 
 	for group, count := range statusStats {
-		if _, err := stmt.Exec(group, count); err != nil {
-			return err
-		}
+		values = append(values, "(?, ?)")
+		args = append(args, group, count)
+	}
+
+	query := "INSERT INTO status_code_history (status_group, count) VALUES " +
+		strings.Join(values, ",")
+
+	if _, err := tx.Exec(query, args...); err != nil {
+		return err
 	}
 
 	// 保存热门路径
 	pathStats := stats["top_paths"].([]PathMetrics)
-	stmt, err = tx.Prepare(`
+	pathStmt, err := tx.Prepare(`
 		INSERT INTO popular_paths_history (
 			path, request_count, error_count, avg_latency, bytes_transferred
 		) VALUES (?, ?, ?, ?, ?)
@@ -453,9 +557,10 @@ func (db *MetricsDB) SaveFullMetrics(stats map[string]interface{}) error {
 	if err != nil {
 		return err
 	}
+	defer pathStmt.Close()
 
 	for _, p := range pathStats {
-		if _, err := stmt.Exec(
+		if _, err := pathStmt.Exec(
 			p.Path, p.RequestCount, p.ErrorCount,
 			p.AvgLatency, p.BytesTransferred,
 		); err != nil {
@@ -465,19 +570,109 @@ func (db *MetricsDB) SaveFullMetrics(stats map[string]interface{}) error {
 
 	// 保存引用来源
 	refererStats := stats["top_referers"].([]PathMetrics)
-	stmt, err = tx.Prepare(`
+	refererStmt, err := tx.Prepare(`
 		INSERT INTO referer_history (referer, request_count)
 		VALUES (?, ?)
 	`)
 	if err != nil {
 		return err
 	}
+	defer refererStmt.Close()
 
 	for _, r := range refererStats {
-		if _, err := stmt.Exec(r.Path, r.RequestCount); err != nil {
+		if _, err := refererStmt.Exec(r.Path, r.RequestCount); err != nil {
 			return err
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	// 记录写入的数据量
+	endSize := getDBSize(db.DB)
+	log.Printf("Saved metrics: wrote %s to database",
+		FormatBytes(uint64(endSize-startSize)))
+
+	return nil
+}
+
+func (db *MetricsDB) GetLastMetrics() (*HistoricalMetrics, error) {
+	row := db.DB.QueryRow(`
+		SELECT 
+			total_requests,
+			total_errors,
+			total_bytes,
+			avg_latency
+		FROM metrics_history 
+		ORDER BY timestamp DESC 
+		LIMIT 1
+	`)
+
+	var metrics HistoricalMetrics
+	err := row.Scan(
+		&metrics.TotalRequests,
+		&metrics.TotalErrors,
+		&metrics.TotalBytes,
+		&metrics.AvgLatency,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &metrics, nil
+}
+
+func (db *MetricsDB) GetRecentPerformanceMetrics(hours int) ([]PerformanceMetrics, error) {
+	rows, err := db.DB.Query(`
+		SELECT 
+			strftime('%Y-%m-%d %H:%M:00', timestamp, 'localtime') as ts,
+			AVG(avg_response_time) as avg_response_time,
+			AVG(requests_per_second) as requests_per_second,
+			AVG(bytes_per_second) as bytes_per_second
+		FROM performance_metrics
+		WHERE timestamp >= datetime('now', '-' || ? || ' hours', 'localtime')
+		GROUP BY ts
+		ORDER BY ts DESC
+	`, hours)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var metrics []PerformanceMetrics
+	for rows.Next() {
+		var m PerformanceMetrics
+		err := rows.Scan(
+			&m.Timestamp,
+			&m.AvgResponseTime,
+			&m.RequestsPerSecond,
+			&m.BytesPerSecond,
+		)
+		if err != nil {
+			return nil, err
+		}
+		metrics = append(metrics, m)
+	}
+
+	return metrics, rows.Err()
+}
+
+// FormatBytes 格式化字节大小
+func FormatBytes(bytes uint64) string {
+	const (
+		MB = 1024 * 1024
+		KB = 1024
+	)
+
+	switch {
+	case bytes >= MB:
+		return fmt.Sprintf("%.2f MB", float64(bytes)/MB)
+	case bytes >= KB:
+		return fmt.Sprintf("%.2f KB", float64(bytes)/KB)
+	default:
+		return fmt.Sprintf("%d Bytes", bytes)
+	}
 }

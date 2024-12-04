@@ -319,6 +319,16 @@ var metricsTemplate = `
         .chart {
             height: 200px;
             margin-bottom: 50px;
+            position: relative;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .chart h3 {
+            margin: 0 0 15px 0;
+            color: #666;
+            font-size: 14px;
         }
         #timeRange {
             padding: 8px;
@@ -354,6 +364,93 @@ var metricsTemplate = `
             color: white;
             border-color: #0056b3;
         }
+        .controls {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 15px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+        
+        .controls label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 14px;
+            color: #666;
+        }
+        
+        .controls select {
+            padding: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
++       #statusCodes {
++           display: flex;
++           gap: 20px;
++           align-items: center;
++           flex-wrap: wrap;
++       }
++       
++       #statusCodes .metric {
++           flex: 0 0 auto;
++           display: flex;
++           align-items: center;
++           gap: 10px;
++           padding: 5px 15px;
++           background: #f8f9fa;
++           border-radius: 20px;
++           margin: 0;
++           border: none;
++       }
++       
+        .status-badge {
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            color: white;
+        }
++       .loading {
++           position: relative;
++           opacity: 0.6;
++       }
++       .loading::after {
++           content: "加载中...";
++           position: absolute;
++           top: 50%;
++           left: 50%;
++           transform: translate(-50%, -50%);
++           background: rgba(255,255,255,0.9);
++           padding: 10px 20px;
++           border-radius: 4px;
++           box-shadow: 0 2px 4px rgba(0,0,0,0.1);
++       }
++       .error-message {
++           position: fixed;
++           top: 20px;
++           right: 20px;
++           background: #dc3545;
++           color: white;
++           padding: 10px 20px;
++           border-radius: 4px;
++           box-shadow: 0 2px 4px rgba(0,0,0,0.2);
++           z-index: 1000;
++           display: none;
++       }
++       .export-btn {
++           padding: 8px 16px;
++           background: #28a745;
++           color: white;
++           border: none;
++           border-radius: 4px;
++           cursor: pointer;
++           transition: all 0.3s;
++       }
++       .export-btn:hover {
++           background: #218838;
++       }
     </style>
 </head>
 <body>
@@ -474,16 +571,39 @@ var metricsTemplate = `
 
     <div class="card">
         <h2>历史数据</h2>
+        <div class="controls">
+            <label>
+                <input type="checkbox" id="autoRefresh" checked>
+                自动刷新
+            </label>
+            <select id="refreshInterval">
+                <option value="5000">5秒</option>
+                <option value="10000">10秒</option>
+                <option value="30000">30秒</option>
+                <option value="60000">1分钟</option>
+            </select>
+            <button onclick="exportData()" class="export-btn">
+                导出数据
+            </button>
+        </div>
         <div class="time-range-buttons">
-            <button class="time-btn" data-hours="1">1小时</button>
-            <button class="time-btn" data-hours="6">6小时</button>
-            <button class="time-btn" data-hours="12">12小时</button>
-            <button class="time-btn active" data-hours="24">24小时</button>
-            <button class="time-btn" data-hours="72">3天</button>
-            <button class="time-btn" data-hours="120">5天</button>
-            <button class="time-btn" data-hours="168">7天</button>
-            <button class="time-btn" data-hours="360">15天</button>
-            <button class="time-btn" data-hours="720">30天</button>
+            <div class="time-range-group">
+                <span class="group-label">最近:</span>
+                <button class="time-btn" data-hours="0.5">30分钟</button>
+                <button class="time-btn" data-hours="1">1小时</button>
+                <button class="time-btn" data-hours="3">3小时</button>
+                <button class="time-btn" data-hours="6">6小时</button>
+                <button class="time-btn" data-hours="12">12小时</button>
+                <button class="time-btn active" data-hours="24">24小时</button>
+            </div>
+            <div class="time-range-group">
+                <span class="group-label">历史:</span>
+                <button class="time-btn" data-hours="72">3天</button>
+                <button class="time-btn" data-hours="120">5天</button>
+                <button class="time-btn" data-hours="168">7天</button>
+                <button class="time-btn" data-hours="360">15天</button>
+                <button class="time-btn" data-hours="720">30天</button>
+            </div>
         </div>
         <div id="historyChart">
             <div class="chart-container">
@@ -505,6 +625,8 @@ var metricsTemplate = `
 
     <span id="lastUpdate"></span>
     <button class="refresh" onclick="refreshMetrics()">刷新</button>
+
+    <div id="errorMessage" class="error-message"></div>
 
     <script>
         // 检查登录状态
@@ -554,15 +676,13 @@ var metricsTemplate = `
             document.getElementById('totalBytes').textContent = formatBytes(data.total_bytes);
             document.getElementById('bytesPerSecond').textContent = formatBytes(data.bytes_per_second) + '/s';
 
-            // 更新状态码统计
+            // 更新状态码计
             const statusCodesHtml = Object.entries(data.status_code_stats)
                 .map(([status, count]) => {
                     const statusClass = 'status-' + status.charAt(0) + 'xx';
                     return '<div class="metric">' +
-                        '<span class="metric-label">' +
                         '<span class="status-badge ' + statusClass + '">' + status + '</span>' +
-                        '</span>' +
-                        '<span class="metric-value">' + count + '</span>' +
+                        '<span class="metric-value">' + count.toLocaleString() + '</span>' +
                         '</div>';
                 })
                 .join('');
@@ -605,6 +725,15 @@ var metricsTemplate = `
             document.getElementById('lastUpdate').textContent = '最后更新: ' + new Date().toLocaleTimeString();
         }
 
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            setTimeout(() => {
+                errorDiv.style.display = 'none';
+            }, 3000);
+        }
+
         function refreshMetrics() {
             fetch('/metrics', {
                 headers: {
@@ -613,17 +742,19 @@ var metricsTemplate = `
             })
             .then(response => {
                 if (response.status === 401) {
-                    // token 无效,跳转到登录页
                     localStorage.removeItem('metricsToken');
                     window.location.href = '/metrics/ui';
                     return;
+                }
+                if (!response.ok) {
+                    throw new Error('获取数据失败');
                 }
                 return response.json();
             })
             .then(data => {
                 if (data) updateMetrics(data);
             })
-            .catch(error => console.error('Error:', error));
+            .catch(error => showError(error.message));
         }
 
         // 初始加载
@@ -640,6 +771,9 @@ var metricsTemplate = `
         };
 
         function loadHistoryData(hours) {
+            const chartContainer = document.getElementById('historyChart');
+            chartContainer.classList.add('loading');
+
             fetch('/metrics/history?hours=' + hours, {
                 headers: {
                     'Authorization': 'Bearer ' + token
@@ -672,6 +806,30 @@ var metricsTemplate = `
                     plugins: {
                         legend: {
                             display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+                                    if (label) {
+                                        label += ': ';
+                                    }
+                                    if (context.parsed.y !== null) {
+                                        if (context.chart.canvas.id === 'bytesChart') {
+                                            label += formatBytes(context.parsed.y * 1024 * 1024);
+                                        } else if (context.chart.canvas.id === 'errorRateChart') {
+                                            label += context.parsed.y.toFixed(2) + '%';
+                                        } else {
+                                            label += context.parsed.y.toLocaleString();
+                                        }
+                                    }
+                                    return label;
+                                },
+                                title: function(tooltipItems) {
+                                    const date = new Date(tooltipItems[0].label);
+                                    return date.toLocaleString();
+                                }
+                            }
                         }
                     },
                     scales: {
@@ -679,12 +837,26 @@ var metricsTemplate = `
                             display: true,
                             grid: {
                                 display: false
+                            },
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 45,
+                                autoSkip: true,
+                                maxTicksLimit: 20
                             }
                         },
                         y: {
                             beginAtZero: true,
                             grid: {
                                 drawBorder: false
+                            },
+                            ticks: {
+                                callback: function(value) {
+                                    if (this.chart.canvas.id === 'bytesChart') {
+                                        return formatBytes(value * 1024 * 1024);
+                                    }
+                                    return value;
+                                }
                             }
                         }
                     },
@@ -693,8 +865,15 @@ var metricsTemplate = `
                             tension: 0.4
                         },
                         point: {
-                            radius: 2
+                            radius: 2,
+                            hitRadius: 10,
+                            hoverRadius: 5
                         }
+                    },
+                    interaction: {
+                        mode: 'nearest',
+                        axis: 'x',
+                        intersect: false
                     }
                 };
 
@@ -706,7 +885,9 @@ var metricsTemplate = `
                 updateChart('bytesChart', 'bytes', labels, data, '流量 (MB)', 
                     m => m.total_bytes / (1024 * 1024), '#28a745', commonOptions);
             })
-            .catch(error => console.error('Error:', error));
+            .finally(() => {
+                chartContainer.classList.remove('loading');
+            });
         }
 
         function updateChart(canvasId, chartKey, labels, data, label, valueGetter, color, options) {
@@ -756,6 +937,69 @@ var metricsTemplate = `
         document.addEventListener('DOMContentLoaded', function() {
             loadHistoryData(24);
         });
+
+        let refreshTimer;
+
+        function setupAutoRefresh() {
+            const autoRefresh = document.getElementById('autoRefresh');
+            const refreshInterval = document.getElementById('refreshInterval');
+            
+            function updateRefreshTimer() {
+                if (refreshTimer) {
+                    clearInterval(refreshTimer);
+                }
+                if (autoRefresh.checked) {
+                    refreshTimer = setInterval(refreshMetrics, parseInt(refreshInterval.value));
+                }
+            }
+            
+            autoRefresh.addEventListener('change', updateRefreshTimer);
+            refreshInterval.addEventListener('change', updateRefreshTimer);
+            
+            updateRefreshTimer();
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            loadHistoryData(24);
+            setupAutoRefresh();
+        });
+
+        function exportData() {
+            const activeBtn = document.querySelector('.time-btn.active');
+            const hours = parseInt(activeBtn.dataset.hours);
+            
+            fetch('/metrics/history?hours=' + hours, {
+                headers: {
+                    'Authorization': 'Bearer ' + token
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                const csv = convertToCSV(data);
+                downloadCSV(csv, 'metrics_' + hours + 'h_' + new Date().toISOString() + '.csv');
+            })
+            .catch(error => showError('导出失败: ' + error.message));
+        }
+        
+        function convertToCSV(data) {
+            const headers = ['时间', '请求数', '错误数', '流量(MB)', '错误率(%)'];
+            const rows = data.map(row => [
+                row.timestamp,
+                row.total_requests,
+                row.total_errors,
+                (row.total_bytes / (1024 * 1024)).toFixed(2),
+                (row.error_rate * 100).toFixed(2)
+            ]);
+            return [headers, ...rows].map(row => row.join(',')).join('\n');
+        }
+        
+        function downloadCSV(csv, filename) {
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = filename;
+            link.click();
+        }
     </script>
 
     <!-- 添加 Chart.js -->
