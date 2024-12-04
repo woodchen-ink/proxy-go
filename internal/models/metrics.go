@@ -32,7 +32,7 @@ type HistoricalMetrics struct {
 	TotalErrors   int64   `json:"total_errors"`
 	TotalBytes    int64   `json:"total_bytes"`
 	ErrorRate     float64 `json:"error_rate"`
-	AvgLatency    int64   `json:"avg_latency"`
+	AvgLatency    float64 `json:"avg_latency"`
 }
 
 type PathMetrics struct {
@@ -247,10 +247,10 @@ func (db *MetricsDB) GetRecentMetrics(hours int) ([]HistoricalMetrics, error) {
 				SUM(total_requests) as total_requests,
 				SUM(total_errors) as total_errors,
 				SUM(total_bytes) as total_bytes,
-				AVG(avg_latency) as avg_latency
+				CAST(AVG(CAST(avg_latency AS FLOAT)) AS FLOAT) as avg_latency
 			FROM metrics_history
 			WHERE timestamp >= datetime('now', '-' || ?2 || ' hours')
-			GROUP BY group_time
+				GROUP BY group_time
 			ORDER BY group_time DESC
 		)
 		SELECT * FROM grouped_metrics
