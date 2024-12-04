@@ -312,7 +312,7 @@ func (db *MetricsDB) GetRecentMetrics(hours int) ([]HistoricalMetrics, error) {
 	rows, err := db.DB.Query(`
 		WITH time_series AS (
 			-- 生成时间序列
-			SELECT datetime('now', '-' || ?2 || ' hours', 'localtime') + 
+			SELECT datetime('now', 'localtime') - 
 				   (CASE 
 						WHEN ?2 <= 24 THEN (300 * n) -- 5分钟间隔
 						WHEN ?2 <= 168 THEN (3600 * n) -- 1小时间隔
@@ -327,7 +327,8 @@ func (db *MetricsDB) GetRecentMetrics(hours int) ([]HistoricalMetrics, error) {
 					ELSE ?2 / 24 -- 1天间隔
 				END)
 			)
-			WHERE time_point <= datetime('now', 'localtime')
+			WHERE time_point >= datetime('now', '-' || ?2 || ' hours', 'localtime')
+			  AND time_point <= datetime('now', 'localtime')
 		),
 		grouped_metrics AS (
 			SELECT 
