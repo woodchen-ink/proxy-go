@@ -629,7 +629,7 @@ var metricsTemplate = `
         // 每5秒自动刷新
         setInterval(refreshMetrics, 5000);
 
-        // 修改图表加载相关代码
+        // 修改图表相关代码
         let currentCharts = {
             requests: null,
             errorRate: null,
@@ -644,6 +644,11 @@ var metricsTemplate = `
             })
             .then(response => response.json())
             .then(data => {
+                if (!Array.isArray(data)) {
+                    console.error('Invalid data format');
+                    return;
+                }
+
                 // 反转数据顺序，使时间从左到右
                 data.reverse();
                 
@@ -658,27 +663,64 @@ var metricsTemplate = `
                     }
                 });
 
-                // 更新图表配置，添加时间轴方向设置
-                const chartOptions = {
+                const commonOptions = {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
                     scales: {
                         x: {
-                            reverse: false // 确保时间轴从左到右
+                            display: true,
+                            grid: {
+                                display: false
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            grid: {
+                                drawBorder: false
+                            }
+                        }
+                    },
+                    elements: {
+                        line: {
+                            tension: 0.4
+                        },
+                        point: {
+                            radius: 2
                         }
                     }
                 };
 
                 // 更新或创建图表
-                updateChart('requestsChart', currentCharts.requests, labels, data, '请求数', 
-                    m => m.total_requests, '#007bff', chartOptions);
-                updateChart('errorRateChart', currentCharts.errorRate, labels, data, '错误率 (%)', 
-                    m => m.error_rate * 100, '#dc3545', chartOptions);
-                updateChart('bytesChart', currentCharts.bytes, labels, data, '流量 (MB)', 
-                    m => m.total_bytes / (1024 * 1024), '#28a745', chartOptions);
-            });
+                updateChart('requestsChart', 'requests', labels, data, '请求数', 
+                    m => m.total_requests, '#007bff', commonOptions);
+                updateChart('errorRateChart', 'errorRate', labels, data, '错误率 (%)', 
+                    m => m.error_rate * 100, '#dc3545', commonOptions);
+                updateChart('bytesChart', 'bytes', labels, data, '流量 (MB)', 
+                    m => m.total_bytes / (1024 * 1024), '#28a745', commonOptions);
+            })
+            .catch(error => console.error('Error:', error));
         }
 
-        function updateChart(canvasId, chartInstance, labels, data, label, valueGetter, color, options = {}) {
-            const ctx = document.getElementById(canvasId).getContext('2d');
+        function updateChart(canvasId, chartKey, labels, data, label, valueGetter, color, options) {
+            // 确保 canvas 元素存在
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) {
+                console.error('Canvas element ' + canvasId + ' not found');
+                return;
+            }
+
+            // 如果存在旧图表，销毁它
+            if (currentCharts[chartKey]) {
+                currentCharts[chartKey].destroy();
+                currentCharts[chartKey] = null;
+            }
+
+            const ctx = canvas.getContext('2d');
             const chartData = {
                 labels: labels,
                 datasets: [{
@@ -686,52 +728,16 @@ var metricsTemplate = `
                     data: data.map(valueGetter),
                     borderColor: color,
                     backgroundColor: color + '20',
-                    fill: true,
-                    tension: 0.4
+                    fill: true
                 }]
             };
 
-            if (chartInstance) {
-                chartInstance.data = chartData;
-                chartInstance.options = {
-                    ...chartInstance.options,
-                    ...options,
-                    animation: false
-                };
-                chartInstance.update();
-            } else {
-                // 创建新图表前先销毁旧的
-                if (currentCharts[canvasId.replace('Chart', '')]) {
-                    currentCharts[canvasId.replace('Chart', '')].destroy();
-                }
-                
-                // 创建新图表
-                const newChart = new Chart(ctx, {
-                    type: 'line',
-                    data: chartData,
-                    options: {
-                        ...options,
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                            legend: {
-                                display: false
-                            }
-                        },
-                        scales: {
-                            y: {
-                                beginAtZero: true
-                            },
-                            x: {
-                                reverse: false
-                            }
-                        }
-                    }
-                });
-
-                // 更新 currentCharts 对象
-                currentCharts[canvasId.replace('Chart', '')] = newChart;
-            }
+            // 创建新图表
+            currentCharts[chartKey] = new Chart(ctx, {
+                type: 'line',
+                data: chartData,
+                options: options
+            });
         }
 
         // 时间范围按钮处理
@@ -739,16 +745,19 @@ var metricsTemplate = `
             btn.addEventListener('click', function() {
                 document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('active'));
                 this.classList.add('active');
-                loadHistoryData(this.dataset.hours);
+                loadHistoryData(parseInt(this.dataset.hours));
             });
         });
 
         // 初始加载历史数据
-        loadHistoryData(24);
+        document.addEventListener('DOMContentLoaded', function() {
+            loadHistoryData(24);
+        });
     </script>
 
     <!-- 添加 Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- 在 body 结束标签前添加 -->
+<script src="https://i-aws.czl.net/jsdelivr/npm/chart.js@3.7.0/dist/chart.min.js"></script>
 </body>
 </html>
 `
