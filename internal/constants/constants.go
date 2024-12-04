@@ -41,6 +41,12 @@ var (
 	// 单位常量
 	KB int64 = 1024
 	MB int64 = 1024 * KB
+
+	// 不同类型数据的保留时间
+	MetricsRetention = 90 * 24 * time.Hour // 基础指标保留90天
+	StatusRetention  = 30 * 24 * time.Hour // 状态码统计保留30天
+	PathRetention    = 7 * 24 * time.Hour  // 路径统计保留7天
+	RefererRetention = 7 * 24 * time.Hour  // 引用来源保留7天
 )
 
 // UpdateFromConfig 从配置文件更新常量

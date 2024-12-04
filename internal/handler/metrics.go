@@ -392,6 +392,7 @@ var metricsTemplate = `
 +           gap: 20px;
 +           align-items: center;
 +           flex-wrap: wrap;
++           padding: 10px;
 +       }
 +       
 +       #statusCodes .metric {
@@ -404,6 +405,8 @@ var metricsTemplate = `
 +           border-radius: 20px;
 +           margin: 0;
 +           border: none;
++           min-width: 100px;
++           justify-content: space-between;
 +       }
 +       
         .status-badge {
@@ -929,7 +932,7 @@ var metricsTemplate = `
             btn.addEventListener('click', function() {
                 document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('active'));
                 this.classList.add('active');
-                loadHistoryData(parseInt(this.dataset.hours));
+                loadHistoryData(parseFloat(this.dataset.hours));
             });
         });
 
@@ -1069,15 +1072,14 @@ func (h *ProxyHandler) MetricsAuthHandler(w http.ResponseWriter, r *http.Request
 
 // 添加历史数据查询接口
 func (h *ProxyHandler) MetricsHistoryHandler(w http.ResponseWriter, r *http.Request) {
-	hours := 24 // 默认24小时
-	if h := r.URL.Query().Get("hours"); h != "" {
-		if parsed, err := strconv.Atoi(h); err == nil && parsed > 0 {
-			hours = parsed
-		}
+	hours := r.URL.Query().Get("hours")
+	hoursFloat, err := strconv.ParseFloat(hours, 64)
+	if err != nil {
+		hoursFloat = 24.0
 	}
 
 	collector := metrics.GetCollector()
-	metrics, err := collector.GetDB().GetRecentMetrics(hours)
+	metrics, err := collector.GetDB().GetRecentMetrics(hoursFloat)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

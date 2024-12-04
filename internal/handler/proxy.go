@@ -228,7 +228,12 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Error reading response", http.StatusInternalServerError)
 			return
 		}
-		written, _ := w.Write(body)
+		written, err := w.Write(body)
+		if err != nil {
+			if !isConnectionClosed(err) {
+				log.Printf("Error writing response: %v", err)
+			}
+		}
 		collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(start), int64(written), utils.GetClientIP(r), r)
 	} else {
 		// 大响应使用流式传输
@@ -287,4 +292,14 @@ func copyHeader(dst, src http.Header) {
 			dst.Add(k, v)
 		}
 	}
+}
+
+// 添加辅助函数判断是否是连接关闭错误
+func isConnectionClosed(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "broken pipe") ||
+		strings.Contains(err.Error(), "connection reset by peer") ||
+		strings.Contains(err.Error(), "protocol wrong type for socket")
 }

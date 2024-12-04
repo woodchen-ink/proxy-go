@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
@@ -67,6 +68,11 @@ func InitCollector(dbPath string, config *config.Config) error {
 		globalCollector.persistentStats.totalBytes.Store(lastMetrics.TotalBytes)
 		log.Printf("Loaded historical metrics: requests=%d, errors=%d, bytes=%d",
 			lastMetrics.TotalRequests, lastMetrics.TotalErrors, lastMetrics.TotalBytes)
+	}
+
+	// 加载最近5分钟的统计数据
+	if err := globalCollector.LoadRecentStats(); err != nil {
+		log.Printf("Warning: Failed to load recent stats: %v", err)
 	}
 
 	globalCollector.cache = cache.NewCache(constants.CacheTTL)
@@ -274,10 +280,11 @@ func (c *Collector) GetStats() map[string]interface{} {
 
 	// 延迟指标
 	currentTotalRequests := atomic.LoadInt64(&c.totalRequests)
-	if currentTotalRequests > 0 {
-		stats["avg_latency"] = c.latencySum.Load() / currentTotalRequests
-	} else {
+	latencySum := c.latencySum.Load()
+	if currentTotalRequests <= 0 || latencySum <= 0 {
 		stats["avg_latency"] = int64(0)
+	} else {
+		stats["avg_latency"] = latencySum / currentTotalRequests
 	}
 
 	// 状态码统计
@@ -300,7 +307,7 @@ func (c *Collector) GetStats() map[string]interface{} {
 			Path:             key.(string),
 			RequestCount:     stats.Requests.Load(),
 			ErrorCount:       stats.Errors.Load(),
-			AvgLatency:       FormatDuration(time.Duration(stats.LatencySum.Load() / stats.Requests.Load())),
+			AvgLatency:       formatAvgLatency(stats.LatencySum.Load(), stats.Requests.Load()),
 			BytesTransferred: stats.Bytes.Load(),
 		})
 		return true
@@ -440,4 +447,142 @@ func (c *Collector) SaveMetrics(stats map[string]interface{}) error {
 	})
 
 	return c.db.SaveMetrics(stats)
+}
+
+// LoadRecentStats 加载最近的统计数据
+func (c *Collector) LoadRecentStats() error {
+	// 加载最近5分钟的数据
+	row := c.db.DB.QueryRow(`
+		SELECT 
+			total_requests, total_errors, total_bytes, avg_latency
+		FROM metrics_history 
+		WHERE timestamp >= datetime('now', '-5', 'minutes')
+		ORDER BY timestamp DESC 
+		LIMIT 1
+	`)
+
+	var metrics models.HistoricalMetrics
+	if err := row.Scan(
+		&metrics.TotalRequests,
+		&metrics.TotalErrors,
+		&metrics.TotalBytes,
+		&metrics.AvgLatency,
+	); err != nil && err != sql.ErrNoRows {
+		return err
+	}
+
+	// 更新持久化数据
+	if metrics.TotalRequests > 0 {
+		c.persistentStats.totalRequests.Store(metrics.TotalRequests)
+		c.persistentStats.totalErrors.Store(metrics.TotalErrors)
+		c.persistentStats.totalBytes.Store(metrics.TotalBytes)
+	}
+
+	// 加载状态码统计
+	rows, err := c.db.DB.Query(`
+		SELECT status_group, SUM(count) as count 
+		FROM status_code_history 
+		WHERE timestamp >= datetime('now', '-5', 'minutes')
+		GROUP BY status_group
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var group string
+		var count int64
+		if err := rows.Scan(&group, &count); err != nil {
+			return err
+		}
+		if len(group) > 0 {
+			idx := (int(group[0]) - '0') - 1
+			if idx >= 0 && idx < len(c.statusStats) {
+				c.statusStats[idx].Store(count)
+			}
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error scanning status code rows: %v", err)
+	}
+
+	// 加载路径统计
+	rows, err = c.db.DB.Query(`
+		SELECT 
+			path, 
+			SUM(request_count) as requests,
+			SUM(error_count) as errors,
+			AVG(bytes_transferred) as bytes,
+			AVG(avg_latency) as latency
+		FROM popular_paths_history
+		WHERE timestamp >= datetime('now', '-5', 'minutes')
+		GROUP BY path
+		ORDER BY requests DESC
+		LIMIT 10
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var path string
+		var requests, errors, bytes int64
+		var latency float64
+		if err := rows.Scan(&path, &requests, &errors, &bytes, &latency); err != nil {
+			return err
+		}
+		stats := &models.PathStats{}
+		stats.Requests.Store(requests)
+		stats.Errors.Store(errors)
+		stats.Bytes.Store(bytes)
+		stats.LatencySum.Store(int64(latency))
+		c.pathStats.Store(path, stats)
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error scanning path stats rows: %v", err)
+	}
+
+	// 加载引用来源统计
+	rows, err = c.db.DB.Query(`
+		SELECT 
+			referer,
+			SUM(request_count) as requests
+		FROM referer_history
+		WHERE timestamp >= datetime('now', '-5', 'minutes')
+		GROUP BY referer
+		ORDER BY requests DESC
+		LIMIT 10
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var referer string
+		var requests int64
+		if err := rows.Scan(&referer, &requests); err != nil {
+			return err
+		}
+		stats := &models.PathStats{}
+		stats.Requests.Store(requests)
+		c.refererStats.Store(referer, stats)
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error scanning referer stats rows: %v", err)
+	}
+
+	return nil
+}
+
+func formatAvgLatency(latencySum, requests int64) string {
+	if requests <= 0 || latencySum <= 0 {
+		return "0 ms"
+	}
+	return FormatDuration(time.Duration(latencySum / requests))
 }
