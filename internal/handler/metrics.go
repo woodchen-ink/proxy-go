@@ -318,7 +318,7 @@ var metricsTemplate = `
         }
         .chart {
             height: 200px;
-            margin-bottom: 20px;
+            margin-bottom: 50px;
         }
         #timeRange {
             padding: 8px;
@@ -488,12 +488,15 @@ var metricsTemplate = `
         <div id="historyChart">
             <div class="chart-container">
                 <div class="chart">
+                    <h3 style="text-align:center">请求数</h3>
                     <canvas id="requestsChart"></canvas>
                 </div>
                 <div class="chart">
+                    <h3 style="text-align:center">错误率%</h3>
                     <canvas id="errorRateChart"></canvas>
                 </div>
                 <div class="chart">
+                    <h3 style="text-align:center">流量MB</h3>
                     <canvas id="bytesChart"></canvas>
                 </div>
             </div>

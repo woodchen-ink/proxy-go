@@ -113,6 +113,29 @@ func initTables(db *sql.DB) error {
 		CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics_history(timestamp);
 		CREATE INDEX IF NOT EXISTS idx_status_timestamp ON status_stats(timestamp);
 		CREATE INDEX IF NOT EXISTS idx_path_timestamp ON path_stats(timestamp);
+
+		-- 复合索引，用于优化聚合查询
+		CREATE INDEX IF NOT EXISTS idx_metrics_timestamp_values ON metrics_history(
+			timestamp,
+			total_requests,
+			total_errors,
+			total_bytes,
+			avg_latency
+		);
+
+		-- 路径统计的复合索引
+		CREATE INDEX IF NOT EXISTS idx_path_stats_composite ON path_stats(
+			timestamp,
+			path,
+			requests
+		);
+
+		-- 状态码统计的复合索引
+		CREATE INDEX IF NOT EXISTS idx_status_stats_composite ON status_stats(
+			timestamp,
+			status_group,
+			count
+		);
 	`)
 	if err != nil {
 		return err
@@ -240,7 +263,7 @@ func (db *MetricsDB) GetRecentMetrics(hours int) ([]HistoricalMetrics, error) {
 		interval = "%Y-%m-%d 00:00:00"
 	}
 
-	// 修改查询，使用 localtime 修饰符
+	// 修改查询，计算每个时间段的增量
 	rows, err := db.DB.Query(`
 		WITH grouped_metrics AS (
 			SELECT 
@@ -248,13 +271,22 @@ func (db *MetricsDB) GetRecentMetrics(hours int) ([]HistoricalMetrics, error) {
 				SUM(total_requests) as total_requests,
 				SUM(total_errors) as total_errors,
 				SUM(total_bytes) as total_bytes,
-				CAST(AVG(CAST(avg_latency AS FLOAT)) AS FLOAT) as avg_latency
+				CAST(AVG(CAST(avg_latency AS FLOAT)) AS FLOAT) as avg_latency,
+				LAG(SUM(total_requests)) OVER (ORDER BY strftime(?1, timestamp, 'localtime')) as prev_requests,
+				LAG(SUM(total_errors)) OVER (ORDER BY strftime(?1, timestamp, 'localtime')) as prev_errors,
+				LAG(SUM(total_bytes)) OVER (ORDER BY strftime(?1, timestamp, 'localtime')) as prev_bytes
 			FROM metrics_history
 			WHERE timestamp >= datetime('now', '-' || ?2 || ' hours', 'localtime')
-			GROUP BY group_time
+				GROUP BY group_time
 			ORDER BY group_time DESC
 		)
-		SELECT * FROM grouped_metrics
+		SELECT 
+			group_time as timestamp,
+			COALESCE(total_requests - prev_requests, total_requests) as total_requests,
+			COALESCE(total_errors - prev_errors, total_errors) as total_errors,
+			COALESCE(total_bytes - prev_bytes, total_bytes) as total_bytes,
+			avg_latency
+		FROM grouped_metrics
 	`, interval, hours)
 	if err != nil {
 		return nil, err
