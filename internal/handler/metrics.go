@@ -700,7 +700,13 @@ var metricsTemplate = `
                 };
                 chartInstance.update();
             } else {
-                chartInstance = new Chart(ctx, {
+                // 创建新图表前先销毁旧的
+                if (currentCharts[canvasId.replace('Chart', '')]) {
+                    currentCharts[canvasId.replace('Chart', '')].destroy();
+                }
+                
+                // 创建新图表
+                const newChart = new Chart(ctx, {
                     type: 'line',
                     data: chartData,
                     options: {
@@ -722,6 +728,9 @@ var metricsTemplate = `
                         }
                     }
                 });
+
+                // 更新 currentCharts 对象
+                currentCharts[canvasId.replace('Chart', '')] = newChart;
             }
         }
 
