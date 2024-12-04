@@ -279,5 +279,19 @@ func (db *MetricsDB) GetRecentMetrics(hours int) ([]HistoricalMetrics, error) {
 		}
 		metrics = append(metrics, m)
 	}
+
+	// 如果没有数据，返回一个空的记录而不是 null
+	if len(metrics) == 0 {
+		now := time.Now()
+		metrics = append(metrics, HistoricalMetrics{
+			Timestamp:     now.Format("2006-01-02 15:04:05"),
+			TotalRequests: 0,
+			TotalErrors:   0,
+			TotalBytes:    0,
+			ErrorRate:     0,
+			AvgLatency:    0,
+		})
+	}
+
 	return metrics, rows.Err()
 }

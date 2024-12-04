@@ -644,6 +644,9 @@ var metricsTemplate = `
             })
             .then(response => response.json())
             .then(data => {
+                // 反转数据顺序，使时间从左到右
+                data.reverse();
+                
                 const labels = data.map(m => {
                     const date = new Date(m.timestamp);
                     if (hours <= 24) {
@@ -655,53 +658,70 @@ var metricsTemplate = `
                     }
                 });
 
+                // 更新图表配置，添加时间轴方向设置
+                const chartOptions = {
+                    scales: {
+                        x: {
+                            reverse: false // 确保时间轴从左到右
+                        }
+                    }
+                };
+
                 // 更新或创建图表
                 updateChart('requestsChart', currentCharts.requests, labels, data, '请求数', 
-                    m => m.total_requests, '#007bff');
+                    m => m.total_requests, '#007bff', chartOptions);
                 updateChart('errorRateChart', currentCharts.errorRate, labels, data, '错误率 (%)', 
-                    m => m.error_rate * 100, '#dc3545');
+                    m => m.error_rate * 100, '#dc3545', chartOptions);
                 updateChart('bytesChart', currentCharts.bytes, labels, data, '流量 (MB)', 
-                    m => m.total_bytes / (1024 * 1024), '#28a745');
+                    m => m.total_bytes / (1024 * 1024), '#28a745', chartOptions);
             });
         }
 
-        function updateChart(canvasId, chartInstance, labels, data, label, valueGetter, color) {
+        function updateChart(canvasId, chartInstance, labels, data, label, valueGetter, color, options = {}) {
             const ctx = document.getElementById(canvasId).getContext('2d');
-            
+            const chartData = {
+                labels: labels,
+                datasets: [{
+                    label: label,
+                    data: data.map(valueGetter),
+                    borderColor: color,
+                    backgroundColor: color + '20',
+                    fill: true,
+                    tension: 0.4
+                }]
+            };
+
             if (chartInstance) {
-                chartInstance.data.labels = labels;
-                chartInstance.data.datasets[0].data = data.map(valueGetter);
+                chartInstance.data = chartData;
+                chartInstance.options = {
+                    ...chartInstance.options,
+                    ...options,
+                    animation: false
+                };
                 chartInstance.update();
             } else {
                 chartInstance = new Chart(ctx, {
                     type: 'line',
-                    data: {
-                        labels: labels,
-                        datasets: [{
-                            label: label,
-                            data: data.map(valueGetter),
-                            borderColor: color,
-                            tension: 0.1,
-                            fill: false
-                        }]
-                    },
+                    data: chartData,
                     options: {
+                        ...options,
                         responsive: true,
                         maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        },
                         scales: {
+                            y: {
+                                beginAtZero: true
+                            },
                             x: {
-                                ticks: {
-                                    maxRotation: 45,
-                                    minRotation: 45
-                                }
+                                reverse: false
                             }
                         }
                     }
                 });
-                
-                if (canvasId === 'requestsChart') currentCharts.requests = chartInstance;
-                if (canvasId === 'errorRateChart') currentCharts.errorRate = chartInstance;
-                if (canvasId === 'bytesChart') currentCharts.bytes = chartInstance;
             }
         }
 
