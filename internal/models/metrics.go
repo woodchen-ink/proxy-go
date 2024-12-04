@@ -240,17 +240,18 @@ func (db *MetricsDB) GetRecentMetrics(hours int) ([]HistoricalMetrics, error) {
 		interval = "%Y-%m-%d 00:00:00"
 	}
 
+	// 修改查询，使用 localtime 修饰符
 	rows, err := db.DB.Query(`
 		WITH grouped_metrics AS (
 			SELECT 
-				strftime(?1, timestamp) as group_time,
+				strftime(?1, timestamp, 'localtime') as group_time,
 				SUM(total_requests) as total_requests,
 				SUM(total_errors) as total_errors,
 				SUM(total_bytes) as total_bytes,
 				CAST(AVG(CAST(avg_latency AS FLOAT)) AS FLOAT) as avg_latency
 			FROM metrics_history
-			WHERE timestamp >= datetime('now', '-' || ?2 || ' hours')
-				GROUP BY group_time
+			WHERE timestamp >= datetime('now', '-' || ?2 || ' hours', 'localtime')
+			GROUP BY group_time
 			ORDER BY group_time DESC
 		)
 		SELECT * FROM grouped_metrics
