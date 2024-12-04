@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"proxy-go/internal/config"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -32,12 +33,30 @@ func init() {
 		ticker := time.NewTicker(time.Minute)
 		for range ticker.C {
 			now := time.Now()
+			var items []struct {
+				key       interface{}
+				timestamp time.Time
+			}
 			sizeCache.Range(func(key, value interface{}) bool {
-				if cache := value.(fileSizeCache); now.Sub(cache.timestamp) > cacheTTL {
+				cache := value.(fileSizeCache)
+				if now.Sub(cache.timestamp) > cacheTTL {
 					sizeCache.Delete(key)
+				} else {
+					items = append(items, struct {
+						key       interface{}
+						timestamp time.Time
+					}{key, cache.timestamp})
 				}
 				return true
 			})
+			if len(items) > maxCacheSize {
+				sort.Slice(items, func(i, j int) bool {
+					return items[i].timestamp.Before(items[j].timestamp)
+				})
+				for i := 0; i < len(items)/2; i++ {
+					sizeCache.Delete(items[i].key)
+				}
+			}
 		}
 	}()
 }

@@ -9,6 +9,7 @@ import (
 	"proxy-go/internal/constants"
 	"proxy-go/internal/models"
 	"proxy-go/internal/monitor"
+	"proxy-go/internal/utils"
 	"runtime"
 	"sort"
 	"sync"
@@ -77,6 +78,31 @@ func InitCollector(dbPath string, config *config.Config) error {
 			}
 		}
 	}()
+
+	// 启动每小时保存统计数据
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		for range ticker.C {
+			stats := globalCollector.GetStats()
+			if err := db.SaveFullMetrics(stats); err != nil {
+				log.Printf("Error saving full metrics: %v", err)
+			} else {
+				log.Printf("Full metrics saved successfully")
+			}
+		}
+	}()
+
+	// 设置程序退出时的处理
+	utils.SetupCloseHandler(func() {
+		log.Println("Saving final metrics before shutdown...")
+		stats := globalCollector.GetStats()
+		if err := db.SaveFullMetrics(stats); err != nil {
+			log.Printf("Error saving final metrics: %v", err)
+		} else {
+			log.Printf("Final metrics saved successfully")
+		}
+		db.Close()
+	})
 
 	globalCollector.statsPool = sync.Pool{
 		New: func() interface{} {
