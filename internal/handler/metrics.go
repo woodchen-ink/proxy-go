@@ -389,41 +389,35 @@ var metricsTemplate = `
         }
 +       #statusCodes {
 +           display: flex;
-+           gap: 20px;
-+           align-items: center;
-+           flex-wrap: wrap;
++           flex-direction: column;
++           gap: 10px;
++           align-items: flex-start;
 +           padding: 10px;
-+           justify-content: flex-start;
 +           background: #f8f9fa;
 +           border-radius: 8px;
-+           overflow-x: auto;
-+           white-space: nowrap;
++           flex-wrap: nowrap;  // 防止换行
++           overflow-x: auto;   // 在小屏幕上可以滚动
 +       }
 +       
 +       #statusCodes .metric {
-+           flex: 0 0 auto;
-+           display: inline-flex;
++           flex: 0 0 auto;     // 不伸缩，保持原始大小
++           display: flex;
 +           align-items: center;
-+           gap: 10px;
++           justify-content: space-between;
 +           padding: 4px 12px;
 +           background: white;
-+           border-radius: 20px;
-+           margin: 0;
-+           border: none;
-+           min-width: 80px;
-+           justify-content: space-between;
-+           margin-right: 10px;
-+           display: inline-block;
++           border-radius: 4px;
++           box-shadow: 0 1px 3px rgba(0,0,0,0.1);
++           min-width: 120px;   // 设置最小宽度
++           margin-right: 10px; // 格子之间的间距
 +       }
-+       #statusCodes .metric:last-child {
-+           margin-right: 0;
++       .status-badge {
++           padding: 3px 8px;
++           border-radius: 12px;
++           font-size: 12px;
++           color: white;
++           margin-right: 8px;  // 状态码和数字之间的间距
 +       }
-        .status-badge {
-            padding: 3px 8px;
-            border-radius: 12px;
-            font-size: 12px;
-            color: white;
-        }
 +       .loading {
 +           position: relative;
 +           opacity: 0.6;

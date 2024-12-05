@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"proxy-go/internal/cache"
 	"proxy-go/internal/config"
@@ -91,26 +92,25 @@ func InitCollector(dbPath string, config *config.Config) error {
 
 	// 启动定时保存
 	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
+		// 避免所有实例同时保存
+		time.Sleep(time.Duration(rand.Int63n(60)) * time.Second)
+		ticker := time.NewTicker(10 * time.Minute)
 		for range ticker.C {
 			stats := globalCollector.GetStats()
+			start := time.Now()
+
+			// 保存基础指标和完整统计数据
 			if err := db.SaveMetrics(stats); err != nil {
 				log.Printf("Error saving metrics: %v", err)
 			} else {
-				log.Printf("Metrics saved successfully")
+				log.Printf("Basic metrics saved successfully")
 			}
-		}
-	}()
 
-	// 启动每小时保存统计数据
-	go func() {
-		ticker := time.NewTicker(1 * time.Hour)
-		for range ticker.C {
-			stats := globalCollector.GetStats()
+			// 同时保存完整统计数据
 			if err := db.SaveFullMetrics(stats); err != nil {
 				log.Printf("Error saving full metrics: %v", err)
 			} else {
-				log.Printf("Full metrics saved successfully")
+				log.Printf("Metrics saved in %v", time.Since(start))
 			}
 		}
 	}()
@@ -292,8 +292,9 @@ func (c *Collector) GetStats() map[string]interface{} {
 
 	// 状态码统计
 	statusStats := make(map[string]int64)
+	statusGroups := []string{"1xx", "2xx", "3xx", "4xx", "5xx"}
 	for i := range c.statusStats {
-		statusStats[fmt.Sprintf("%dxx", i+1)] = c.statusStats[i].Load()
+		statusStats[statusGroups[i]] = c.statusStats[i].Load()
 	}
 	stats["status_code_stats"] = statusStats
 
