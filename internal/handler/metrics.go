@@ -388,78 +388,78 @@ var metricsTemplate = `
             border: 1px solid #ddd;
             border-radius: 4px;
         }
-+       #statusCodes {
-+           padding: 15px;
-+           background: #f8f9fa;
-+           border-radius: 8px;
-+       }
-+       
-+       .status-row {
-+           display: flex;
-+           flex-direction: column;
-+           gap: 12px;
-+       }
-+       
-+       .status-labels, .status-values {
-+           display: flex;
-+           justify-content: flex-start;
-+           gap: 20px;
-+       }
-+       
-+       .status-badge {
-+           flex: 0 0 auto;
-+           text-align: center;
-+           padding: 4px 12px;
-+           border-radius: 4px;
-+           font-size: 12px;
-+           color: white;
-+           min-width: 60px;
-+       }
-+       
-+       .metric-value {
-+           flex: 0 0 auto;
-+           text-align: center;
-+           min-width: 60px;
-+       }
-+       .loading {
-+           position: relative;
-+           opacity: 0.6;
-+       }
-+       .loading::after {
-+           content: "加载中...";
-+           position: absolute;
-+           top: 50%;
-+           left: 50%;
-+           transform: translate(-50%, -50%);
-+           background: rgba(255,255,255,0.9);
-+           padding: 10px 20px;
-+           border-radius: 4px;
-+           box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-+       }
-+       .error-message {
-+           position: fixed;
-+           top: 20px;
-+           right: 20px;
-+           background: #dc3545;
-+           color: white;
-+           padding: 10px 20px;
-+           border-radius: 4px;
-+           box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-+           z-index: 1000;
-+           display: none;
-+       }
-+       .export-btn {
-+           padding: 8px 16px;
-+           background: #28a745;
-+           color: white;
-+           border: none;
-+           border-radius: 4px;
-+           cursor: pointer;
-+           transition: all 0.3s;
-+       }
-+       .export-btn:hover {
-+           background: #218838;
-+       }
+      #statusCodes {
+           padding: 15px;
+          background: #f8f9fa;
+          border-radius: 8px;
+      }
+      
+      .status-row {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+       }
+       
+       .status-labels, .status-values {
+           display: flex;
+           justify-content: flex-start;
+           gap: 20px;
+       }
+       
+       .status-badge {
+           flex: 0 0 auto;
+           text-align: center;
+           padding: 4px 12px;
+           border-radius: 4px;
+           font-size: 12px;
+           color: white;
+           min-width: 60px;
+       }
+       
+       .metric-value {
+           flex: 0 0 auto;
+           text-align: center;
+           min-width: 60px;
+       }
+       .loading {
+           position: relative;
+           opacity: 0.6;
+       }
+       .loading::after {
+           content: "加载中...";
+           position: absolute;
+           top: 50%;
+           left: 50%;
+           transform: translate(-50%, -50%);
+           background: rgba(255,255,255,0.9);
+           padding: 10px 20px;
+           border-radius: 4px;
+           box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+       }
+       .error-message {
+           position: fixed;
+           top: 20px;
+           right: 20px;
+           background: #dc3545;
+           color: white;
+           padding: 10px 20px;
+           border-radius: 4px;
+           box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+           z-index: 1000;
+           display: none;
+       }
+       .export-btn {
+           padding: 8px 16px;
+           background: #28a745;
+           color: white;
+           border: none;
+           border-radius: 4px;
+           cursor: pointer;
+           transition: all 0.3s;
+       }
+       .export-btn:hover {
+           background: #218838;
+       }
     </style>
 </head>
 <body>
