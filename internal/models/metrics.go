@@ -478,37 +478,67 @@ func (db *MetricsDB) GetRecentMetrics(hours float64) ([]HistoricalMetrics, error
 	rows, err := db.DB.QueryContext(ctx, `
 		WITH RECURSIVE 
 		time_points(ts) AS (
-			SELECT strftime(?, 'now', 'localtime')
+			SELECT strftime(?, datetime('now', 'localtime'))
 			UNION ALL
 			SELECT strftime(?, datetime(ts, '-' || ? || ' minutes'))
 			FROM time_points
 			WHERE ts > strftime(?, datetime('now', '-' || ? || ' hours', 'localtime'))
-			LIMIT ?  -- 限制时间点数量
+			LIMIT ?
 		),
-		grouped_metrics AS (
+		base_metrics AS (
+			-- 获取每个时间点的累计值
 			SELECT 
 				strftime(?, timestamp) as group_time,
+				total_requests,
+				total_errors,
+				total_bytes,
+				avg_latency
+			FROM metrics_history
+			WHERE timestamp >= datetime('now', '-' || ? || ' hours', 'localtime')
+				AND timestamp < datetime('now', 'localtime')
+		),
+		grouped_metrics AS (
+			-- 获取每个时间点的最大值
+			SELECT 
+				group_time,
 				MAX(total_requests) as period_requests,
 				MAX(total_errors) as period_errors,
 				MAX(total_bytes) as period_bytes,
 				AVG(avg_latency) as avg_latency
-			FROM metrics_history
-			WHERE timestamp >= datetime('now', '-' || ? || ' hours', 'localtime')
-				AND timestamp < datetime('now', 'localtime')  -- 添加上限
-				GROUP BY group_time
-				LIMIT ?  -- 限制结果数量
+			FROM base_metrics
+			GROUP BY group_time
 		)
 		SELECT 
 			tp.ts as timestamp,
-			COALESCE(m.period_requests - LAG(m.period_requests, 1) OVER (ORDER BY tp.ts), 0) as total_requests,
-			COALESCE(m.period_errors - LAG(m.period_errors, 1) OVER (ORDER BY tp.ts), 0) as total_errors,
-			COALESCE(m.period_bytes - LAG(m.period_bytes, 1) OVER (ORDER BY tp.ts), 0) as total_bytes,
+			-- 计算每个时间点的增量
+			COALESCE(
+				CASE 
+					WHEN LAG(m.period_requests) OVER w IS NULL THEN m.period_requests
+					ELSE m.period_requests - LAG(m.period_requests) OVER w
+				END,
+				0
+			) as total_requests,
+			COALESCE(
+				CASE 
+					WHEN LAG(m.period_errors) OVER w IS NULL THEN m.period_errors
+					ELSE m.period_errors - LAG(m.period_errors) OVER w
+				END,
+				0
+			) as total_errors,
+			COALESCE(
+				CASE 
+					WHEN LAG(m.period_bytes) OVER w IS NULL THEN m.period_bytes
+					ELSE m.period_bytes - LAG(m.period_bytes) OVER w
+				END,
+				0
+			) as total_bytes,
 			COALESCE(m.avg_latency, 0) as avg_latency
 		FROM time_points tp
 		LEFT JOIN grouped_metrics m ON tp.ts = m.group_time
+		WINDOW w AS (ORDER BY tp.ts)
 		ORDER BY timestamp DESC
 		LIMIT ?
-	`, interval, interval, timeStep, interval, hours, 1000, interval, hours, 1000, 1000)
+	`, interval, interval, timeStep, interval, hours, 1000, interval, hours, 1000)
 	if err != nil {
 		return nil, err
 	}
