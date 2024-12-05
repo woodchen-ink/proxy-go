@@ -7,6 +7,7 @@ import (
 	"log"
 	"proxy-go/internal/constants"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -792,4 +793,95 @@ func (db *MetricsDB) GetStats() map[string]interface{} {
 		"total_errors":  db.stats.errors.Load(),
 		"last_error":    db.stats.lastError.Load(),
 	}
+}
+
+func (db *MetricsDB) LoadRecentStats(statusStats *[6]atomic.Int64, pathStats *sync.Map, refererStats *sync.Map) error {
+	// 加载状态码统计
+	rows, err := db.DB.Query(`
+		SELECT status_group, SUM(count) as count 
+		FROM status_code_history 
+		WHERE timestamp >= datetime('now', '-5', 'minutes')
+		GROUP BY status_group
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var group string
+		var count int64
+		if err := rows.Scan(&group, &count); err != nil {
+			return err
+		}
+		if len(group) > 0 {
+			idx := (int(group[0]) - '0') - 1
+			if idx >= 0 && idx < len(statusStats) {
+				statusStats[idx].Store(count)
+			}
+		}
+	}
+
+	// 加载路径统计
+	rows, err = db.DB.Query(`
+		SELECT 
+			path, 
+			SUM(request_count) as requests,
+			SUM(error_count) as errors,
+			AVG(bytes_transferred) as bytes,
+			AVG(avg_latency) as latency
+		FROM popular_paths_history
+		WHERE timestamp >= datetime('now', '-5', 'minutes')
+		GROUP BY path
+		ORDER BY requests DESC
+		LIMIT 10
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var path string
+		var requests, errors, bytes int64
+		var latency float64
+		if err := rows.Scan(&path, &requests, &errors, &bytes, &latency); err != nil {
+			return err
+		}
+		stats := &PathStats{}
+		stats.Requests.Store(requests)
+		stats.Errors.Store(errors)
+		stats.Bytes.Store(bytes)
+		stats.LatencySum.Store(int64(latency))
+		pathStats.Store(path, stats)
+	}
+
+	// 加载引用来源统计
+	rows, err = db.DB.Query(`
+		SELECT 
+			referer,
+			SUM(request_count) as requests
+		FROM referer_history
+		WHERE timestamp >= datetime('now', '-5', 'minutes')
+		GROUP BY referer
+		ORDER BY requests DESC
+		LIMIT 10
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var referer string
+		var requests int64
+		if err := rows.Scan(&referer, &requests); err != nil {
+			return err
+		}
+		stats := &PathStats{}
+		stats.Requests.Store(requests)
+		refererStats.Store(referer, stats)
+	}
+
+	return nil
 }
