@@ -285,7 +285,7 @@ func cleanupRoutine(db *sql.DB) {
 			continue
 		}
 
-		// 优化清理性能
+		// 优化理性能
 		if _, err := tx.Exec("PRAGMA synchronous = NORMAL"); err != nil {
 			log.Printf("Error setting synchronous mode: %v", err)
 		}
@@ -367,19 +367,19 @@ func getDBSize(db *sql.DB) int64 {
 }
 
 func (db *MetricsDB) SaveMetrics(stats map[string]interface{}) error {
+	// 设置事务优化参数 - 移到事务外
+	if _, err := db.DB.Exec("PRAGMA synchronous = NORMAL"); err != nil {
+		return fmt.Errorf("failed to set synchronous mode: %v", err)
+	}
+	if _, err := db.DB.Exec("PRAGMA journal_mode = WAL"); err != nil {
+		return fmt.Errorf("failed to set journal mode: %v", err)
+	}
+
 	tx, err := db.DB.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-
-	// 设置事务优化参数
-	if _, err := tx.Exec("PRAGMA synchronous = NORMAL"); err != nil {
-		return fmt.Errorf("failed to set synchronous mode: %v", err)
-	}
-	if _, err := tx.Exec("PRAGMA journal_mode = WAL"); err != nil {
-		return fmt.Errorf("failed to set journal mode: %v", err)
-	}
 
 	// 使用预处理语句提高性能
 	stmt, err := tx.Prepare(`
@@ -464,14 +464,6 @@ func (db *MetricsDB) GetRecentMetrics(hours float64) ([]HistoricalMetrics, error
 		return nil, fmt.Errorf("failed to commit transaction: %v", err)
 	}
 
-	// 计算查询时间范围
-	endTime := time.Now()
-	startTime := endTime.Add(-time.Duration(hours * float64(time.Hour.Nanoseconds())))
-
-	// 格式化时间
-	startTimeStr := startTime.Format("2006-01-02 15:04:05")
-	endTimeStr := endTime.Format("2006-01-02 15:04:05")
-
 	// 处理小于1小时的情况
 	if hours <= 0 {
 		hours = 0.5 // 30分钟
@@ -507,11 +499,11 @@ func (db *MetricsDB) GetRecentMetrics(hours float64) ([]HistoricalMetrics, error
 	rows, err := db.DB.Query(`
 		WITH RECURSIVE 
 		time_series(time_point) AS (
-			SELECT datetime(?, 'localtime')
+			SELECT datetime('now', 'localtime')
 			UNION ALL
 			SELECT datetime(time_point, '-' || ? || ' minutes')
 			FROM time_series
-			WHERE time_point > datetime(?, 'localtime')
+			WHERE time_point > datetime('now', '-' || ? || ' hours', 'localtime')
 			LIMIT 1000
 		),
 		grouped_metrics AS (
@@ -522,7 +514,7 @@ func (db *MetricsDB) GetRecentMetrics(hours float64) ([]HistoricalMetrics, error
 				MAX(total_bytes) as period_bytes,
 				AVG(avg_latency) as avg_latency
 			FROM metrics_history
-			WHERE timestamp BETWEEN ? AND ?
+			WHERE timestamp >= datetime('now', '-' || ? || ' hours', 'localtime')
 			GROUP BY group_time
 		)
 		SELECT 
@@ -535,7 +527,7 @@ func (db *MetricsDB) GetRecentMetrics(hours float64) ([]HistoricalMetrics, error
 		LEFT JOIN grouped_metrics m ON strftime(?, ts.time_point, 'localtime') = m.group_time
 		ORDER BY timestamp DESC
 		LIMIT 1000
-	`, endTimeStr, timeStep, startTimeStr, interval, startTimeStr, endTimeStr, interval, interval)
+	`, timeStep, hours, interval, hours, interval, interval)
 	if err != nil {
 		return nil, err
 	}

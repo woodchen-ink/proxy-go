@@ -66,6 +66,9 @@ func InitCollector(dbPath string, config *config.Config) error {
 		globalCollector.persistentStats.totalRequests.Store(lastMetrics.TotalRequests)
 		globalCollector.persistentStats.totalErrors.Store(lastMetrics.TotalErrors)
 		globalCollector.persistentStats.totalBytes.Store(lastMetrics.TotalBytes)
+		if err := loadRecentStatusStats(db); err != nil {
+			log.Printf("Warning: Failed to load recent status stats: %v", err)
+		}
 		log.Printf("Loaded historical metrics: requests=%d, errors=%d, bytes=%d",
 			lastMetrics.TotalRequests, lastMetrics.TotalErrors, lastMetrics.TotalBytes)
 	}
@@ -585,4 +588,31 @@ func formatAvgLatency(latencySum, requests int64) string {
 		return "0 ms"
 	}
 	return FormatDuration(time.Duration(latencySum / requests))
+}
+
+func loadRecentStatusStats(db *models.MetricsDB) error {
+	rows, err := db.DB.Query(`
+		SELECT status_group, count 
+		FROM status_stats 
+		WHERE timestamp >= datetime('now', '-5', 'minutes')
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var group string
+		var count int64
+		if err := rows.Scan(&group, &count); err != nil {
+			return err
+		}
+		if len(group) > 0 {
+			idx := (int(group[0]) - '0') - 1
+			if idx >= 0 && idx < len(globalCollector.statusStats) {
+				globalCollector.statusStats[idx].Store(count)
+			}
+		}
+	}
+	return rows.Err()
 }
