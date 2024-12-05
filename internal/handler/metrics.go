@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"proxy-go/internal/metrics"
 	"proxy-go/internal/models"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -43,59 +44,44 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 	stats := collector.GetStats()
 
 	if stats == nil {
-		http.Error(w, "Failed to get metrics", http.StatusInternalServerError)
-		return
+		// 返回默认值而不是错误
+		stats = map[string]interface{}{
+			"uptime":              uptime.String(),
+			"active_requests":     int64(0),
+			"total_requests":      int64(0),
+			"total_errors":        int64(0),
+			"error_rate":          float64(0),
+			"num_goroutine":       runtime.NumGoroutine(),
+			"memory_usage":        "0 B",
+			"avg_response_time":   "0 ms",
+			"total_bytes":         int64(0),
+			"bytes_per_second":    float64(0),
+			"requests_per_second": float64(0),
+			"status_code_stats":   make(map[string]int64),
+			"latency_percentiles": make([]float64, 0),
+			"top_paths":           make([]models.PathMetrics, 0),
+			"recent_requests":     make([]models.RequestLog, 0),
+			"top_referers":        make([]models.PathMetrics, 0),
+		}
 	}
 
-	// 添加安全的类型转换函数
-	safeInt64 := func(v interface{}) int64 {
-		if v == nil {
-			return 0
-		}
-		if i, ok := v.(int64); ok {
-			return i
-		}
-		return 0
-	}
-
-	safeInt := func(v interface{}) int {
-		if v == nil {
-			return 0
-		}
-		if i, ok := v.(int); ok {
-			return i
-		}
-		return 0
-	}
-
-	// 添加安全的字符串转换函数
-	safeString := func(v interface{}) string {
-		if v == nil {
-			return "0 B" // 返回默认值
-		}
-		if s, ok := v.(string); ok {
-			return s
-		}
-		return "0 B" // 返回默认值
-	}
-
-	totalRequests := safeInt64(stats["total_requests"])
+	// 确保所有必要的字段都存在
 	metrics := Metrics{
 		Uptime:              uptime.String(),
 		ActiveRequests:      safeInt64(stats["active_requests"]),
-		TotalRequests:       totalRequests,
+		TotalRequests:       safeInt64(stats["total_requests"]),
 		TotalErrors:         safeInt64(stats["total_errors"]),
-		ErrorRate:           float64(safeInt64(stats["total_errors"])) / float64(max(totalRequests, 1)),
+		ErrorRate:           float64(safeInt64(stats["total_errors"])) / float64(max(safeInt64(stats["total_requests"]), 1)),
 		NumGoroutine:        safeInt(stats["num_goroutine"]),
-		MemoryUsage:         safeString(stats["memory_usage"]), // 使用安全转换
-		AverageResponseTime: metrics.FormatDuration(time.Duration(safeInt64(stats["avg_latency"]))),
+		MemoryUsage:         safeString(stats["memory_usage"]),
+		AverageResponseTime: safeString(stats["avg_response_time"]),
 		TotalBytes:          safeInt64(stats["total_bytes"]),
 		BytesPerSecond:      float64(safeInt64(stats["total_bytes"])) / metrics.Max(uptime.Seconds(), 1),
-		RequestsPerSecond:   float64(totalRequests) / metrics.Max(uptime.Seconds(), 1),
-		StatusCodeStats:     safeStatusCodeStats(stats["status_code_stats"]), // 添加安全转换
-		TopPaths:            safePathMetrics(stats["top_paths"]),             // 添加安全转换
-		RecentRequests:      safeRequestLogs(stats["recent_requests"]),       // 添加安全转换
-		TopReferers:         safePathMetrics(stats["top_referers"]),          // 添加安全转换
+		RequestsPerSecond:   float64(safeInt64(stats["total_requests"])) / metrics.Max(uptime.Seconds(), 1),
+		StatusCodeStats:     safeStatusCodeStats(stats["status_code_stats"]),
+		TopPaths:            safePathMetrics(stats["top_paths"]),
+		RecentRequests:      safeRequestLogs(stats["recent_requests"]),
+		TopReferers:         safePathMetrics(stats["top_referers"]),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1118,4 +1104,34 @@ func safeRequestLogs(v interface{}) []models.RequestLog {
 		return m
 	}
 	return []models.RequestLog{}
+}
+
+func safeInt64(v interface{}) int64 {
+	if v == nil {
+		return 0
+	}
+	if i, ok := v.(int64); ok {
+		return i
+	}
+	return 0
+}
+
+func safeInt(v interface{}) int {
+	if v == nil {
+		return 0
+	}
+	if i, ok := v.(int); ok {
+		return i
+	}
+	return 0
+}
+
+func safeString(v interface{}) string {
+	if v == nil {
+		return "0 B" // 返回默认值
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return "0 B" // 返回默认值
 }
