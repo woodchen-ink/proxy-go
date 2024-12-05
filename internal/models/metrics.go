@@ -443,27 +443,6 @@ func (db *MetricsDB) GetRecentMetrics(hours float64) ([]HistoricalMetrics, error
 		cacheSize     int64
 	}
 
-	// 设置查询优化参数
-	tx, err := db.DB.Begin()
-	if err != nil {
-		return nil, fmt.Errorf("failed to begin transaction: %v", err)
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.Exec("PRAGMA temp_store = MEMORY"); err != nil {
-		return nil, fmt.Errorf("failed to set temp_store: %v", err)
-	}
-	if _, err := tx.Exec("PRAGMA cache_size = -4000"); err != nil {
-		return nil, fmt.Errorf("failed to set cache_size: %v", err)
-	}
-	if _, err := tx.Exec("PRAGMA mmap_size = 268435456"); err != nil {
-		return nil, fmt.Errorf("failed to set mmap_size: %v", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("failed to commit transaction: %v", err)
-	}
-
 	// 处理小于1小时的情况
 	if hours <= 0 {
 		hours = 0.5 // 30分钟
@@ -490,44 +469,39 @@ func (db *MetricsDB) GetRecentMetrics(hours float64) ([]HistoricalMetrics, error
 		timeStep = 1440 // 1天
 	}
 
-	// 获取查询统计
-	row := db.DB.QueryRow("SELECT cache_hits, cache_misses, cache_size FROM pragma_stats")
-	var cacheMisses int64
-	row.Scan(&queryStats.cacheHits, &cacheMisses, &queryStats.cacheSize)
-
-	// 修改查询逻辑
+	// 修改查询逻辑，使用 strftime 来处理时间
 	rows, err := db.DB.Query(`
 		WITH RECURSIVE 
-		time_series(time_point) AS (
-			SELECT datetime('now', 'localtime')
+		time_points(ts) AS (
+			SELECT strftime(?, 'now', 'localtime')
 			UNION ALL
-			SELECT datetime(time_point, '-' || ? || ' minutes')
-			FROM time_series
-			WHERE time_point > datetime('now', '-' || ? || ' hours', 'localtime')
+			SELECT strftime(?, datetime(ts, '-' || ? || ' minutes'))
+			FROM time_points
+			WHERE ts > strftime(?, datetime('now', '-' || ? || ' hours', 'localtime'))
 			LIMIT 1000
 		),
 		grouped_metrics AS (
 			SELECT 
-				strftime(?, timestamp, 'localtime') as group_time,
+				strftime(?, timestamp) as group_time,
 				MAX(total_requests) as period_requests,
 				MAX(total_errors) as period_errors,
-				MAX(total_bytes) as period_bytes,
-				AVG(avg_latency) as avg_latency
+					MAX(total_bytes) as period_bytes,
+					AVG(avg_latency) as avg_latency
 			FROM metrics_history
 			WHERE timestamp >= datetime('now', '-' || ? || ' hours', 'localtime')
-			GROUP BY group_time
+				GROUP BY group_time
 		)
 		SELECT 
-			strftime(?, ts.time_point, 'localtime') as timestamp,
-			COALESCE(m.period_requests - LAG(m.period_requests, 1) OVER (ORDER BY ts.time_point), 0) as total_requests,
-			COALESCE(m.period_errors - LAG(m.period_errors, 1) OVER (ORDER BY ts.time_point), 0) as total_errors,
-			COALESCE(m.period_bytes - LAG(m.period_bytes, 1) OVER (ORDER BY ts.time_point), 0) as total_bytes,
+			tp.ts as timestamp,
+			COALESCE(m.period_requests - LAG(m.period_requests, 1) OVER (ORDER BY tp.ts), 0) as total_requests,
+			COALESCE(m.period_errors - LAG(m.period_errors, 1) OVER (ORDER BY tp.ts), 0) as total_errors,
+			COALESCE(m.period_bytes - LAG(m.period_bytes, 1) OVER (ORDER BY tp.ts), 0) as total_bytes,
 			COALESCE(m.avg_latency, 0) as avg_latency
-		FROM time_series ts
-		LEFT JOIN grouped_metrics m ON strftime(?, ts.time_point, 'localtime') = m.group_time
+		FROM time_points tp
+		LEFT JOIN grouped_metrics m ON tp.ts = m.group_time
 		ORDER BY timestamp DESC
 		LIMIT 1000
-	`, timeStep, hours, interval, hours, interval, interval)
+	`, interval, interval, timeStep, interval, hours, interval, hours)
 	if err != nil {
 		return nil, err
 	}

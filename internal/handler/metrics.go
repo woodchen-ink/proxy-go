@@ -298,7 +298,7 @@ var metricsTemplate = `
             padding: 3px 8px;
             border-radius: 12px;
             font-size: 12px;
-            color: white;
+            color: black;
         }
         .status-2xx { background: #28a745; }
         .status-3xx { background: #17a2b8; }
@@ -389,18 +389,20 @@ var metricsTemplate = `
         }
 +       #statusCodes {
 +           display: flex;
-+           flex-direction: column;
++           flex-direction: row;
 +           gap: 10px;
-+           align-items: flex-start;
++           align-items: center;
 +           padding: 10px;
 +           background: #f8f9fa;
 +           border-radius: 8px;
-+           flex-wrap: nowrap;  // 防止换行
-+           overflow-x: auto;   // 在小屏幕上可以滚动
++           flex-wrap: nowrap;
++           overflow-x: auto;
++           white-space: nowrap;
++           justify-content: flex-start;
 +       }
 +       
 +       #statusCodes .metric {
-+           flex: 0 0 auto;     // 不伸缩，保持原始大小
++           flex: 0 0 auto;
 +           display: flex;
 +           align-items: center;
 +           justify-content: space-between;
@@ -408,15 +410,19 @@ var metricsTemplate = `
 +           background: white;
 +           border-radius: 4px;
 +           box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-+           min-width: 120px;   // 设置最小宽度
-+           margin-right: 10px; // 格子之间的间距
++           margin-right: 10px;
++           min-width: 100px;
++           height: 32px;
++       }
++       #statusCodes .metric:last-child {
++           margin-right: 0;
 +       }
 +       .status-badge {
 +           padding: 3px 8px;
 +           border-radius: 12px;
 +           font-size: 12px;
 +           color: white;
-+           margin-right: 8px;  // 状态码和数字之间的间距
++           margin-right: 8px;
 +       }
 +       .loading {
 +           position: relative;
@@ -684,6 +690,7 @@ var metricsTemplate = `
 
             // 更新状态码计
             const statusCodesHtml = Object.entries(data.status_code_stats)
+                .sort((a, b) => a[0].localeCompare(b[0])) // 按状态码排序
                 .map(([status, count]) => {
                     const statusClass = 'status-' + status.charAt(0) + 'xx';
                     return '<div class="metric">' +
@@ -692,7 +699,9 @@ var metricsTemplate = `
                         '</div>';
                 })
                 .join('');
-            document.getElementById('statusCodes').innerHTML = statusCodesHtml;
+            const statusCodesContainer = document.getElementById('statusCodes');
+            statusCodesContainer.style.flexDirection = 'row';  // 强制横向排列
+            statusCodesContainer.innerHTML = statusCodesHtml;
 
             // 更新热门路径
             const topPathsHtml = data.top_paths.map(path => 
