@@ -59,6 +59,23 @@ type MetricsConfig struct {
 		LargeLatency   time.Duration `json:"LargeLatency"`   // 大文件最大延迟
 		HugeLatency    time.Duration `json:"HugeLatency"`    // 超大文件最大延迟
 	} `json:"Latency"`
+	// 加载配置
+	Load struct {
+		RetryCount    int           `json:"retry_count"`
+		RetryInterval time.Duration `json:"retry_interval"`
+		Timeout       time.Duration `json:"timeout"`
+	} `json:"load"`
+	// 保存配置
+	Save struct {
+		MinInterval     time.Duration `json:"min_interval"`
+		MaxInterval     time.Duration `json:"max_interval"`
+		DefaultInterval time.Duration `json:"default_interval"`
+	} `json:"save"`
+	// 验证配置
+	Validation struct {
+		MaxErrorRate     float64 `json:"max_error_rate"`
+		MaxDataDeviation float64 `json:"max_data_deviation"`
+	} `json:"validation"`
 }
 
 // 添加一个辅助方法来处理字符串到 PathConfig 的转换

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"proxy-go/internal/constants"
+	"proxy-go/internal/interfaces"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -53,12 +54,14 @@ type Monitor struct {
 	currentWindow  atomic.Int32
 	transferWindow [12]TransferStats
 	currentTWindow atomic.Int32
+	collector      interfaces.MetricsCollector
 }
 
-func NewMonitor() *Monitor {
+func NewMonitor(collector interfaces.MetricsCollector) *Monitor {
 	m := &Monitor{
-		alerts:   make(chan Alert, 100),
-		handlers: make([]AlertHandler, 0),
+		alerts:    make(chan Alert, 100),
+		handlers:  make([]AlertHandler, 0),
+		collector: collector,
 	}
 
 	// 初始化第一个窗口
@@ -141,6 +144,23 @@ func (m *Monitor) CheckMetrics(stats map[string]interface{}) {
 				Time: time.Now(),
 			}
 		}
+	}
+
+	// 检查数据一致性
+	if err := m.collector.CheckDataConsistency(); err != nil {
+		m.recordAlert("数据一致性告警", err.Error())
+	}
+
+	// 检查错误率
+	totalReqs := stats["total_requests"].(int64)
+	totalErrs := stats["total_errors"].(int64)
+	if totalReqs > 0 && float64(totalErrs)/float64(totalReqs) > constants.MaxErrorRate {
+		m.recordAlert("错误率告警", fmt.Sprintf("错误率超过阈值: %.2f%%", float64(totalErrs)/float64(totalReqs)*100))
+	}
+
+	// 检查数据保存
+	if lastSaveTime := m.collector.GetLastSaveTime(); time.Since(lastSaveTime) > constants.MaxSaveInterval*2 {
+		m.recordAlert("数据保存告警", "数据保存间隔过长")
 	}
 }
 
@@ -262,5 +282,13 @@ func (m *Monitor) cleanupWindows() {
 			}
 			return true
 		})
+	}
+}
+
+func (m *Monitor) recordAlert(title, message string) {
+	m.alerts <- Alert{
+		Level:   AlertLevelError,
+		Message: fmt.Sprintf("%s: %s", title, message),
+		Time:    time.Now(),
 	}
 }
