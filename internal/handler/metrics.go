@@ -715,27 +715,17 @@ var metricsTemplate = `
         let refreshTimer;
 
         function setupAutoRefresh() {
-            const autoRefresh = document.getElementById('autoRefresh');
-            const refreshInterval = document.getElementById('refreshInterval');
-            
-            function updateRefreshTimer() {
-                if (refreshTimer) {
-                    clearInterval(refreshTimer);
-                }
-                if (autoRefresh.checked) {
-                    refreshTimer = setInterval(refreshMetrics, parseInt(refreshInterval.value));
-                }
+            // 清除已存在的定时器
+            if (refreshTimer) {
+                clearInterval(refreshTimer);
             }
-            
-            autoRefresh.addEventListener('change', updateRefreshTimer);
-            refreshInterval.addEventListener('change', updateRefreshTimer);
-            
-            updateRefreshTimer();
+            // 设置5秒自动刷新
+            refreshTimer = setInterval(refreshMetrics, 5 * 1000);  // 改为 5 秒
         }
 
         document.addEventListener('DOMContentLoaded', function() {
             refreshMetrics(); // 立即加载一次数据
-            setupAutoRefresh();
+            setupAutoRefresh(); // 设置自动刷新
         });
     </script>
 </body>
