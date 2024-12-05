@@ -10,11 +10,6 @@ var (
 	CacheTTL     = 5 * time.Minute // 缓存过期时间
 	MaxCacheSize = 10000           // 最大缓存大小
 
-	// 数据库相关
-	CleanupInterval = 24 * time.Hour      // 清理间隔
-	DataRetention   = 90 * 24 * time.Hour // 数据保留时间
-	BatchSize       = 100                 // 批量写入大小
-
 	// 指标相关
 	MetricsInterval = 5 * time.Minute // 指标收集间隔
 	MaxPathsStored  = 1000            // 最大存储路径数
@@ -42,29 +37,14 @@ var (
 	KB int64 = 1024
 	MB int64 = 1024 * KB
 
-	// 不同类型数据的保留时间
-	MetricsRetention = 90 * 24 * time.Hour // 基础指标保留90天
-	StatusRetention  = 30 * 24 * time.Hour // 状态码统计保留30天
-	PathRetention    = 7 * 24 * time.Hour  // 路径统计保留7天
-	RefererRetention = 7 * 24 * time.Hour  // 引用来源保留7天
-
-	// 性能监控阈值
-	MaxRequestsPerMinute = 1000              // 每分钟最大请求数
-	MaxBytesPerMinute    = 100 * 1024 * 1024 // 每分钟最大流量 (100MB)
-
-	// 数据加载相关
-	LoadRetryCount    = 3                // 加载重试次数
-	LoadRetryInterval = time.Second      // 重试间隔
-	LoadTimeout       = 30 * time.Second // 加载超时时间
-
-	// 数据保存相关
-	MinSaveInterval     = 5 * time.Minute  // 最小保存间隔
-	MaxSaveInterval     = 15 * time.Minute // 最大保存间隔
-	DefaultSaveInterval = 10 * time.Minute // 默认保存间隔
-
 	// 数据验证相关
 	MaxErrorRate     = 0.8  // 最大错误率
 	MaxDataDeviation = 0.01 // 最大数据偏差(1%)
+
+	// 性能监控阈值
+	MaxRequestsPerMinute int64 = 1000              // 每分钟最大请求数
+	MaxBytesPerMinute    int64 = 100 * 1024 * 1024 // 每分钟最大流量 (100MB)
+	MaxSaveInterval            = 15 * time.Minute  // 最大保存间隔
 )
 
 // UpdateFromConfig 从配置文件更新常量
@@ -112,33 +92,22 @@ func UpdateFromConfig(cfg *config.Config) {
 		HugeFileLatency = cfg.Metrics.Latency.HugeLatency
 	}
 
-	// 数据加载相关
-	if cfg.Metrics.Load.RetryCount > 0 {
-		LoadRetryCount = cfg.Metrics.Load.RetryCount
-	}
-	if cfg.Metrics.Load.RetryInterval > 0 {
-		LoadRetryInterval = cfg.Metrics.Load.RetryInterval
-	}
-	if cfg.Metrics.Load.Timeout > 0 {
-		LoadTimeout = cfg.Metrics.Load.Timeout
-	}
-
-	// 数据保存相关
-	if cfg.Metrics.Save.MinInterval > 0 {
-		MinSaveInterval = cfg.Metrics.Save.MinInterval
-	}
-	if cfg.Metrics.Save.MaxInterval > 0 {
-		MaxSaveInterval = cfg.Metrics.Save.MaxInterval
-	}
-	if cfg.Metrics.Save.DefaultInterval > 0 {
-		DefaultSaveInterval = cfg.Metrics.Save.DefaultInterval
-	}
-
 	// 数据验证相关
 	if cfg.Metrics.Validation.MaxErrorRate > 0 {
 		MaxErrorRate = cfg.Metrics.Validation.MaxErrorRate
 	}
 	if cfg.Metrics.Validation.MaxDataDeviation > 0 {
 		MaxDataDeviation = cfg.Metrics.Validation.MaxDataDeviation
+	}
+
+	// 性能监控阈值
+	if cfg.Metrics.Performance.MaxRequestsPerMinute > 0 {
+		MaxRequestsPerMinute = cfg.Metrics.Performance.MaxRequestsPerMinute
+	}
+	if cfg.Metrics.Performance.MaxBytesPerMinute > 0 {
+		MaxBytesPerMinute = cfg.Metrics.Performance.MaxBytesPerMinute
+	}
+	if cfg.Metrics.Performance.MaxSaveInterval > 0 {
+		MaxSaveInterval = cfg.Metrics.Performance.MaxSaveInterval
 	}
 }

@@ -3,8 +3,7 @@ package errors
 type ErrorCode int
 
 const (
-	ErrDatabase ErrorCode = iota + 1
-	ErrInvalidConfig
+	ErrInvalidConfig ErrorCode = iota + 1
 	ErrRateLimit
 	ErrMetricsCollection
 )

@@ -2,11 +2,11 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"proxy-go/internal/metrics"
 	"proxy-go/internal/models"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -533,7 +533,7 @@ var metricsTemplate = `
     </div>
 
     <div class="card">
-        <h2>状态码统计</h2>
+        <h2>状态统</h2>
         <div id="statusCodes"></div>
     </div>
 
@@ -600,40 +600,8 @@ var metricsTemplate = `
                 导出数据
             </button>
         </div>
-        <div class="time-range-buttons">
-            <div class="time-range-group">
-                <span class="group-label">最近:</span>
-                <button class="time-btn" data-hours="0.5">30分钟</button>
-                <button class="time-btn" data-hours="1">1小时</button>
-                <button class="time-btn" data-hours="3">3小时</button>
-                <button class="time-btn" data-hours="6">6小时</button>
-                <button class="time-btn" data-hours="12">12小时</button>
-                <button class="time-btn active" data-hours="24">24小时</button>
-            </div>
-            <div class="time-range-group">
-                <span class="group-label">历史:</span>
-                <button class="time-btn" data-hours="72">3天</button>
-                <button class="time-btn" data-hours="120">5天</button>
-                <button class="time-btn" data-hours="168">7天</button>
-                <button class="time-btn" data-hours="360">15天</button>
-                <button class="time-btn" data-hours="720">30天</button>
-            </div>
-        </div>
-        <div id="historyChart">
-            <div class="chart-container">
-                <div class="chart">
-                    <h3 style="text-align:center">请求数</h3>
-                    <canvas id="requestsChart"></canvas>
-                </div>
-                <div class="chart">
-                    <h3 style="text-align:center">错误率%</h3>
-                    <canvas id="errorRateChart"></canvas>
-                </div>
-                <div class="chart">
-                    <h3 style="text-align:center">流量MB</h3>
-                    <canvas id="bytesChart"></canvas>
-                </div>
-            </div>
+        <div class="time-range-info">
+            显示最近30天的数据
         </div>
     </div>
 
@@ -912,7 +880,7 @@ var metricsTemplate = `
         }
 
         function updateChart(canvasId, chartKey, labels, data, label, valueGetter, color, options) {
-            // 确保 canvas 元素存在
+            // 保 canvas 元素存在
             const canvas = document.getElementById(canvasId);
             if (!canvas) {
                 console.error('Canvas element ' + canvasId + ' not found');
@@ -1090,21 +1058,35 @@ func (h *ProxyHandler) MetricsAuthHandler(w http.ResponseWriter, r *http.Request
 
 // 添加历史数据查询接口
 func (h *ProxyHandler) MetricsHistoryHandler(w http.ResponseWriter, r *http.Request) {
-	hours := r.URL.Query().Get("hours")
-	hoursFloat, err := strconv.ParseFloat(hours, 64)
-	if err != nil {
-		hoursFloat = 24.0
-	}
-
 	collector := metrics.GetCollector()
-	metrics, err := collector.GetDB().GetRecentMetrics(hoursFloat)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	metrics := collector.GetHistoricalData()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(metrics)
+}
+
+// 辅助函数:解析延迟字符串
+func parseLatency(latency string) (float64, error) {
+	var value float64
+	var unit string
+	_, err := fmt.Sscanf(latency, "%f %s", &value, &unit)
+	if err != nil {
+		return 0, err
+	}
+
+	// 根据单位转换为毫秒
+	switch unit {
+	case "μs":
+		value = value / 1000 // 微秒转毫秒
+	case "ms":
+		// 已经是毫秒
+	case "s":
+		value = value * 1000 // 秒转毫秒
+	default:
+		return 0, fmt.Errorf("unknown unit: %s", unit)
+	}
+
+	return value, nil
 }
 
 // 添加安全的类型转换辅助函数

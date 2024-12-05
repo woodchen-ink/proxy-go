@@ -56,6 +56,15 @@
       "MediumLatency": "8s",
       "LargeLatency": "30s",
       "HugeLatency": "300s"
+    },
+    "Performance": {
+      "MaxRequestsPerMinute": 1000,
+      "MaxBytesPerMinute": 104857600,
+      "MaxSaveInterval": "15m"
+    },
+    "Validation": {
+      "max_error_rate": 0.8,
+      "max_data_deviation": 0.01
     }
   }
 }

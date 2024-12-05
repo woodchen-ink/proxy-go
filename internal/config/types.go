@@ -59,6 +59,12 @@ type MetricsConfig struct {
 		LargeLatency   time.Duration `json:"LargeLatency"`   // 大文件最大延迟
 		HugeLatency    time.Duration `json:"HugeLatency"`    // 超大文件最大延迟
 	} `json:"Latency"`
+	// 性能监控配置
+	Performance struct {
+		MaxRequestsPerMinute int64         `json:"MaxRequestsPerMinute"`
+		MaxBytesPerMinute    int64         `json:"MaxBytesPerMinute"`
+		MaxSaveInterval      time.Duration `json:"MaxSaveInterval"`
+	} `json:"Performance"`
 	// 加载配置
 	Load struct {
 		RetryCount    int           `json:"retry_count"`

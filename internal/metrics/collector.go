@@ -1,11 +1,9 @@
 package metrics
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
-	"math/rand"
 	"net/http"
 	"os"
 	"path"
@@ -14,7 +12,6 @@ import (
 	"proxy-go/internal/constants"
 	"proxy-go/internal/models"
 	"proxy-go/internal/monitor"
-	"proxy-go/internal/utils"
 	"runtime"
 	"sort"
 	"sync"
@@ -23,17 +20,12 @@ import (
 )
 
 type Collector struct {
-	startTime       time.Time
-	activeRequests  int64
-	totalRequests   int64
-	totalErrors     int64
-	totalBytes      atomic.Int64
-	latencySum      atomic.Int64
-	persistentStats struct {
-		totalRequests atomic.Int64
-		totalErrors   atomic.Int64
-		totalBytes    atomic.Int64
-	}
+	startTime      time.Time
+	activeRequests int64
+	totalRequests  int64
+	totalErrors    int64
+	totalBytes     atomic.Int64
+	latencySum     atomic.Int64
 	pathStats      sync.Map
 	refererStats   sync.Map
 	statusStats    [6]atomic.Int64
@@ -43,10 +35,15 @@ type Collector struct {
 		items  [1000]*models.RequestLog
 		cursor atomic.Int64
 	}
-	db        *models.MetricsDB
 	cache     *cache.Cache
 	monitor   *monitor.Monitor
 	statsPool sync.Pool
+
+	// 添加历史数据存储
+	historicalData struct {
+		sync.RWMutex
+		items []models.HistoricalMetrics
+	}
 }
 
 var globalCollector *Collector
@@ -57,27 +54,21 @@ const (
 	lowThreshold  = 0.2 // 低变化率阈值
 )
 
-func InitCollector(dbPath string, config *config.Config) error {
-	db, err := models.NewMetricsDB(dbPath)
-	if err != nil {
-		return err
-	}
-
+func InitCollector(config *config.Config) error {
 	globalCollector = &Collector{
 		startTime:      time.Now(),
 		pathStats:      sync.Map{},
 		statusStats:    [6]atomic.Int64{},
 		latencyBuckets: [10]atomic.Int64{},
-		db:             db,
 	}
 
-	// 1. 先初始化 cache
+	// 初始化 cache
 	globalCollector.cache = cache.NewCache(constants.CacheTTL)
 
-	// 2. 初始化监控器
+	// 初始化监控器
 	globalCollector.monitor = monitor.NewMonitor(globalCollector)
 
-	// 3. 如果配置了飞书webhook，则启用飞书告警
+	// 如果配置了飞书webhook，则启用飞书告警
 	if config.Metrics.FeishuWebhook != "" {
 		globalCollector.monitor.AddHandler(
 			monitor.NewFeishuHandler(config.Metrics.FeishuWebhook),
@@ -85,93 +76,24 @@ func InitCollector(dbPath string, config *config.Config) error {
 		log.Printf("Feishu alert enabled")
 	}
 
-	// 4. 初始化对象池
+	// 初始化对象池
 	globalCollector.statsPool = sync.Pool{
 		New: func() interface{} {
 			return make(map[string]interface{}, 20)
 		},
 	}
 
-	// 5. 设置最后保存时间
+	// 设置最后保存时间
 	lastSaveTime = time.Now()
 
-	// 6. 加载历史数据
-	if lastMetrics, err := db.GetLastMetrics(); err == nil && lastMetrics != nil {
-		globalCollector.persistentStats.totalRequests.Store(lastMetrics.TotalRequests)
-		globalCollector.persistentStats.totalErrors.Store(lastMetrics.TotalErrors)
-		globalCollector.persistentStats.totalBytes.Store(lastMetrics.TotalBytes)
+	// 初始化历史数据存储
+	globalCollector.historicalData.items = make([]models.HistoricalMetrics, 0, 1000)
 
-		// 确保在加载历史数据后立即保存一次，以更新所有统计信息
-		stats := globalCollector.GetStats()
-		if err := db.SaveAllMetrics(stats); err != nil {
-			log.Printf("Warning: Failed to save initial metrics: %v", err)
-		}
+	// 启动定期保存历史数据的goroutine
+	go globalCollector.recordHistoricalData()
 
-		if err := globalCollector.LoadRecentStats(); err != nil {
-			log.Printf("Warning: Failed to load recent stats: %v", err)
-		}
-		log.Printf("Loaded historical metrics: requests=%d, errors=%d, bytes=%d",
-			lastMetrics.TotalRequests, lastMetrics.TotalErrors, lastMetrics.TotalBytes)
-	}
-
-	// 7. 启动定时保存
-	go func() {
-		time.Sleep(time.Duration(rand.Int63n(60)) * time.Second)
-		var (
-			saveInterval = 10 * time.Minute
-			minInterval  = 5 * time.Minute
-			maxInterval  = 15 * time.Minute
-		)
-		ticker := time.NewTicker(saveInterval)
-		lastChangeTime := time.Now()
-
-		for range ticker.C {
-			stats := globalCollector.GetStats()
-			start := time.Now()
-
-			// 根据数据变化频率动态调整保存间隔
-			changeRate := calculateChangeRate(stats)
-			// 避免频繁调整
-			if time.Since(lastChangeTime) > time.Minute {
-				if changeRate > highThreshold && saveInterval > minInterval {
-					saveInterval = saveInterval - time.Minute
-					lastChangeTime = time.Now()
-				} else if changeRate < lowThreshold && saveInterval < maxInterval {
-					saveInterval = saveInterval + time.Minute
-					lastChangeTime = time.Now()
-				}
-				ticker.Reset(saveInterval)
-				log.Printf("Adjusted save interval to %v (change rate: %.2f)",
-					saveInterval, changeRate)
-			}
-
-			if err := db.SaveAllMetrics(stats); err != nil {
-				log.Printf("Error saving metrics: %v", err)
-			} else {
-				log.Printf("Metrics saved in %v", time.Since(start))
-			}
-		}
-	}()
-
-	// 设置程序退出时的处理
-	utils.SetupCloseHandler(func() {
-		log.Println("Saving final metrics before shutdown...")
-		// 确保所有正在进行的操作完成
-		time.Sleep(time.Second)
-
-		stats := globalCollector.GetStats()
-		if err := db.SaveAllMetrics(stats); err != nil {
-			log.Printf("Error saving final metrics: %v", err)
-		} else {
-			log.Printf("Basic metrics saved successfully")
-		}
-
-		// 等待数据写入完成
-		time.Sleep(time.Second)
-
-		db.Close()
-		log.Println("Database closed successfully")
-	})
+	// 启动定期清理历史数据的goroutine
+	go globalCollector.cleanHistoricalData()
 
 	return nil
 }
@@ -277,36 +199,30 @@ func (c *Collector) GetStats() map[string]interface{} {
 		}
 	}
 
-	// 确保所有字段都被初始化
 	stats := c.statsPool.Get().(map[string]interface{})
 	defer c.statsPool.Put(stats)
 
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
-	// 基础指标
 	uptime := time.Since(c.startTime)
 	currentRequests := atomic.LoadInt64(&c.totalRequests)
 	currentErrors := atomic.LoadInt64(&c.totalErrors)
 	currentBytes := c.totalBytes.Load()
 
-	totalRequests := currentRequests + c.persistentStats.totalRequests.Load()
-	totalErrors := currentErrors + c.persistentStats.totalErrors.Load()
-	totalBytes := currentBytes + c.persistentStats.totalBytes.Load()
-
 	// 计算错误率
 	var errorRate float64
-	if totalRequests > 0 {
-		errorRate = float64(totalErrors) / float64(totalRequests)
+	if currentRequests > 0 {
+		errorRate = float64(currentErrors) / float64(currentRequests)
 	}
 
 	// 基础指标
 	stats["uptime"] = uptime.String()
 	stats["active_requests"] = atomic.LoadInt64(&c.activeRequests)
-	stats["total_requests"] = totalRequests
-	stats["total_errors"] = totalErrors
+	stats["total_requests"] = currentRequests
+	stats["total_errors"] = currentErrors
 	stats["error_rate"] = errorRate
-	stats["total_bytes"] = totalBytes
+	stats["total_bytes"] = currentBytes
 	stats["bytes_per_second"] = float64(currentBytes) / Max(uptime.Seconds(), 1)
 	stats["requests_per_second"] = float64(currentRequests) / Max(uptime.Seconds(), 1)
 
@@ -444,112 +360,60 @@ func Max(a, b float64) float64 {
 	return b
 }
 
-func (c *Collector) GetDB() *models.MetricsDB {
-	return c.db
-}
-
 func (c *Collector) SaveMetrics(stats map[string]interface{}) error {
-	// 更新持久化数据
-	if totalReqs, ok := stats["total_requests"].(int64); ok {
-		c.persistentStats.totalRequests.Store(totalReqs)
-	}
-	if totalErrs, ok := stats["total_errors"].(int64); ok {
-		c.persistentStats.totalErrors.Store(totalErrs)
-	}
-	if totalBytes, ok := stats["total_bytes"].(int64); ok {
-		c.persistentStats.totalBytes.Store(totalBytes)
-	}
-
-	// 在重置前记录当前值用于日志
-	oldRequests := atomic.LoadInt64(&c.totalRequests)
-	oldErrors := atomic.LoadInt64(&c.totalErrors)
-	oldBytes := c.totalBytes.Load()
-
-	// 重置当前会话计数器
-	atomic.StoreInt64(&c.totalRequests, 0)
-	atomic.StoreInt64(&c.totalErrors, 0)
-	c.totalBytes.Store(0)
-	c.latencySum.Store(0)
-
-	// 重置状态码统计
-	for i := range c.statusStats {
-		c.statusStats[i].Store(0)
-	}
-
-	// 重置路径统计
-	c.pathStats.Range(func(key, _ interface{}) bool {
-		c.pathStats.Delete(key)
-		return true
-	})
-
-	// 重置引用来源统计
-	c.refererStats.Range(func(key, _ interface{}) bool {
-		c.refererStats.Delete(key)
-		return true
-	})
-
-	// 保存到数据库
-	err := c.db.SaveMetrics(stats)
-	if err == nil {
-		// 记录重置日志
-		log.Printf("Reset counters: requests=%d->0, errors=%d->0, bytes=%d->0",
-			oldRequests, oldErrors, oldBytes)
-		lastSaveTime = time.Now() // 更新最后保存时间
-	}
-
-	return err
-}
-
-// LoadRecentStats 加载最近的统计数据
-func (c *Collector) LoadRecentStats() error {
-	start := time.Now()
-	log.Printf("Starting to load recent stats...")
-
-	var err error
-	// 添加重试机制
-	for retryCount := 0; retryCount < 3; retryCount++ {
-		if err = c.loadRecentStatsInternal(); err == nil {
-			// 添加数据验证
-			if err = c.validateLoadedData(); err != nil {
-				log.Printf("Data validation failed: %v", err)
-				continue
-			}
-			break
-		}
-		log.Printf("Retry %d/3: Failed to load stats: %v", retryCount+1, err)
-		time.Sleep(time.Second)
-	}
-
-	if err != nil {
-		return fmt.Errorf("failed to load stats after retries: %v", err)
-	}
-
-	log.Printf("Successfully loaded all stats in %v", time.Since(start))
+	lastSaveTime = time.Now()
 	return nil
 }
 
-// loadRecentStatsInternal 内部加载函数
-func (c *Collector) loadRecentStatsInternal() error {
-	loadStart := time.Now()
-	// 先加载基础指标
-	if err := c.loadBasicMetrics(); err != nil {
-		return fmt.Errorf("failed to load basic metrics: %v", err)
-	}
-	log.Printf("Loaded basic metrics in %v", time.Since(loadStart))
+// LoadRecentStats 简化为只进行数据验证
+func (c *Collector) LoadRecentStats() error {
+	start := time.Now()
+	log.Printf("Starting to validate stats...")
 
-	// 再加载状态码统计
-	statusStart := time.Now()
-	if err := c.loadStatusStats(); err != nil {
-		return fmt.Errorf("failed to load status stats: %v", err)
+	if err := c.validateLoadedData(); err != nil {
+		return fmt.Errorf("data validation failed: %v", err)
 	}
-	log.Printf("Loaded status codes in %v", time.Since(statusStart))
 
-	// 最后加载路径和引用来源统计
-	pathStart := time.Now()
-	if err := c.loadPathAndRefererStats(); err != nil {
-		return fmt.Errorf("failed to load path and referer stats: %v", err)
+	log.Printf("Successfully validated stats in %v", time.Since(start))
+	return nil
+}
+
+// validateLoadedData 验证当前数据的有效性
+func (c *Collector) validateLoadedData() error {
+	// 验证基础指标
+	if atomic.LoadInt64(&c.totalRequests) < 0 ||
+		atomic.LoadInt64(&c.totalErrors) < 0 ||
+		c.totalBytes.Load() < 0 {
+		return fmt.Errorf("invalid stats values")
 	}
-	log.Printf("Loaded path and referer stats in %v", time.Since(pathStart))
+
+	// 验证错误数不能大于总请求数
+	if atomic.LoadInt64(&c.totalErrors) > atomic.LoadInt64(&c.totalRequests) {
+		return fmt.Errorf("total errors exceeds total requests")
+	}
+
+	// 验证状态码统计
+	for i := range c.statusStats {
+		if c.statusStats[i].Load() < 0 {
+			return fmt.Errorf("invalid status code count at index %d", i)
+		}
+	}
+
+	// 验证路径统计
+	var totalPathRequests int64
+	c.pathStats.Range(func(_, value interface{}) bool {
+		stats := value.(*models.PathStats)
+		if stats.Requests.Load() < 0 || stats.Errors.Load() < 0 {
+			return false
+		}
+		totalPathRequests += stats.Requests.Load()
+		return true
+	})
+
+	// 验证总数一致性
+	if totalPathRequests > atomic.LoadInt64(&c.totalRequests) {
+		return fmt.Errorf("path stats total exceeds total requests")
+	}
 
 	return nil
 }
@@ -587,7 +451,7 @@ func calculateChangeRate(stats map[string]interface{}) float64 {
 
 // CheckDataConsistency 检查数据一致性
 func (c *Collector) CheckDataConsistency() error {
-	totalReqs := c.persistentStats.totalRequests.Load() + atomic.LoadInt64(&c.totalRequests)
+	totalReqs := atomic.LoadInt64(&c.totalRequests)
 
 	// 检查状态码统计
 	var statusTotal int64
@@ -636,179 +500,6 @@ func abs(x int64) int64 {
 	return x
 }
 
-func (c *Collector) validateLoadedData() error {
-	// 验证基础指标
-	if c.persistentStats.totalRequests.Load() < 0 ||
-		c.persistentStats.totalErrors.Load() < 0 ||
-		c.persistentStats.totalBytes.Load() < 0 {
-		return fmt.Errorf("invalid persistent stats values")
-	}
-
-	// 验证错误数不能大于总请求数
-	if c.persistentStats.totalErrors.Load() > c.persistentStats.totalRequests.Load() {
-		return fmt.Errorf("total errors exceeds total requests")
-	}
-
-	// 验证状态码统计
-	for i := range c.statusStats {
-		if c.statusStats[i].Load() < 0 {
-			return fmt.Errorf("invalid status code count at index %d", i)
-		}
-	}
-
-	// 验证路径统计
-	var totalPathRequests int64
-	c.pathStats.Range(func(_, value interface{}) bool {
-		stats := value.(*models.PathStats)
-		if stats.Requests.Load() < 0 || stats.Errors.Load() < 0 {
-			return false
-		}
-		totalPathRequests += stats.Requests.Load()
-		return true
-	})
-
-	// 验证总数一致性
-	if totalPathRequests > c.persistentStats.totalRequests.Load() {
-		return fmt.Errorf("path stats total exceeds total requests")
-	}
-
-	return nil
-}
-
-// loadBasicMetrics 加载基础指标
-func (c *Collector) loadBasicMetrics() error {
-	// 加载最近5分钟的数据
-	row := c.db.DB.QueryRow(`
-		SELECT 
-			total_requests, total_errors, total_bytes, avg_latency
-		FROM metrics_history 
-		WHERE timestamp >= datetime('now', '-24', 'hours')
-		ORDER BY timestamp DESC 
-		LIMIT 1
-	`)
-
-	var metrics models.HistoricalMetrics
-	if err := row.Scan(
-		&metrics.TotalRequests,
-		&metrics.TotalErrors,
-		&metrics.TotalBytes,
-		&metrics.AvgLatency,
-	); err != nil && err != sql.ErrNoRows {
-		return err
-	}
-
-	// 更新持久化数据
-	if metrics.TotalRequests > 0 {
-		c.persistentStats.totalRequests.Store(metrics.TotalRequests)
-		c.persistentStats.totalErrors.Store(metrics.TotalErrors)
-		c.persistentStats.totalBytes.Store(metrics.TotalBytes)
-		log.Printf("Loaded persistent stats: requests=%d, errors=%d, bytes=%d",
-			metrics.TotalRequests, metrics.TotalErrors, metrics.TotalBytes)
-	}
-	return nil
-}
-
-// loadStatusStats 加载状态码统计
-func (c *Collector) loadStatusStats() error {
-	rows, err := c.db.DB.Query(`
-		SELECT status_group, SUM(count) as count 
-		FROM status_code_history 
-		WHERE timestamp >= datetime('now', '-24', 'hours')
-		GROUP BY status_group
-	`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	var totalStatusCodes int64
-	for rows.Next() {
-		var group string
-		var count int64
-		if err := rows.Scan(&group, &count); err != nil {
-			return err
-		}
-		if len(group) > 0 {
-			idx := (int(group[0]) - '0') - 1
-			if idx >= 0 && idx < len(c.statusStats) {
-				c.statusStats[idx].Store(count)
-				totalStatusCodes += count
-			}
-		}
-	}
-	return rows.Err()
-}
-
-// loadPathAndRefererStats 加载路径和引用来源统计
-func (c *Collector) loadPathAndRefererStats() error {
-	// 加载路径统计
-	rows, err := c.db.DB.Query(`
-		SELECT 
-			path, 
-			SUM(request_count) as requests,
-			SUM(error_count) as errors,
-			AVG(bytes_transferred) as bytes,
-			AVG(avg_latency) as latency
-		FROM popular_paths_history
-		WHERE timestamp >= datetime('now', '-24', 'hours')
-		GROUP BY path
-		ORDER BY requests DESC
-		LIMIT 10
-	`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var path string
-		var requests, errors, bytes int64
-		var latency float64
-		if err := rows.Scan(&path, &requests, &errors, &bytes, &latency); err != nil {
-			return err
-		}
-		stats := &models.PathStats{}
-		stats.Requests.Store(requests)
-		stats.Errors.Store(errors)
-		stats.Bytes.Store(bytes)
-		stats.LatencySum.Store(int64(latency))
-		c.pathStats.Store(path, stats)
-	}
-
-	if err := rows.Err(); err != nil {
-		return err
-	}
-
-	// 加载引用来源统计
-	rows, err = c.db.DB.Query(`
-		SELECT 
-			referer,
-			SUM(request_count) as requests
-		FROM referer_history
-		WHERE timestamp >= datetime('now', '-24', 'hours')
-		GROUP BY referer
-		ORDER BY requests DESC
-		LIMIT 10
-	`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var referer string
-		var count int64
-		if err := rows.Scan(&referer, &count); err != nil {
-			return err
-		}
-		stats := &models.PathStats{}
-		stats.Requests.Store(count)
-		c.refererStats.Store(referer, stats)
-	}
-
-	return rows.Err()
-}
-
 // SaveBackup 保存数据备份
 func (c *Collector) SaveBackup() error {
 	stats := c.GetStats()
@@ -841,13 +532,13 @@ func (c *Collector) LoadBackup(backupFile string) error {
 func (c *Collector) RestoreFromBackup(stats map[string]interface{}) error {
 	// 恢复基础指标
 	if totalReqs, ok := stats["total_requests"].(int64); ok {
-		c.persistentStats.totalRequests.Store(totalReqs)
+		atomic.StoreInt64(&c.totalRequests, totalReqs)
 	}
 	if totalErrs, ok := stats["total_errors"].(int64); ok {
-		c.persistentStats.totalErrors.Store(totalErrs)
+		atomic.StoreInt64(&c.totalErrors, totalErrs)
 	}
 	if totalBytes, ok := stats["total_bytes"].(int64); ok {
-		c.persistentStats.totalBytes.Store(totalBytes)
+		c.totalBytes.Store(totalBytes)
 	}
 
 	// 恢复状态码统计
@@ -870,4 +561,83 @@ var lastSaveTime time.Time
 
 func (c *Collector) GetLastSaveTime() time.Time {
 	return lastSaveTime
+}
+
+// 定期记录历史数据
+func (c *Collector) recordHistoricalData() {
+	ticker := time.NewTicker(5 * time.Minute)
+	for range ticker.C {
+		stats := c.GetStats()
+
+		metric := models.HistoricalMetrics{
+			Timestamp:     time.Now().Format("2006-01-02 15:04:05"),
+			TotalRequests: stats["total_requests"].(int64),
+			TotalErrors:   stats["total_errors"].(int64),
+			TotalBytes:    stats["total_bytes"].(int64),
+			ErrorRate:     stats["error_rate"].(float64),
+		}
+
+		if avgLatencyStr, ok := stats["avg_response_time"].(string); ok {
+			if d, err := parseLatency(avgLatencyStr); err == nil {
+				metric.AvgLatency = d
+			}
+		}
+
+		c.historicalData.Lock()
+		c.historicalData.items = append(c.historicalData.items, metric)
+		c.historicalData.Unlock()
+	}
+}
+
+// 定期清理30天前的数据
+func (c *Collector) cleanHistoricalData() {
+	ticker := time.NewTicker(1 * time.Hour)
+	for range ticker.C {
+		threshold := time.Now().Add(-30 * 24 * time.Hour)
+
+		c.historicalData.Lock()
+		newItems := make([]models.HistoricalMetrics, 0)
+		for _, item := range c.historicalData.items {
+			timestamp, err := time.Parse("2006-01-02 15:04:05", item.Timestamp)
+			if err == nil && timestamp.After(threshold) {
+				newItems = append(newItems, item)
+			}
+		}
+		c.historicalData.items = newItems
+		c.historicalData.Unlock()
+	}
+}
+
+// GetHistoricalData 获取历史数据
+func (c *Collector) GetHistoricalData() []models.HistoricalMetrics {
+	c.historicalData.RLock()
+	defer c.historicalData.RUnlock()
+
+	result := make([]models.HistoricalMetrics, len(c.historicalData.items))
+	copy(result, c.historicalData.items)
+	return result
+}
+
+// parseLatency 解析延迟字符串
+func parseLatency(latency string) (float64, error) {
+	var value float64
+	var unit string
+	_, err := fmt.Sscanf(latency, "%f %s", &value, &unit)
+	if err != nil {
+		return 0, err
+	}
+
+	// 根据单位转换为毫秒
+	switch unit {
+	case "μs":
+		value = value / 1000 // 微秒转毫秒
+	case "ms":
+		// 已经是毫秒
+	case "s":
+		value = value * 1000 // 秒转毫秒
+	default:
+		return 0, fmt.Errorf("unknown unit: %s", unit)
+	}
+
+	return value, nil
 }

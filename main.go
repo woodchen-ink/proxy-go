@@ -26,7 +26,7 @@ func main() {
 	constants.UpdateFromConfig(cfg)
 
 	// 初始化指标收集器
-	if err := metrics.InitCollector("data/metrics.db", cfg); err != nil {
+	if err := metrics.InitCollector(cfg); err != nil {
 		log.Fatal("Error initializing metrics collector:", err)
 	}
 
