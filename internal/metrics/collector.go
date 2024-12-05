@@ -292,9 +292,10 @@ func (c *Collector) GetStats() map[string]interface{} {
 
 	// 状态码统计
 	statusStats := make(map[string]int64)
-	statusGroups := []string{"1xx", "2xx", "3xx", "4xx", "5xx"}
 	for i := range c.statusStats {
-		statusStats[statusGroups[i]] = c.statusStats[i].Load()
+		if i < len(c.statusStats) {
+			statusStats[fmt.Sprintf("%dxx", i+1)] = c.statusStats[i].Load()
+		}
 	}
 	stats["status_code_stats"] = statusStats
 
