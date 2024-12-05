@@ -389,7 +389,7 @@ var metricsTemplate = `
             border-radius: 4px;
         }
 +       #statusCodes {
-+           padding: 10px;
++           padding: 15px;
 +           background: #f8f9fa;
 +           border-radius: 8px;
 +       }
@@ -397,19 +397,19 @@ var metricsTemplate = `
 +       .status-row {
 +           display: flex;
 +           flex-direction: column;
-+           gap: 8px;
++           gap: 12px;
 +       }
 +       
 +       .status-labels, .status-values {
 +           display: flex;
-+           justify-content: space-between;
-+           gap: 10px;
++           justify-content: flex-start;
++           gap: 20px;
 +       }
 +       
 +       .status-badge {
-+           flex: 1;
++           flex: 0 0 auto;
 +           text-align: center;
-+           padding: 4px 8px;
++           padding: 4px 12px;
 +           border-radius: 4px;
 +           font-size: 12px;
 +           color: white;
@@ -417,7 +417,7 @@ var metricsTemplate = `
 +       }
 +       
 +       .metric-value {
-+           flex: 1;
++           flex: 0 0 auto;
 +           text-align: center;
 +           min-width: 60px;
 +       }
@@ -1108,7 +1108,7 @@ func (h *ProxyHandler) MetricsHistoryHandler(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(metrics)
 }
 
-// 添加安全的类型转���辅助函数
+// 添加安全的类型转换辅助函数
 func safeStatusCodeStats(v interface{}) map[string]int64 {
 	if v == nil {
 		return make(map[string]int64)
