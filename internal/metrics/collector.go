@@ -564,18 +564,16 @@ func calculateChangeRate(stats map[string]interface{}) float64 {
 
 // CheckDataConsistency 检查数据一致性
 func (c *Collector) CheckDataConsistency() error {
-	stats := c.GetStats()
-
-	// 检查基础指标
-	totalReqs := stats["total_requests"].(int64)
+	// 不再调用 GetStats()，而是直接访问计数器
+	totalReqs := c.persistentStats.totalRequests.Load() + atomic.LoadInt64(&c.totalRequests)
 	if totalReqs < 0 {
 		return fmt.Errorf("invalid total_requests: %d", totalReqs)
 	}
 
-	// 查状态码统计
-	statusStats := stats["status_code_stats"].(map[string]int64)
+	// 检查状态码统计
 	var statusTotal int64
-	for _, count := range statusStats {
+	for i := range c.statusStats {
+		count := c.statusStats[i].Load()
 		if count < 0 {
 			return fmt.Errorf("invalid status code count: %d", count)
 		}
@@ -583,14 +581,16 @@ func (c *Collector) CheckDataConsistency() error {
 	}
 
 	// 检查路径统计
-	pathStats := stats["top_paths"].([]models.PathMetrics)
 	var pathTotal int64
-	for _, p := range pathStats {
-		if p.RequestCount < 0 {
-			return fmt.Errorf("invalid path request count: %d", p.RequestCount)
+	c.pathStats.Range(func(_, value interface{}) bool {
+		stats := value.(*models.PathStats)
+		count := stats.Requests.Load()
+		if count < 0 {
+			return false
 		}
-		pathTotal += p.RequestCount
-	}
+		pathTotal += count
+		return true
+	})
 
 	// 允许一定的误差
 	if abs(statusTotal-totalReqs) > totalReqs/100 || abs(pathTotal-totalReqs) > totalReqs/100 {
