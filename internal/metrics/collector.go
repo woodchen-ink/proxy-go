@@ -277,13 +277,15 @@ func (c *Collector) GetStats() map[string]interface{} {
 		}
 	}
 
+	// 确保所有字段都被初始化
+	stats := c.statsPool.Get().(map[string]interface{})
+	defer c.statsPool.Put(stats)
+
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
-	// 确保所有字段都被初始化
-	stats := make(map[string]interface{})
-
-	// 基础指标 - 合并当前会话和持久化的数据
+	// 基础指标
+	uptime := time.Since(c.startTime)
 	currentRequests := atomic.LoadInt64(&c.totalRequests)
 	currentErrors := atomic.LoadInt64(&c.totalErrors)
 	currentBytes := c.totalBytes.Load()
@@ -292,98 +294,97 @@ func (c *Collector) GetStats() map[string]interface{} {
 	totalErrors := currentErrors + c.persistentStats.totalErrors.Load()
 	totalBytes := currentBytes + c.persistentStats.totalBytes.Load()
 
-	// 计算每秒指标
-	uptime := time.Since(c.startTime).Seconds()
-	stats["requests_per_second"] = float64(currentRequests) / Max(uptime, 1)
-	stats["bytes_per_second"] = float64(currentBytes) / Max(uptime, 1)
+	// 计算错误率
+	var errorRate float64
+	if totalRequests > 0 {
+		errorRate = float64(totalErrors) / float64(totalRequests)
+	}
 
+	// 基础指标
+	stats["uptime"] = uptime.String()
 	stats["active_requests"] = atomic.LoadInt64(&c.activeRequests)
 	stats["total_requests"] = totalRequests
 	stats["total_errors"] = totalErrors
+	stats["error_rate"] = errorRate
 	stats["total_bytes"] = totalBytes
+	stats["bytes_per_second"] = float64(currentBytes) / Max(uptime.Seconds(), 1)
+	stats["requests_per_second"] = float64(currentRequests) / Max(uptime.Seconds(), 1)
 
 	// 系统指标
 	stats["num_goroutine"] = runtime.NumGoroutine()
 	stats["memory_usage"] = FormatBytes(m.Alloc)
 
 	// 延迟指标
-	currentTotalRequests := atomic.LoadInt64(&c.totalRequests)
 	latencySum := c.latencySum.Load()
-	if currentTotalRequests <= 0 || latencySum <= 0 {
-		stats["avg_latency"] = int64(0)
+	if currentRequests > 0 {
+		stats["avg_response_time"] = FormatDuration(time.Duration(latencySum / currentRequests))
 	} else {
-		stats["avg_latency"] = latencySum / currentTotalRequests
+		stats["avg_response_time"] = FormatDuration(0)
 	}
 
 	// 状态码统计
 	statusStats := make(map[string]int64)
 	for i := range c.statusStats {
-		if i < len(c.statusStats) {
-			statusStats[fmt.Sprintf("%dxx", i+1)] = c.statusStats[i].Load()
-		}
+		statusStats[fmt.Sprintf("%dxx", i+1)] = c.statusStats[i].Load()
 	}
 	stats["status_code_stats"] = statusStats
 
-	// 获取Top 10路径统计
-	var pathMetrics []models.PathMetrics
-	var allPaths []models.PathMetrics
+	// 延迟百分位数
+	stats["latency_percentiles"] = make([]float64, 0)
 
+	// 路径统计
+	var pathMetrics []models.PathMetrics
 	c.pathStats.Range(func(key, value interface{}) bool {
 		stats := value.(*models.PathStats)
-		if stats.Requests.Load() == 0 {
-			return true
+		if stats.Requests.Load() > 0 {
+			pathMetrics = append(pathMetrics, models.PathMetrics{
+				Path:             key.(string),
+				RequestCount:     stats.Requests.Load(),
+				ErrorCount:       stats.Errors.Load(),
+				AvgLatency:       formatAvgLatency(stats.LatencySum.Load(), stats.Requests.Load()),
+				BytesTransferred: stats.Bytes.Load(),
+			})
 		}
-		allPaths = append(allPaths, models.PathMetrics{
-			Path:             key.(string),
-			RequestCount:     stats.Requests.Load(),
-			ErrorCount:       stats.Errors.Load(),
-			AvgLatency:       formatAvgLatency(stats.LatencySum.Load(), stats.Requests.Load()),
-			BytesTransferred: stats.Bytes.Load(),
-		})
 		return true
 	})
 
-	// 按请求数排序并获取前10个
-	sort.Slice(allPaths, func(i, j int) bool {
-		return allPaths[i].RequestCount > allPaths[j].RequestCount
+	// 按请求数排序
+	sort.Slice(pathMetrics, func(i, j int) bool {
+		return pathMetrics[i].RequestCount > pathMetrics[j].RequestCount
 	})
 
-	if len(allPaths) > 10 {
-		pathMetrics = allPaths[:10]
+	if len(pathMetrics) > 10 {
+		stats["top_paths"] = pathMetrics[:10]
 	} else {
-		pathMetrics = allPaths
+		stats["top_paths"] = pathMetrics
 	}
-	stats["top_paths"] = pathMetrics
 
-	// 获取最近请求
+	// 最近请求
 	stats["recent_requests"] = c.getRecentRequests()
 
-	// 获取Top 10引用来源
+	// 引用来源统计
 	var refererMetrics []models.PathMetrics
-	var allReferers []models.PathMetrics
 	c.refererStats.Range(func(key, value interface{}) bool {
 		stats := value.(*models.PathStats)
-		if stats.Requests.Load() == 0 {
-			return true
+		if stats.Requests.Load() > 0 {
+			refererMetrics = append(refererMetrics, models.PathMetrics{
+				Path:         key.(string),
+				RequestCount: stats.Requests.Load(),
+			})
 		}
-		allReferers = append(allReferers, models.PathMetrics{
-			Path:         key.(string),
-			RequestCount: stats.Requests.Load(),
-		})
 		return true
 	})
 
-	// 按请求数排序并获取前10个
-	sort.Slice(allReferers, func(i, j int) bool {
-		return allReferers[i].RequestCount > allReferers[j].RequestCount
+	// 按请求数排序
+	sort.Slice(refererMetrics, func(i, j int) bool {
+		return refererMetrics[i].RequestCount > refererMetrics[j].RequestCount
 	})
 
-	if len(allReferers) > 10 {
-		refererMetrics = allReferers[:10]
+	if len(refererMetrics) > 10 {
+		stats["top_referers"] = refererMetrics[:10]
 	} else {
-		refererMetrics = allReferers
+		stats["top_referers"] = refererMetrics
 	}
-	stats["top_referers"] = refererMetrics
 
 	// 检查告警
 	c.monitor.CheckMetrics(stats)
