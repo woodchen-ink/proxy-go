@@ -298,12 +298,13 @@ var metricsTemplate = `
             padding: 3px 8px;
             border-radius: 12px;
             font-size: 12px;
-            color: black;
+            color: white;
         }
         .status-2xx { background: #28a745; }
         .status-3xx { background: #17a2b8; }
         .status-4xx { background: #ffc107; }
         .status-5xx { background: #dc3545; }
+        .status-other { background: #000000; }
         .grid-container {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
@@ -388,41 +389,37 @@ var metricsTemplate = `
             border-radius: 4px;
         }
 +       #statusCodes {
-+           display: flex;
-+           flex-direction: row;
-+           gap: 10px;
-+           align-items: center;
 +           padding: 10px;
 +           background: #f8f9fa;
 +           border-radius: 8px;
-+           flex-wrap: nowrap;
-+           overflow-x: auto;
-+           white-space: nowrap;
-+           justify-content: flex-start;
 +       }
 +       
-+       #statusCodes .metric {
-+           flex: 0 0 auto;
++       .status-row {
 +           display: flex;
-+           align-items: center;
++           flex-direction: column;
++           gap: 8px;
++       }
++       
++       .status-labels, .status-values {
++           display: flex;
 +           justify-content: space-between;
-+           padding: 4px 12px;
-+           background: white;
-+           border-radius: 4px;
-+           box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-+           margin-right: 10px;
-+           min-width: 100px;
-+           height: 32px;
++           gap: 10px;
 +       }
-+       #statusCodes .metric:last-child {
-+           margin-right: 0;
-+       }
++       
 +       .status-badge {
-+           padding: 3px 8px;
-+           border-radius: 12px;
++           flex: 1;
++           text-align: center;
++           padding: 4px 8px;
++           border-radius: 4px;
 +           font-size: 12px;
 +           color: white;
-+           margin-right: 8px;
++           min-width: 60px;
++       }
++       
++       .metric-value {
++           flex: 1;
++           text-align: center;
++           min-width: 60px;
 +       }
 +       .loading {
 +           position: relative;
@@ -689,18 +686,28 @@ var metricsTemplate = `
             document.getElementById('bytesPerSecond').textContent = formatBytes(data.bytes_per_second) + '/s';
 
             // 更新状态码计
-            const statusCodesHtml = Object.entries(data.status_code_stats)
-                .sort((a, b) => a[0].localeCompare(b[0])) // 按状态码排序
-                .map(([status, count]) => {
-                    const statusClass = 'status-' + status.charAt(0) + 'xx';
-                    return '<div class="metric">' +
-                        '<span class="status-badge ' + statusClass + '">' + status + '</span>' +
-                        '<span class="metric-value">' + count.toLocaleString() + '</span>' +
-                        '</div>';
-                })
-                .join('');
+            const statusCodesHtml = '<div class="status-row">' +
+                '<div class="status-labels">' +
+                Object.entries(data.status_code_stats)
+                    .sort((a, b) => a[0].localeCompare(b[0]))
+                    .map(([status, _]) => {
+                        const firstDigit = status.charAt(0);
+                        const statusClass = (firstDigit >= '2' && firstDigit <= '5') 
+                            ? 'status-' + firstDigit + 'xx' 
+                            : 'status-other';
+                        return '<span class="status-badge ' + statusClass + '">' + status + '</span>';
+                    }).join('') +
+                '</div>' +
+                '<div class="status-values">' +
+                Object.entries(data.status_code_stats)
+                    .sort((a, b) => a[0].localeCompare(b[0]))
+                    .map(([_, count]) => {
+                        return '<span class="metric-value">' + count.toLocaleString() + '</span>';
+                    }).join('') +
+                '</div>' +
+                '</div>';
+
             const statusCodesContainer = document.getElementById('statusCodes');
-            statusCodesContainer.style.flexDirection = 'row';  // 强制横向排列
             statusCodesContainer.innerHTML = statusCodesHtml;
 
             // 更新热门路径
@@ -1101,7 +1108,7 @@ func (h *ProxyHandler) MetricsHistoryHandler(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(metrics)
 }
 
-// 添加安全的类型转换辅助函数
+// 添加安全的类型转���辅助函数
 func safeStatusCodeStats(v interface{}) map[string]int64 {
 	if v == nil {
 		return make(map[string]int64)
