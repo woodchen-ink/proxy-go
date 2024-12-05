@@ -369,21 +369,13 @@ func getDBSize(db *sql.DB) int64 {
 }
 
 func (db *MetricsDB) SaveMetrics(stats map[string]interface{}) error {
-	// 设置事务优化参数 - 移到事务外
-	if _, err := db.DB.Exec("PRAGMA synchronous = NORMAL"); err != nil {
-		return fmt.Errorf("failed to set synchronous mode: %v", err)
-	}
-	if _, err := db.DB.Exec("PRAGMA journal_mode = WAL"); err != nil {
-		return fmt.Errorf("failed to set journal mode: %v", err)
-	}
-
 	tx, err := db.DB.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	// 使用预处理语句提高性能
+	// 保存基础指标
 	stmt, err := tx.Prepare(`
 		INSERT INTO metrics_history (
 			total_requests, total_errors, total_bytes, avg_latency, error_rate
@@ -428,6 +420,61 @@ func (db *MetricsDB) SaveMetrics(stats map[string]interface{}) error {
 	)
 	if err != nil {
 		return fmt.Errorf("failed to save metrics: %v", err)
+	}
+
+	// 保存状态码统计
+	statusStats := stats["status_code_stats"].(map[string]int64)
+	values := make([]string, 0, len(statusStats))
+	args := make([]interface{}, 0, len(statusStats)*2)
+
+	for group, count := range statusStats {
+		values = append(values, "(?, ?)")
+		args = append(args, group, count)
+	}
+
+	query := "INSERT INTO status_code_history (status_group, count) VALUES " +
+		strings.Join(values, ",")
+
+	if _, err := tx.Exec(query, args...); err != nil {
+		return err
+	}
+
+	// 保存热门路径
+	pathStats := stats["top_paths"].([]PathMetrics)
+	pathStmt, err := tx.Prepare(`
+		INSERT INTO popular_paths_history (
+			path, request_count, error_count, avg_latency, bytes_transferred
+		) VALUES (?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return err
+	}
+	defer pathStmt.Close()
+
+	for _, p := range pathStats {
+		if _, err := pathStmt.Exec(
+			p.Path, p.RequestCount, p.ErrorCount,
+			p.AvgLatency, p.BytesTransferred,
+		); err != nil {
+			return err
+		}
+	}
+
+	// 保存引用来源
+	refererStats := stats["top_referers"].([]PathMetrics)
+	refererStmt, err := tx.Prepare(`
+		INSERT INTO referer_history (referer, request_count)
+		VALUES (?, ?)
+	`)
+	if err != nil {
+		return err
+	}
+	defer refererStmt.Close()
+
+	for _, r := range refererStats {
+		if _, err := refererStmt.Exec(r.Path, r.RequestCount); err != nil {
+			return err
+		}
 	}
 
 	return tx.Commit()
@@ -883,5 +930,119 @@ func (db *MetricsDB) LoadRecentStats(statusStats *[6]atomic.Int64, pathStats *sy
 		refererStats.Store(referer, stats)
 	}
 
+	return nil
+}
+
+// SaveAllMetrics 合并所有指标的保存
+func (db *MetricsDB) SaveAllMetrics(stats map[string]interface{}) error {
+	start := time.Now()
+	tx, err := db.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// 保存基础指标
+	stmt, err := tx.Prepare(`
+		INSERT INTO metrics_history (
+			total_requests, total_errors, total_bytes, avg_latency, error_rate
+		) VALUES (?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare statement: %v", err)
+	}
+	defer stmt.Close()
+
+	// 类型断言检查
+	totalReqs, ok := stats["total_requests"].(int64)
+	if !ok {
+		return fmt.Errorf("invalid total_requests type")
+	}
+	totalErrs, ok := stats["total_errors"].(int64)
+	if !ok {
+		return fmt.Errorf("invalid total_errors type")
+	}
+	totalBytes, ok := stats["total_bytes"].(int64)
+	if !ok {
+		return fmt.Errorf("invalid total_bytes type")
+	}
+	avgLatency, ok := stats["avg_latency"].(int64)
+	if !ok {
+		return fmt.Errorf("invalid avg_latency type")
+	}
+
+	// 计算错误率
+	var errorRate float64
+	if totalReqs > 0 {
+		errorRate = float64(totalErrs) / float64(totalReqs)
+	}
+
+	// 保存基础指标
+	_, err = stmt.Exec(totalReqs, totalErrs, totalBytes, avgLatency, errorRate)
+	if err != nil {
+		return fmt.Errorf("failed to save basic metrics: %v", err)
+	}
+
+	// 保存状态码统计
+	statusStats := stats["status_code_stats"].(map[string]int64)
+	values := make([]string, 0, len(statusStats))
+	args := make([]interface{}, 0, len(statusStats)*2)
+	for group, count := range statusStats {
+		values = append(values, "(?, ?)")
+		args = append(args, group, count)
+	}
+	if len(values) > 0 {
+		query := "INSERT INTO status_code_history (status_group, count) VALUES " +
+			strings.Join(values, ",")
+		if _, err := tx.Exec(query, args...); err != nil {
+			return fmt.Errorf("failed to save status stats: %v", err)
+		}
+	}
+
+	// 保存路径统计
+	if pathStats, ok := stats["top_paths"].([]PathMetrics); ok && len(pathStats) > 0 {
+		pathStmt, err := tx.Prepare(`
+			INSERT INTO popular_paths_history (
+				path, request_count, error_count, avg_latency, bytes_transferred
+			) VALUES (?, ?, ?, ?, ?)
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to prepare path statement: %v", err)
+		}
+		defer pathStmt.Close()
+
+		for _, p := range pathStats {
+			if _, err := pathStmt.Exec(
+				p.Path, p.RequestCount, p.ErrorCount,
+				p.AvgLatency, p.BytesTransferred,
+			); err != nil {
+				return fmt.Errorf("failed to save path stats: %v", err)
+			}
+		}
+	}
+
+	// 保存引用来源
+	if refererStats, ok := stats["top_referers"].([]PathMetrics); ok && len(refererStats) > 0 {
+		refererStmt, err := tx.Prepare(`
+			INSERT INTO referer_history (referer, request_count)
+			VALUES (?, ?)
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to prepare referer statement: %v", err)
+		}
+		defer refererStmt.Close()
+
+		for _, r := range refererStats {
+			if _, err := refererStmt.Exec(r.Path, r.RequestCount); err != nil {
+				return fmt.Errorf("failed to save referer stats: %v", err)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %v", err)
+	}
+
+	log.Printf("Saved all metrics in %v", time.Since(start))
 	return nil
 }

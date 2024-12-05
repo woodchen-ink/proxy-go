@@ -47,6 +47,10 @@ var (
 	StatusRetention  = 30 * 24 * time.Hour // 状态码统计保留30天
 	PathRetention    = 7 * 24 * time.Hour  // 路径统计保留7天
 	RefererRetention = 7 * 24 * time.Hour  // 引用来源保留7天
+
+	// 性能监控阈值
+	MaxRequestsPerMinute = 1000              // 每分钟最大请求数
+	MaxBytesPerMinute    = 100 * 1024 * 1024 // 每分钟最大流量 (100MB)
 )
 
 // UpdateFromConfig 从配置文件更新常量
