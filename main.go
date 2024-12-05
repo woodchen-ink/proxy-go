@@ -89,9 +89,6 @@ func main() {
 		case "/metrics/dashboard":
 			proxyHandler.MetricsDashboardHandler(w, r)
 			return
-		case "/metrics/history":
-			proxyHandler.AuthMiddleware(proxyHandler.MetricsHistoryHandler)(w, r)
-			return
 		}
 
 		// 遍历所有处理器

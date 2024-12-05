@@ -2,7 +2,6 @@ package handler
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"proxy-go/internal/metrics"
@@ -512,7 +511,7 @@ var metricsTemplate = `
                 <span class="metric-value" id="totalBytes"></span>
             </div>
             <div class="metric">
-                <span class="metric-label">每秒传输</span>
+                <span class="metric-label">每传输</span>
                 <span class="metric-value" id="bytesPerSecond"></span>
             </div>
         </div>
@@ -571,7 +570,7 @@ var metricsTemplate = `
 
     <div class="card">
         <h2>历史数据</h2>
-        <div class="controls">
+        <div class="controls" style="margin-bottom: 20px;">
             <label>
                 <input type="checkbox" id="autoRefresh" checked>
                 自动刷新
@@ -582,12 +581,6 @@ var metricsTemplate = `
                 <option value="30000">30秒</option>
                 <option value="60000">1分钟</option>
             </select>
-            <button onclick="exportData()" class="export-btn">
-                导出数据
-            </button>
-        </div>
-        <div class="time-range-info">
-            显示最近30天的数据
         </div>
     </div>
 
@@ -646,7 +639,7 @@ var metricsTemplate = `
 
             // 更新状态码计
             const statusCodesHtml = '<div class="status-row">' +
-                Object.entries(data.status_code_stats)
+                Object.entries(data.status_code_stats || {})
                     .sort((a, b) => a[0].localeCompare(b[0]))
                     .map(([status, count]) => {
                         const firstDigit = status.charAt(0);
@@ -664,7 +657,7 @@ var metricsTemplate = `
             statusCodesContainer.innerHTML = statusCodesHtml;
 
             // 更新热门路径
-            const topPathsHtml = data.top_paths.map(path => 
+            const topPathsHtml = (data.top_paths || []).map(path => 
                 '<tr>' +
                     '<td>' + path.path + '</td>' +
                     '<td>' + path.request_count + '</td>' +
@@ -676,7 +669,7 @@ var metricsTemplate = `
             document.querySelector('#topPaths tbody').innerHTML = topPathsHtml;
 
             // 更新最近请求
-            const recentRequestsHtml = data.recent_requests.map(req => 
+            const recentRequestsHtml = (data.recent_requests || []).map(req => 
                 '<tr>' +
                     '<td>' + formatDate(req.Time) + '</td>' +
                     '<td>' + req.Path + '</td>' +
@@ -689,7 +682,7 @@ var metricsTemplate = `
             document.querySelector('#recentRequests tbody').innerHTML = recentRequestsHtml;
 
             // 更新热门引用来源
-            const topReferersHtml = data.top_referers.map(referer => 
+            const topReferersHtml = (data.top_referers || []).map(referer => 
                 '<tr>' +
                     '<td>' + referer.path + '</td>' +
                     '<td>' + referer.request_count + '</td>' +
@@ -732,187 +725,6 @@ var metricsTemplate = `
             .catch(error => showError(error.message));
         }
 
-        // 初始加载
-        refreshMetrics();
-
-        // 每5秒自动刷新
-        setInterval(refreshMetrics, 5000);
-
-        // 修改图表相关代码
-        let currentCharts = {
-            requests: null,
-            errorRate: null,
-            bytes: null
-        };
-
-        function loadHistoryData(hours) {
-            const chartContainer = document.getElementById('historyChart');
-            chartContainer.classList.add('loading');
-
-            fetch('/metrics/history?hours=' + hours, {
-                headers: {
-                    'Authorization': 'Bearer ' + token
-                }
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (!Array.isArray(data)) {
-                    console.error('Invalid data format');
-                    return;
-                }
-
-                // 反转数据顺序，使时间从左到右
-                data.reverse();
-                
-                const labels = data.map(m => {
-                    const date = new Date(m.timestamp);
-                    if (hours <= 24) {
-                        return date.toLocaleTimeString();
-                    } else if (hours <= 168) {
-                        return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
-                    } else {
-                        return date.toLocaleDateString();
-                    }
-                });
-
-                const commonOptions = {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            display: false
-                        },
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    let label = context.dataset.label || '';
-                                    if (label) {
-                                        label += ': ';
-                                    }
-                                    if (context.parsed.y !== null) {
-                                        if (context.chart.canvas.id === 'bytesChart') {
-                                            label += formatBytes(context.parsed.y * 1024 * 1024);
-                                        } else if (context.chart.canvas.id === 'errorRateChart') {
-                                            label += context.parsed.y.toFixed(2) + '%';
-                                        } else {
-                                            label += context.parsed.y.toLocaleString();
-                                        }
-                                    }
-                                    return label;
-                                },
-                                title: function(tooltipItems) {
-                                    const date = new Date(tooltipItems[0].label);
-                                    return date.toLocaleString();
-                                }
-                            }
-                        }
-                    },
-                    scales: {
-                        x: {
-                            display: true,
-                            grid: {
-                                display: false
-                            },
-                            ticks: {
-                                maxRotation: 45,
-                                minRotation: 45,
-                                autoSkip: true,
-                                maxTicksLimit: 20
-                            }
-                        },
-                        y: {
-                            beginAtZero: true,
-                            grid: {
-                                drawBorder: false
-                            },
-                            ticks: {
-                                callback: function(value) {
-                                    if (this.chart.canvas.id === 'bytesChart') {
-                                        return formatBytes(value * 1024 * 1024);
-                                    }
-                                    return value;
-                                }
-                            }
-                        }
-                    },
-                    elements: {
-                        line: {
-                            tension: 0.4
-                        },
-                        point: {
-                            radius: 2,
-                            hitRadius: 10,
-                            hoverRadius: 5
-                        }
-                    },
-                    interaction: {
-                        mode: 'nearest',
-                        axis: 'x',
-                        intersect: false
-                    }
-                };
-
-                // 更新或创建图表
-                updateChart('requestsChart', 'requests', labels, data, '请求数', 
-                    m => m.total_requests, '#007bff', commonOptions);
-                updateChart('errorRateChart', 'errorRate', labels, data, '错误率 (%)', 
-                    m => m.error_rate * 100, '#dc3545', commonOptions);
-                updateChart('bytesChart', 'bytes', labels, data, '流量 (MB)', 
-                    m => m.total_bytes / (1024 * 1024), '#28a745', commonOptions);
-            })
-            .finally(() => {
-                chartContainer.classList.remove('loading');
-            });
-        }
-
-        function updateChart(canvasId, chartKey, labels, data, label, valueGetter, color, options) {
-            // 保 canvas 元素存在
-            const canvas = document.getElementById(canvasId);
-            if (!canvas) {
-                console.error('Canvas element ' + canvasId + ' not found');
-                return;
-            }
-
-            // 如果存在旧图表，销毁它
-            if (currentCharts[chartKey]) {
-                currentCharts[chartKey].destroy();
-                currentCharts[chartKey] = null;
-            }
-
-            const ctx = canvas.getContext('2d');
-            const chartData = {
-                labels: labels,
-                datasets: [{
-                    label: label,
-                    data: data.map(valueGetter),
-                    borderColor: color,
-                    backgroundColor: color + '20',
-                    fill: true
-                }]
-            };
-
-            // 创建新图表
-            currentCharts[chartKey] = new Chart(ctx, {
-                type: 'line',
-                data: chartData,
-                options: options
-            });
-        }
-
-        // 时间范围按钮处理
-        document.querySelectorAll('.time-btn').forEach(btn => {
-            btn.addEventListener('click', function() {
-                document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('active'));
-                this.classList.add('active');
-                loadHistoryData(parseFloat(this.dataset.hours));
-            });
-        });
-
-        // 初始加载历史数据
-        document.addEventListener('DOMContentLoaded', function() {
-            loadHistoryData(24);
-        });
-
         let refreshTimer;
 
         function setupAutoRefresh() {
@@ -935,51 +747,10 @@ var metricsTemplate = `
         }
 
         document.addEventListener('DOMContentLoaded', function() {
-            loadHistoryData(24);
+            refreshMetrics(); // 立即加载一次数据
             setupAutoRefresh();
         });
-
-        function exportData() {
-            const activeBtn = document.querySelector('.time-btn.active');
-            const hours = parseInt(activeBtn.dataset.hours);
-            
-            fetch('/metrics/history?hours=' + hours, {
-                headers: {
-                    'Authorization': 'Bearer ' + token
-                }
-            })
-            .then(response => response.json())
-            .then(data => {
-                const csv = convertToCSV(data);
-                downloadCSV(csv, 'metrics_' + hours + 'h_' + new Date().toISOString() + '.csv');
-            })
-            .catch(error => showError('导出失败: ' + error.message));
-        }
-        
-        function convertToCSV(data) {
-            const headers = ['时间', '请求数', '错误数', '流量(MB)', '错误率(%)'];
-            const rows = data.map(row => [
-                row.timestamp,
-                row.total_requests,
-                row.total_errors,
-                (row.total_bytes / (1024 * 1024)).toFixed(2),
-                (row.error_rate * 100).toFixed(2)
-            ]);
-            return [headers, ...rows].map(row => row.join(',')).join('\n');
-        }
-        
-        function downloadCSV(csv, filename) {
-            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
-            link.download = filename;
-            link.click();
-        }
     </script>
-
-    <!-- 添加 Chart.js -->
-    <!-- 在 body 结束标签前添加 -->
-<script src="https://i-aws.czl.net/jsdelivr/npm/chart.js@3.7.0/dist/chart.min.js"></script>
 </body>
 </html>
 `
@@ -1040,39 +811,6 @@ func (h *ProxyHandler) MetricsAuthHandler(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]string{
 		"token": token,
 	})
-}
-
-// 添加历史数据查询接口
-func (h *ProxyHandler) MetricsHistoryHandler(w http.ResponseWriter, r *http.Request) {
-	collector := metrics.GetCollector()
-	metrics := collector.GetHistoricalData()
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(metrics)
-}
-
-// 辅助函数:解析延迟字符串
-func parseLatency(latency string) (float64, error) {
-	var value float64
-	var unit string
-	_, err := fmt.Sscanf(latency, "%f %s", &value, &unit)
-	if err != nil {
-		return 0, err
-	}
-
-	// 根据单位转换为毫秒
-	switch unit {
-	case "μs":
-		value = value / 1000 // 微秒转毫秒
-	case "ms":
-		// 已经是毫秒
-	case "s":
-		value = value * 1000 // 秒转毫秒
-	default:
-		return 0, fmt.Errorf("unknown unit: %s", unit)
-	}
-
-	return value, nil
 }
 
 // 添加安全的类型转换辅助函数
