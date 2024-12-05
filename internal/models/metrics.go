@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -405,7 +406,7 @@ func (db *MetricsDB) SaveMetrics(stats map[string]interface{}) error {
 	if !ok {
 		return fmt.Errorf("invalid total_bytes type")
 	}
-	avgLatency, ok := stats["avg_latency"].(float64)
+	avgLatency, ok := stats["avg_latency"].(int64)
 	if !ok {
 		return fmt.Errorf("invalid avg_latency type")
 	}
@@ -421,7 +422,7 @@ func (db *MetricsDB) SaveMetrics(stats map[string]interface{}) error {
 		totalReqs,
 		totalErrs,
 		totalBytes,
-		int64(avgLatency),
+		avgLatency,
 		errorRate,
 	)
 	if err != nil {
@@ -442,6 +443,10 @@ func (db *MetricsDB) GetRecentMetrics(hours float64) ([]HistoricalMetrics, error
 		cacheHits     int64
 		cacheSize     int64
 	}
+
+	// 添加查询超时
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
 	// 处理小于1小时的情况
 	if hours <= 0 {
@@ -469,8 +474,8 @@ func (db *MetricsDB) GetRecentMetrics(hours float64) ([]HistoricalMetrics, error
 		timeStep = 1440 // 1天
 	}
 
-	// 修改查询逻辑，使用 strftime 来处理时间
-	rows, err := db.DB.Query(`
+	// 修改查询逻辑，优化性能
+	rows, err := db.DB.QueryContext(ctx, `
 		WITH RECURSIVE 
 		time_points(ts) AS (
 			SELECT strftime(?, 'now', 'localtime')
@@ -478,18 +483,20 @@ func (db *MetricsDB) GetRecentMetrics(hours float64) ([]HistoricalMetrics, error
 			SELECT strftime(?, datetime(ts, '-' || ? || ' minutes'))
 			FROM time_points
 			WHERE ts > strftime(?, datetime('now', '-' || ? || ' hours', 'localtime'))
-			LIMIT 1000
+			LIMIT ?  -- 限制时间点数量
 		),
 		grouped_metrics AS (
 			SELECT 
 				strftime(?, timestamp) as group_time,
 				MAX(total_requests) as period_requests,
 				MAX(total_errors) as period_errors,
-					MAX(total_bytes) as period_bytes,
-					AVG(avg_latency) as avg_latency
+				MAX(total_bytes) as period_bytes,
+				AVG(avg_latency) as avg_latency
 			FROM metrics_history
 			WHERE timestamp >= datetime('now', '-' || ? || ' hours', 'localtime')
+				AND timestamp < datetime('now', 'localtime')  -- 添加上限
 				GROUP BY group_time
+				LIMIT ?  -- 限制结果数量
 		)
 		SELECT 
 			tp.ts as timestamp,
@@ -500,8 +507,8 @@ func (db *MetricsDB) GetRecentMetrics(hours float64) ([]HistoricalMetrics, error
 		FROM time_points tp
 		LEFT JOIN grouped_metrics m ON tp.ts = m.group_time
 		ORDER BY timestamp DESC
-		LIMIT 1000
-	`, interval, interval, timeStep, interval, hours, interval, hours)
+		LIMIT ?
+	`, interval, interval, timeStep, interval, hours, 1000, interval, hours, 1000, 1000)
 	if err != nil {
 		return nil, err
 	}

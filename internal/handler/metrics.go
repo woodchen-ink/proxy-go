@@ -396,30 +396,35 @@ var metricsTemplate = `
       
       .status-row {
           display: flex;
-          flex-direction: column;
-          gap: 12px;
+          flex-wrap: wrap;
+          gap: 15px;
+          justify-content: flex-start;
        }
        
-       .status-labels, .status-values {
+       .status-item {
            display: flex;
-           justify-content: flex-start;
-           gap: 20px;
+           flex-direction: column;
+           align-items: center;
+           background: white;
+           padding: 10px;
+           border-radius: 6px;
+           min-width: 80px;
+           box-shadow: 0 1px 3px rgba(0,0,0,0.1);
        }
        
        .status-badge {
-           flex: 0 0 auto;
            text-align: center;
            padding: 4px 12px;
            border-radius: 4px;
            font-size: 12px;
            color: white;
-           min-width: 60px;
+           margin-bottom: 5px;
        }
        
        .metric-value {
-           flex: 0 0 auto;
            text-align: center;
-           min-width: 60px;
+           font-weight: bold;
+           color: #666;
        }
        .loading {
            position: relative;
@@ -687,24 +692,18 @@ var metricsTemplate = `
 
             // 更新状态码计
             const statusCodesHtml = '<div class="status-row">' +
-                '<div class="status-labels">' +
                 Object.entries(data.status_code_stats)
                     .sort((a, b) => a[0].localeCompare(b[0]))
-                    .map(([status, _]) => {
+                    .map(([status, count]) => {
                         const firstDigit = status.charAt(0);
                         const statusClass = (firstDigit >= '2' && firstDigit <= '5') 
                             ? 'status-' + firstDigit + 'xx' 
                             : 'status-other';
-                        return '<span class="status-badge ' + statusClass + '">' + status + '</span>';
+                        return '<div class="status-item">' +
+                            '<span class="status-badge ' + statusClass + '">' + status + '</span>' +
+                            '<span class="metric-value">' + count.toLocaleString() + '</span>' +
+                            '</div>';
                     }).join('') +
-                '</div>' +
-                '<div class="status-values">' +
-                Object.entries(data.status_code_stats)
-                    .sort((a, b) => a[0].localeCompare(b[0]))
-                    .map(([_, count]) => {
-                        return '<span class="metric-value">' + count.toLocaleString() + '</span>';
-                    }).join('') +
-                '</div>' +
                 '</div>';
 
             const statusCodesContainer = document.getElementById('statusCodes');
