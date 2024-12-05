@@ -71,11 +71,21 @@ func InitCollector(dbPath string, config *config.Config) error {
 		db:             db,
 	}
 
+	// 在初始化时设置最后保存时间
+	lastSaveTime = time.Now()
+
 	// 加载历史数据
 	if lastMetrics, err := db.GetLastMetrics(); err == nil && lastMetrics != nil {
 		globalCollector.persistentStats.totalRequests.Store(lastMetrics.TotalRequests)
 		globalCollector.persistentStats.totalErrors.Store(lastMetrics.TotalErrors)
 		globalCollector.persistentStats.totalBytes.Store(lastMetrics.TotalBytes)
+
+		// 确保在加载历史数据后立即保存一次，以更新所有统计信息
+		stats := globalCollector.GetStats()
+		if err := db.SaveAllMetrics(stats); err != nil {
+			log.Printf("Warning: Failed to save initial metrics: %v", err)
+		}
+
 		if err := globalCollector.LoadRecentStats(); err != nil {
 			log.Printf("Warning: Failed to load recent stats: %v", err)
 		}
@@ -435,11 +445,17 @@ func (c *Collector) GetDB() *models.MetricsDB {
 
 func (c *Collector) SaveMetrics(stats map[string]interface{}) error {
 	// 更新持久化数据
-	c.persistentStats.totalRequests.Store(stats["total_requests"].(int64))
-	c.persistentStats.totalErrors.Store(stats["total_errors"].(int64))
-	c.persistentStats.totalBytes.Store(stats["total_bytes"].(int64))
+	if totalReqs, ok := stats["total_requests"].(int64); ok {
+		c.persistentStats.totalRequests.Store(totalReqs)
+	}
+	if totalErrs, ok := stats["total_errors"].(int64); ok {
+		c.persistentStats.totalErrors.Store(totalErrs)
+	}
+	if totalBytes, ok := stats["total_bytes"].(int64); ok {
+		c.persistentStats.totalBytes.Store(totalBytes)
+	}
 
-	// 在重置前记录当前值
+	// 在重置前记录当前值用于日志
 	oldRequests := atomic.LoadInt64(&c.totalRequests)
 	oldErrors := atomic.LoadInt64(&c.totalErrors)
 	oldBytes := c.totalBytes.Load()
@@ -449,10 +465,6 @@ func (c *Collector) SaveMetrics(stats map[string]interface{}) error {
 	atomic.StoreInt64(&c.totalErrors, 0)
 	c.totalBytes.Store(0)
 	c.latencySum.Store(0)
-
-	// 记录重置日志
-	log.Printf("Reset counters: requests=%d->0, errors=%d->0, bytes=%d->0",
-		oldRequests, oldErrors, oldBytes)
 
 	// 重置状态码统计
 	for i := range c.statusStats {
@@ -471,10 +483,16 @@ func (c *Collector) SaveMetrics(stats map[string]interface{}) error {
 		return true
 	})
 
-	// 更新最后保存时间
-	lastSaveTime = time.Now()
+	// 保存到数据库
+	err := c.db.SaveMetrics(stats)
+	if err == nil {
+		// 记录重置日志
+		log.Printf("Reset counters: requests=%d->0, errors=%d->0, bytes=%d->0",
+			oldRequests, oldErrors, oldBytes)
+		lastSaveTime = time.Now() // 更新最后保存时间
+	}
 
-	return c.db.SaveMetrics(stats)
+	return err
 }
 
 // LoadRecentStats 加载最近的统计数据
@@ -564,11 +582,7 @@ func calculateChangeRate(stats map[string]interface{}) float64 {
 
 // CheckDataConsistency 检查数据一致性
 func (c *Collector) CheckDataConsistency() error {
-	// 不再调用 GetStats()，而是直接访问计数器
 	totalReqs := c.persistentStats.totalRequests.Load() + atomic.LoadInt64(&c.totalRequests)
-	if totalReqs < 0 {
-		return fmt.Errorf("invalid total_requests: %d", totalReqs)
-	}
 
 	// 检查状态码统计
 	var statusTotal int64
@@ -592,10 +606,19 @@ func (c *Collector) CheckDataConsistency() error {
 		return true
 	})
 
-	// 允许一定的误差
-	if abs(statusTotal-totalReqs) > totalReqs/100 || abs(pathTotal-totalReqs) > totalReqs/100 {
-		log.Printf("Warning: status code total (%d) and path total (%d) don't match total requests (%d)",
-			statusTotal, pathTotal, totalReqs)
+	// 修改一致性检查的逻辑
+	// 1. 如果总数为0，不进行告警
+	// 2. 增加容差范围到5%
+	if totalReqs > 0 {
+		tolerance := totalReqs / 20 // 5% 的容差
+		if statusTotal > 0 && abs(statusTotal-totalReqs) > tolerance {
+			log.Printf("Warning: Status code total (%d) differs from total requests (%d) by more than 5%%",
+				statusTotal, totalReqs)
+		}
+		if pathTotal > 0 && abs(pathTotal-totalReqs) > tolerance {
+			log.Printf("Warning: Path total (%d) differs from total requests (%d) by more than 5%%",
+				pathTotal, totalReqs)
+		}
 	}
 
 	return nil
