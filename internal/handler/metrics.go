@@ -383,7 +383,8 @@ var metricsTemplate = `
           display: flex;
           flex-wrap: wrap;
           gap: 15px;
-          justify-content: flex-start;
+          justify-content: space-between;
+          width: 100%;
        }
        
        .status-item {
@@ -393,7 +394,9 @@ var metricsTemplate = `
            background: white;
            padding: 10px;
            border-radius: 6px;
+           flex: 1;
            min-width: 80px;
+           max-width: 120px;
            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
        }
        
@@ -518,7 +521,7 @@ var metricsTemplate = `
     </div>
 
     <div class="card">
-        <h2>状态统</h2>
+        <h2>状态码统计</h2>
         <div id="statusCodes"></div>
     </div>
 
