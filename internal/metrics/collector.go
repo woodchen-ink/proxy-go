@@ -38,21 +38,9 @@ type Collector struct {
 	cache     *cache.Cache
 	monitor   *monitor.Monitor
 	statsPool sync.Pool
-
-	// 添加历史数据存储
-	historicalData struct {
-		sync.RWMutex
-		items []models.HistoricalMetrics
-	}
 }
 
 var globalCollector *Collector
-
-const (
-	// 数据变化率阈值
-	highThreshold = 0.8 // 高变化率阈值
-	lowThreshold  = 0.2 // 低变化率阈值
-)
 
 func InitCollector(config *config.Config) error {
 	globalCollector = &Collector{
@@ -85,15 +73,6 @@ func InitCollector(config *config.Config) error {
 
 	// 设置最后保存时间
 	lastSaveTime = time.Now()
-
-	// 初始化历史数据存储
-	globalCollector.historicalData.items = make([]models.HistoricalMetrics, 0, 1000)
-
-	// 启动定期保存历史数据的goroutine
-	go globalCollector.recordHistoricalData()
-
-	// 启动定期清理历史数据的goroutine
-	go globalCollector.cleanHistoricalData()
 
 	return nil
 }
@@ -425,81 +404,6 @@ func formatAvgLatency(latencySum, requests int64) string {
 	return FormatDuration(time.Duration(latencySum / requests))
 }
 
-// calculateChangeRate 计算数据变化率
-func calculateChangeRate(stats map[string]interface{}) float64 {
-	// 获取当前值
-	currentReqs, _ := stats["total_requests"].(int64)
-	currentErrs, _ := stats["total_errors"].(int64)
-	currentBytes, _ := stats["total_bytes"].(int64)
-
-	// 计算变化率 (可以根据实际需求调整计算方法)
-	var changeRate float64
-	if currentReqs > 0 {
-		// 计算请求数的变化率
-		reqRate := float64(currentReqs) / float64(constants.MaxRequestsPerMinute)
-		// 计算错误率的变化
-		errRate := float64(currentErrs) / float64(currentReqs)
-		// 计算流量的变化率
-		bytesRate := float64(currentBytes) / float64(constants.MaxBytesPerMinute)
-
-		// 综合评分
-		changeRate = (reqRate + errRate + bytesRate) / 3
-	}
-
-	return changeRate
-}
-
-// CheckDataConsistency 检查数据一致性
-func (c *Collector) CheckDataConsistency() error {
-	totalReqs := atomic.LoadInt64(&c.totalRequests)
-
-	// 检查状态码统计
-	var statusTotal int64
-	for i := range c.statusStats {
-		count := c.statusStats[i].Load()
-		if count < 0 {
-			return fmt.Errorf("invalid status code count: %d", count)
-		}
-		statusTotal += count
-	}
-
-	// 检查路径统计
-	var pathTotal int64
-	c.pathStats.Range(func(_, value interface{}) bool {
-		stats := value.(*models.PathStats)
-		count := stats.Requests.Load()
-		if count < 0 {
-			return false
-		}
-		pathTotal += count
-		return true
-	})
-
-	// 修改一致性检查的逻辑
-	// 1. 如果总数为0，不进行告警
-	// 2. 增加容差范围到5%
-	if totalReqs > 0 {
-		tolerance := totalReqs / 20 // 5% 的容差
-		if statusTotal > 0 && abs(statusTotal-totalReqs) > tolerance {
-			log.Printf("Warning: Status code total (%d) differs from total requests (%d) by more than 5%%",
-				statusTotal, totalReqs)
-		}
-		if pathTotal > 0 && abs(pathTotal-totalReqs) > tolerance {
-			log.Printf("Warning: Path total (%d) differs from total requests (%d) by more than 5%%",
-				pathTotal, totalReqs)
-		}
-	}
-
-	return nil
-}
-
-func abs(x int64) int64 {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
-
 // SaveBackup 保存数据备份
 func (c *Collector) SaveBackup() error {
 	stats := c.GetStats()
@@ -563,81 +467,11 @@ func (c *Collector) GetLastSaveTime() time.Time {
 	return lastSaveTime
 }
 
-// 定期记录历史数据
-func (c *Collector) recordHistoricalData() {
-	ticker := time.NewTicker(5 * time.Minute)
-	for range ticker.C {
-		stats := c.GetStats()
-
-		metric := models.HistoricalMetrics{
-			Timestamp:     time.Now().Format("2006-01-02 15:04:05"),
-			TotalRequests: stats["total_requests"].(int64),
-			TotalErrors:   stats["total_errors"].(int64),
-			TotalBytes:    stats["total_bytes"].(int64),
-			ErrorRate:     stats["error_rate"].(float64),
-		}
-
-		if avgLatencyStr, ok := stats["avg_response_time"].(string); ok {
-			if d, err := parseLatency(avgLatencyStr); err == nil {
-				metric.AvgLatency = d
-			}
-		}
-
-		c.historicalData.Lock()
-		c.historicalData.items = append(c.historicalData.items, metric)
-		c.historicalData.Unlock()
+// CheckDataConsistency 实现 interfaces.MetricsCollector 接口
+func (c *Collector) CheckDataConsistency() error {
+	// 简单的数据验证
+	if atomic.LoadInt64(&c.totalErrors) > atomic.LoadInt64(&c.totalRequests) {
+		return fmt.Errorf("total errors exceeds total requests")
 	}
-}
-
-// 定期清理30天前的数据
-func (c *Collector) cleanHistoricalData() {
-	ticker := time.NewTicker(1 * time.Hour)
-	for range ticker.C {
-		threshold := time.Now().Add(-30 * 24 * time.Hour)
-
-		c.historicalData.Lock()
-		newItems := make([]models.HistoricalMetrics, 0)
-		for _, item := range c.historicalData.items {
-			timestamp, err := time.Parse("2006-01-02 15:04:05", item.Timestamp)
-			if err == nil && timestamp.After(threshold) {
-				newItems = append(newItems, item)
-			}
-		}
-		c.historicalData.items = newItems
-		c.historicalData.Unlock()
-	}
-}
-
-// GetHistoricalData 获取历史数据
-func (c *Collector) GetHistoricalData() []models.HistoricalMetrics {
-	c.historicalData.RLock()
-	defer c.historicalData.RUnlock()
-
-	result := make([]models.HistoricalMetrics, len(c.historicalData.items))
-	copy(result, c.historicalData.items)
-	return result
-}
-
-// parseLatency 解析延迟字符串
-func parseLatency(latency string) (float64, error) {
-	var value float64
-	var unit string
-	_, err := fmt.Sscanf(latency, "%f %s", &value, &unit)
-	if err != nil {
-		return 0, err
-	}
-
-	// 根据单位转换为毫秒
-	switch unit {
-	case "μs":
-		value = value / 1000 // 微秒转毫秒
-	case "ms":
-		// 已经是毫秒
-	case "s":
-		value = value * 1000 // 秒转毫秒
-	default:
-		return 0, fmt.Errorf("unknown unit: %s", unit)
-	}
-
-	return value, nil
+	return nil
 }

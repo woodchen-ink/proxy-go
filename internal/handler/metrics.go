@@ -568,22 +568,6 @@ var metricsTemplate = `
         </table>
     </div>
 
-    <div class="card">
-        <h2>历史数据</h2>
-        <div class="controls" style="margin-bottom: 20px;">
-            <label>
-                <input type="checkbox" id="autoRefresh" checked>
-                自动刷新
-            </label>
-            <select id="refreshInterval">
-                <option value="5000">5秒</option>
-                <option value="10000">10秒</option>
-                <option value="30000">30秒</option>
-                <option value="60000">1分钟</option>
-            </select>
-        </div>
-    </div>
-
     <span id="lastUpdate"></span>
     <button class="refresh" onclick="refreshMetrics()">刷新</button>
 
