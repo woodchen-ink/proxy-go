@@ -535,7 +535,7 @@ func (db *MetricsDB) GetRecentMetrics(hours float64) ([]HistoricalMetrics, error
 		LEFT JOIN grouped_metrics m ON strftime(?, ts.time_point, 'localtime') = m.group_time
 		ORDER BY timestamp DESC
 		LIMIT 1000
-	`, endTimeStr, timeStep, startTimeStr, interval, startTimeStr, endTimeStr, interval)
+	`, endTimeStr, timeStep, startTimeStr, interval, startTimeStr, endTimeStr, interval, interval)
 	if err != nil {
 		return nil, err
 	}

@@ -393,22 +393,31 @@ var metricsTemplate = `
 +           align-items: center;
 +           flex-wrap: wrap;
 +           padding: 10px;
++           justify-content: flex-start;
++           background: #f8f9fa;
++           border-radius: 8px;
++           overflow-x: auto;
++           white-space: nowrap;
 +       }
 +       
 +       #statusCodes .metric {
 +           flex: 0 0 auto;
-+           display: flex;
++           display: inline-flex;
 +           align-items: center;
 +           gap: 10px;
-+           padding: 5px 15px;
-+           background: #f8f9fa;
++           padding: 4px 12px;
++           background: white;
 +           border-radius: 20px;
 +           margin: 0;
 +           border: none;
-+           min-width: 100px;
++           min-width: 80px;
 +           justify-content: space-between;
++           margin-right: 10px;
++           display: inline-block;
 +       }
-+       
++       #statusCodes .metric:last-child {
++           margin-right: 0;
++       }
         .status-badge {
             padding: 3px 8px;
             border-radius: 12px;
