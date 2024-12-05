@@ -71,13 +71,31 @@ func InitCollector(dbPath string, config *config.Config) error {
 		db:             db,
 	}
 
-	// 先初始化 cache
+	// 1. 先初始化 cache
 	globalCollector.cache = cache.NewCache(constants.CacheTTL)
 
-	// 在初始化时设置最后保存时间
+	// 2. 初始化监控器
+	globalCollector.monitor = monitor.NewMonitor(globalCollector)
+
+	// 3. 如果配置了飞书webhook，则启用飞书告警
+	if config.Metrics.FeishuWebhook != "" {
+		globalCollector.monitor.AddHandler(
+			monitor.NewFeishuHandler(config.Metrics.FeishuWebhook),
+		)
+		log.Printf("Feishu alert enabled")
+	}
+
+	// 4. 初始化对象池
+	globalCollector.statsPool = sync.Pool{
+		New: func() interface{} {
+			return make(map[string]interface{}, 20)
+		},
+	}
+
+	// 5. 设置最后保存时间
 	lastSaveTime = time.Now()
 
-	// 加载历史数据
+	// 6. 加载历史数据
 	if lastMetrics, err := db.GetLastMetrics(); err == nil && lastMetrics != nil {
 		globalCollector.persistentStats.totalRequests.Store(lastMetrics.TotalRequests)
 		globalCollector.persistentStats.totalErrors.Store(lastMetrics.TotalErrors)
@@ -96,25 +114,7 @@ func InitCollector(dbPath string, config *config.Config) error {
 			lastMetrics.TotalRequests, lastMetrics.TotalErrors, lastMetrics.TotalBytes)
 	}
 
-	// 初始化监控器
-	globalCollector.monitor = monitor.NewMonitor(globalCollector)
-
-	// 如果配置了飞书webhook，则启用飞书告警
-	if config.Metrics.FeishuWebhook != "" {
-		globalCollector.monitor.AddHandler(
-			monitor.NewFeishuHandler(config.Metrics.FeishuWebhook),
-		)
-		log.Printf("Feishu alert enabled")
-	}
-
-	// 初始化对象池
-	globalCollector.statsPool = sync.Pool{
-		New: func() interface{} {
-			return make(map[string]interface{}, 20)
-		},
-	}
-
-	// 启动定时保存
+	// 7. 启动定时保存
 	go func() {
 		time.Sleep(time.Duration(rand.Int63n(60)) * time.Second)
 		var (
