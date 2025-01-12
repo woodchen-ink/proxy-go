@@ -156,10 +156,10 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 	// 默认使用默认目标
 	targetBase := pathConfig.DefaultTarget
 
-	// 如果没有设置阈值，使用默认值 200KB
+	// 如果没有设置阈值，使用默认值 500KB
 	threshold := pathConfig.SizeThreshold
 	if threshold <= 0 {
-		threshold = 200 * 1024
+		threshold = 500 * 1024
 	}
 
 	// 检查文件扩展名
@@ -200,8 +200,17 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 					log.Printf("[Route] %s -> %s (size: %s <= %s)",
 						path, targetBase, FormatBytes(contentLength), FormatBytes(threshold))
 				}
+			} else {
+				// 记录没有匹配扩展名映射的情况
+				log.Printf("[Route] %s -> %s (no extension mapping)", path, targetBase)
 			}
+		} else {
+			// 记录没有扩展名的情况
+			log.Printf("[Route] %s -> %s (no extension)", path, targetBase)
 		}
+	} else {
+		// 记录没有扩展名映射配置的情况
+		log.Printf("[Route] %s -> %s (no extension map)", path, targetBase)
 	}
 
 	return targetBase
