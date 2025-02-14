@@ -2,7 +2,7 @@
 
 A 'simple' reverse proxy server written in Go.
 
-使用方法: https://q58.pro/t/topic/165?u=wood
+使用方法: https://q58.club/t/topic/165?u=wood
 
 ## 说明
 
