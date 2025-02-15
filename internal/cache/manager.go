@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"hash/fnv"
 	"log"
 	"net/http"
 	"os"
@@ -22,6 +23,45 @@ type CacheKey struct {
 	AcceptHeaders  string
 	UserAgent      string
 	VaryHeadersMap map[string]string // 存储 Vary 头部的值
+}
+
+// String 实现 Stringer 接口，用于生成唯一的字符串表示
+func (k CacheKey) String() string {
+	// 将 VaryHeadersMap 转换为有序的字符串
+	var varyPairs []string
+	for key, value := range k.VaryHeadersMap {
+		varyPairs = append(varyPairs, key+"="+value)
+	}
+	sort.Strings(varyPairs)
+	varyStr := strings.Join(varyPairs, "&")
+
+	return fmt.Sprintf("%s|%s|%s|%s", k.URL, k.AcceptHeaders, k.UserAgent, varyStr)
+}
+
+// Equal 比较两个 CacheKey 是否相等
+func (k CacheKey) Equal(other CacheKey) bool {
+	if k.URL != other.URL || k.AcceptHeaders != other.AcceptHeaders || k.UserAgent != other.UserAgent {
+		return false
+	}
+
+	if len(k.VaryHeadersMap) != len(other.VaryHeadersMap) {
+		return false
+	}
+
+	for key, value := range k.VaryHeadersMap {
+		if otherValue, ok := other.VaryHeadersMap[key]; !ok || value != otherValue {
+			return false
+		}
+	}
+
+	return true
+}
+
+// Hash 生成 CacheKey 的哈希值
+func (k CacheKey) Hash() uint64 {
+	h := fnv.New64a()
+	h.Write([]byte(k.String()))
+	return h.Sum64()
 }
 
 // CacheItem 表示一个缓存项
