@@ -279,7 +279,7 @@ export default function DashboardPage() {
 }
 
 function formatBytes(bytes: number) {
-  if (bytes === 0) return "0 B"
+  if (!bytes || isNaN(bytes)) return "0 B"
   const k = 1024
   const sizes = ["B", "KB", "MB", "GB"]
   const i = Math.floor(Math.log(bytes) / Math.log(k))
@@ -287,11 +287,13 @@ function formatBytes(bytes: number) {
 }
 
 function formatDate(dateStr: string) {
+  if (!dateStr) return "-"
   const date = new Date(dateStr)
-  return date.toLocaleTimeString()
+  return date.toLocaleString()
 }
 
 function formatLatency(nanoseconds: number) {
+  if (!nanoseconds || isNaN(nanoseconds)) return "-"
   if (nanoseconds < 1000) {
     return nanoseconds + " ns"
   } else if (nanoseconds < 1000000) {
