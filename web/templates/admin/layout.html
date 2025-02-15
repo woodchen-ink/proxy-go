@@ -22,7 +22,13 @@
     </div>
 
     <div class="container mx-auto px-4">
-        {{template .Content .}}
+        {{if eq .Content "login.html"}}
+            {{template "login.html" .}}
+        {{else if eq .Content "metrics.html"}}
+            {{template "metrics.html" .}}
+        {{else if eq .Content "config.html"}}
+            {{template "config.html" .}}
+        {{end}}
     </div>
 
     <script src="/admin/static/js/auth.js"></script>
