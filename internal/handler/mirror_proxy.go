@@ -144,22 +144,6 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// 读取响应体
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		http.Error(w, "Error reading response", http.StatusInternalServerError)
-		log.Printf("Error reading response: %v", err)
-		return
-	}
-
-	// 如果是GET请求且响应成功，尝试缓存
-	if r.Method == http.MethodGet && resp.StatusCode == http.StatusOK && h.Cache != nil {
-		cacheKey := h.Cache.GenerateCacheKey(r)
-		if _, err := h.Cache.Put(cacheKey, resp, body); err != nil {
-			log.Printf("[Cache] Failed to cache %s: %v", actualURL, err)
-		}
-	}
-
 	// 复制响应头
 	copyHeader(w.Header(), resp.Header)
 	w.Header().Set("Proxy-Go-Cache", "MISS")
@@ -167,19 +151,38 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 设置状态码
 	w.WriteHeader(resp.StatusCode)
 
-	// 写入响应体
-	written, err := w.Write(body)
-	if err != nil {
-		log.Printf("Error writing response: %v", err)
-		return
+	var written int64
+	// 如果是GET请求且响应成功，使用TeeReader同时写入缓存
+	if r.Method == http.MethodGet && resp.StatusCode == http.StatusOK && h.Cache != nil {
+		cacheKey := h.Cache.GenerateCacheKey(r)
+		if cacheFile, err := h.Cache.CreateTemp(cacheKey, resp); err == nil {
+			defer cacheFile.Close()
+			teeReader := io.TeeReader(resp.Body, cacheFile)
+			written, err = io.Copy(w, teeReader)
+			if err == nil {
+				h.Cache.Commit(cacheKey, cacheFile.Name(), resp, written)
+			}
+		} else {
+			written, err = io.Copy(w, resp.Body)
+			if err != nil && !isConnectionClosed(err) {
+				log.Printf("Error writing response: %v", err)
+				return
+			}
+		}
+	} else {
+		written, err = io.Copy(w, resp.Body)
+		if err != nil && !isConnectionClosed(err) {
+			log.Printf("Error writing response: %v", err)
+			return
+		}
 	}
 
 	// 记录访问日志
 	log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | %s",
 		r.Method, resp.StatusCode, time.Since(startTime),
-		utils.GetClientIP(r), utils.FormatBytes(int64(written)),
+		utils.GetClientIP(r), utils.FormatBytes(written),
 		utils.GetRequestSource(r), actualURL)
 
 	// 记录统计信息
-	collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(startTime), int64(written), utils.GetClientIP(r), r)
+	collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(startTime), written, utils.GetClientIP(r), r)
 }

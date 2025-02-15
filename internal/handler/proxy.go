@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -14,16 +13,12 @@ import (
 	"proxy-go/internal/metrics"
 	"proxy-go/internal/utils"
 	"strings"
-	"sync"
 	"time"
 
 	"golang.org/x/net/http2"
 )
 
 const (
-	// 缓冲区大小
-	defaultBufferSize = 32 * 1024 // 32KB
-
 	// 超时时间常量
 	clientConnTimeout   = 10 * time.Second
 	proxyRespTimeout    = 60 * time.Second
@@ -31,13 +26,6 @@ const (
 	idleConnTimeout     = 120 * time.Second
 	tlsHandshakeTimeout = 10 * time.Second
 )
-
-// 统一的缓冲池
-var bufferPool = sync.Pool{
-	New: func() interface{} {
-		return bytes.NewBuffer(make([]byte, defaultBufferSize))
-	},
-}
 
 // 添加 hop-by-hop 头部映射
 var hopHeadersMap = make(map[string]bool)
@@ -143,49 +131,6 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 	})
 
 	return handler
-}
-
-// copyResponse 使用缓冲方式传输数据
-func copyResponse(dst io.Writer, src io.Reader, flusher http.Flusher) (int64, error) {
-	buf := bufferPool.Get().(*bytes.Buffer)
-	defer bufferPool.Put(buf)
-	buf.Reset()
-
-	var written int64
-	for {
-		// 清空缓冲区
-		buf.Reset()
-
-		// 读取数据到缓冲区
-		_, er := io.CopyN(buf, src, defaultBufferSize)
-		if er != nil && er != io.EOF {
-			return written, er
-		}
-
-		// 如果有数据，写入目标
-		if buf.Len() > 0 {
-			nw, ew := dst.Write(buf.Bytes())
-			if ew != nil {
-				return written, ew
-			}
-			written += int64(nw)
-
-			// 定期刷新缓冲区
-			if flusher != nil && written%(1024*1024) == 0 { // 每1MB刷新一次
-				flusher.Flush()
-			}
-		}
-
-		if er == io.EOF {
-			break
-		}
-	}
-
-	// 最后一次刷新
-	if flusher != nil {
-		flusher.Flush()
-	}
-	return written, nil
 }
 
 func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -356,37 +301,41 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// 读取响应体到缓冲区
-	buf := new(bytes.Buffer)
-	_, err = copyResponse(buf, resp.Body, nil)
-	if err != nil {
-		h.errorHandler(w, r, fmt.Errorf("error reading response: %v", err))
-		return
-	}
-	body := buf.Bytes()
+	// 复制响应头
+	copyHeader(w.Header(), resp.Header)
+	w.Header().Set("Proxy-Go-Cache", "MISS")
 
-	// 如果是GET请求且响应成功，尝试缓存
+	// 设置响应状态码
+	w.WriteHeader(resp.StatusCode)
+
+	var written int64
+	// 如果是GET请求且响应成功，使用TeeReader同时写入缓存
 	if r.Method == http.MethodGet && resp.StatusCode == http.StatusOK && h.Cache != nil {
 		cacheKey := h.Cache.GenerateCacheKey(r)
-		if _, err := h.Cache.Put(cacheKey, resp, body); err != nil {
-			log.Printf("[Cache] Failed to cache %s: %v", r.URL.Path, err)
+		if cacheFile, err := h.Cache.CreateTemp(cacheKey, resp); err == nil {
+			defer cacheFile.Close()
+			teeReader := io.TeeReader(resp.Body, cacheFile)
+			written, err = io.Copy(w, teeReader)
+			if err == nil {
+				h.Cache.Commit(cacheKey, cacheFile.Name(), resp, written)
+			}
+		} else {
+			written, err = io.Copy(w, resp.Body)
+			if err != nil && !isConnectionClosed(err) {
+				log.Printf("[%s] Error writing response: %v", utils.GetClientIP(r), err)
+				return
+			}
+		}
+	} else {
+		written, err = io.Copy(w, resp.Body)
+		if err != nil && !isConnectionClosed(err) {
+			log.Printf("[%s] Error writing response: %v", utils.GetClientIP(r), err)
+			return
 		}
 	}
 
-	// 设置响应头
-	copyHeader(w.Header(), resp.Header)
-	w.Header().Set("Proxy-Go-Cache", "MISS")
-	w.Header().Del("Content-Security-Policy")
-
-	// 写入响应
-	w.WriteHeader(resp.StatusCode)
-	n, err := w.Write(body)
-	if err != nil && !isConnectionClosed(err) {
-		log.Printf("Error writing response: %v", err)
-	}
-
-	// 记录访问日志
-	collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(start), int64(n), utils.GetClientIP(r), r)
+	// 记录统计信息
+	collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(start), written, utils.GetClientIP(r), r)
 }
 
 func copyHeader(dst, src http.Header) {

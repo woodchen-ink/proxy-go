@@ -94,22 +94,6 @@ func FixedPathProxyMiddleware(configs []config.FixedPathConfig) func(http.Handle
 					}
 					defer resp.Body.Close()
 
-					// 读取响应体
-					body, err := io.ReadAll(resp.Body)
-					if err != nil {
-						http.Error(w, "Error reading response", http.StatusInternalServerError)
-						log.Printf("Error reading response: %v", err)
-						return
-					}
-
-					// 如果是GET请求且响应成功，尝试缓存
-					if r.Method == http.MethodGet && resp.StatusCode == http.StatusOK && fixedPathCache != nil {
-						cacheKey := fixedPathCache.GenerateCacheKey(r)
-						if _, err := fixedPathCache.Put(cacheKey, resp, body); err != nil {
-							log.Printf("[Cache] Failed to cache %s: %v", targetURL, err)
-						}
-					}
-
 					// 复制响应头
 					for key, values := range resp.Header {
 						for _, value := range values {
@@ -121,14 +105,30 @@ func FixedPathProxyMiddleware(configs []config.FixedPathConfig) func(http.Handle
 					// 设置响应状态码
 					w.WriteHeader(resp.StatusCode)
 
-					// 写入响应体
-					written, err := w.Write(body)
+					var written int64
+					// 如果是GET请求且响应成功，使用TeeReader同时写入缓存
+					if r.Method == http.MethodGet && resp.StatusCode == http.StatusOK && fixedPathCache != nil {
+						cacheKey := fixedPathCache.GenerateCacheKey(r)
+						if cacheFile, err := fixedPathCache.CreateTemp(cacheKey, resp); err == nil {
+							defer cacheFile.Close()
+							teeReader := io.TeeReader(resp.Body, cacheFile)
+							written, err = io.Copy(w, teeReader)
+							if err == nil {
+								fixedPathCache.Commit(cacheKey, cacheFile.Name(), resp, written)
+							}
+						} else {
+							written, err = io.Copy(w, resp.Body)
+						}
+					} else {
+						written, err = io.Copy(w, resp.Body)
+					}
+
 					if err != nil && !isConnectionClosed(err) {
 						log.Printf("[%s] Error writing response: %v", utils.GetClientIP(r), err)
 					}
 
 					// 记录统计信息
-					collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(startTime), int64(written), utils.GetClientIP(r), r)
+					collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(startTime), written, utils.GetClientIP(r), r)
 
 					return
 				}

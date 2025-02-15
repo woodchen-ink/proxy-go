@@ -350,3 +350,58 @@ func (cm *CacheManager) ClearCache() error {
 
 	return nil
 }
+
+// CreateTemp 创建临时缓存文件
+func (cm *CacheManager) CreateTemp(key CacheKey, resp *http.Response) (*os.File, error) {
+	if !cm.enabled.Load() {
+		return nil, fmt.Errorf("cache is disabled")
+	}
+
+	// 创建临时文件
+	tempFile, err := os.CreateTemp(cm.cacheDir, "temp-*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp file: %v", err)
+	}
+
+	return tempFile, nil
+}
+
+// Commit 提交缓存文件
+func (cm *CacheManager) Commit(key CacheKey, tempPath string, resp *http.Response, size int64) error {
+	if !cm.enabled.Load() {
+		os.Remove(tempPath)
+		return fmt.Errorf("cache is disabled")
+	}
+
+	// 生成最终的缓存文件名
+	h := sha256.New()
+	h.Write([]byte(key.String()))
+	hashStr := hex.EncodeToString(h.Sum(nil))
+	ext := filepath.Ext(key.URL)
+	if ext == "" {
+		ext = ".bin"
+	}
+	filePath := filepath.Join(cm.cacheDir, hashStr+ext)
+
+	// 重命名临时文件
+	if err := os.Rename(tempPath, filePath); err != nil {
+		os.Remove(tempPath)
+		return fmt.Errorf("failed to rename temp file: %v", err)
+	}
+
+	// 创建缓存项
+	item := &CacheItem{
+		FilePath:    filePath,
+		ContentType: resp.Header.Get("Content-Type"),
+		Size:        size,
+		LastAccess:  time.Now(),
+		Hash:        hashStr,
+		CreatedAt:   time.Now(),
+		AccessCount: 1,
+	}
+
+	cm.items.Store(key, item)
+	cm.bytesSaved.Add(size)
+	log.Printf("[Cache] Cached %s (%s)", key.URL, formatBytes(size))
+	return nil
+}
