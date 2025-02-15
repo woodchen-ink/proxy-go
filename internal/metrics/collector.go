@@ -186,12 +186,12 @@ func (c *Collector) GetStats() map[string]interface{} {
 	// 收集路径统计
 	var pathMetrics []models.PathMetrics
 	c.pathStats.Range(func(key, value interface{}) bool {
-		stats := value.(models.PathMetrics)
+		stats := value.(*models.PathMetrics)
 		if stats.RequestCount > 0 {
 			avgLatencyMs := float64(stats.TotalLatency) / float64(stats.RequestCount) / float64(time.Millisecond)
 			stats.AvgLatency = fmt.Sprintf("%.2fms", avgLatencyMs)
 		}
-		pathMetrics = append(pathMetrics, stats)
+		pathMetrics = append(pathMetrics, *stats)
 		return true
 	})
 

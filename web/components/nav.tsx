@@ -49,6 +49,12 @@ export function Nav() {
           >
             配置
           </Link>
+          <Link
+            href="/dashboard/cache"
+            className={pathname === "/dashboard/cache" ? "text-primary" : "text-muted-foreground"}
+          >
+            缓存
+          </Link>
         </div>
         <Button variant="ghost" onClick={handleLogout}>
           退出登录

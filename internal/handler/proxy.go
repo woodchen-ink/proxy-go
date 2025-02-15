@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"proxy-go/internal/cache"
 	"proxy-go/internal/config"
 	"proxy-go/internal/metrics"
 	"proxy-go/internal/utils"
@@ -17,7 +18,6 @@ import (
 	"time"
 
 	"golang.org/x/net/http2"
-	"golang.org/x/time/rate"
 )
 
 const (
@@ -30,15 +30,6 @@ const (
 	backendServTimeout  = 40 * time.Second
 	idleConnTimeout     = 120 * time.Second
 	tlsHandshakeTimeout = 10 * time.Second
-
-	// 限流相关常量
-	globalRateLimit   = 2000
-	globalBurstLimit  = 500
-	perHostRateLimit  = 200
-	perHostBurstLimit = 100
-	perIPRateLimit    = 50
-	perIPBurstLimit   = 20
-	cleanupInterval   = 10 * time.Minute
 )
 
 // 统一的缓冲池
@@ -46,17 +37,6 @@ var bufferPool = sync.Pool{
 	New: func() interface{} {
 		return bytes.NewBuffer(make([]byte, defaultBufferSize))
 	},
-}
-
-// getBuffer 获取缓冲区
-func getBuffer() (*bytes.Buffer, func()) {
-	buf := bufferPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	return buf, func() {
-		if buf != nil {
-			bufferPool.Put(buf)
-		}
-	}
 }
 
 // 添加 hop-by-hop 头部映射
@@ -82,115 +62,14 @@ func init() {
 // ErrorHandler 定义错误处理函数类型
 type ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)
 
-// RateLimiter 定义限流器接口
-type RateLimiter interface {
-	Allow() bool
-	Clean(now time.Time)
-}
-
-// 限流管理器
-type rateLimitManager struct {
-	globalLimiter *rate.Limiter
-	hostLimiters  *sync.Map // host -> *rate.Limiter
-	ipLimiters    *sync.Map // IP -> *rate.Limiter
-	lastCleanup   time.Time
-}
-
-// 创建新的限流管理器
-func newRateLimitManager() *rateLimitManager {
-	manager := &rateLimitManager{
-		globalLimiter: rate.NewLimiter(rate.Limit(globalRateLimit), globalBurstLimit),
-		hostLimiters:  &sync.Map{},
-		ipLimiters:    &sync.Map{},
-		lastCleanup:   time.Now(),
-	}
-
-	// 启动清理协程
-	go manager.cleanupLoop()
-	return manager
-}
-
-func (m *rateLimitManager) cleanupLoop() {
-	ticker := time.NewTicker(cleanupInterval)
-	for range ticker.C {
-		now := time.Now()
-		m.cleanup(now)
-	}
-}
-
-func (m *rateLimitManager) cleanup(now time.Time) {
-	m.hostLimiters.Range(func(key, value interface{}) bool {
-		if now.Sub(m.lastCleanup) > cleanupInterval {
-			m.hostLimiters.Delete(key)
-		}
-		return true
-	})
-
-	m.ipLimiters.Range(func(key, value interface{}) bool {
-		if now.Sub(m.lastCleanup) > cleanupInterval {
-			m.ipLimiters.Delete(key)
-		}
-		return true
-	})
-
-	m.lastCleanup = now
-}
-
-func (m *rateLimitManager) getHostLimiter(host string) *rate.Limiter {
-	if limiter, exists := m.hostLimiters.Load(host); exists {
-		return limiter.(*rate.Limiter)
-	}
-
-	limiter := rate.NewLimiter(rate.Limit(perHostRateLimit), perHostBurstLimit)
-	m.hostLimiters.Store(host, limiter)
-	return limiter
-}
-
-func (m *rateLimitManager) getIPLimiter(ip string) *rate.Limiter {
-	if limiter, exists := m.ipLimiters.Load(ip); exists {
-		return limiter.(*rate.Limiter)
-	}
-
-	limiter := rate.NewLimiter(rate.Limit(perIPRateLimit), perIPBurstLimit)
-	m.ipLimiters.Store(ip, limiter)
-	return limiter
-}
-
-// 检查是否允许请求
-func (m *rateLimitManager) allowRequest(r *http.Request) error {
-	// 全局限流检查
-	if !m.globalLimiter.Allow() {
-		return fmt.Errorf("global rate limit exceeded")
-	}
-
-	// Host限流检查
-	host := r.Host
-	if host != "" {
-		if !m.getHostLimiter(host).Allow() {
-			return fmt.Errorf("host rate limit exceeded for %s", host)
-		}
-	}
-
-	// IP限流检查
-	ip := utils.GetClientIP(r)
-	if ip != "" {
-		if !m.getIPLimiter(ip).Allow() {
-			return fmt.Errorf("ip rate limit exceeded for %s", ip)
-		}
-	}
-
-	return nil
-}
-
 type ProxyHandler struct {
 	pathMap      map[string]config.PathConfig
 	client       *http.Client
-	limiter      *rate.Limiter
 	startTime    time.Time
 	config       *config.Config
 	auth         *authManager
-	errorHandler ErrorHandler // 添加错误处理器
-	rateLimiter  *rateLimitManager
+	errorHandler ErrorHandler
+	Cache        *cache.CacheManager
 }
 
 // NewProxyHandler 创建新的代理处理器
@@ -202,12 +81,12 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 
 	transport := &http.Transport{
 		DialContext:            dialer.DialContext,
-		MaxIdleConns:           1000, // 增加最大空闲连接数
-		MaxIdleConnsPerHost:    100,  // 增加每个主机的最大空闲连接数
+		MaxIdleConns:           1000,
+		MaxIdleConnsPerHost:    100,
 		IdleConnTimeout:        idleConnTimeout,
 		TLSHandshakeTimeout:    tlsHandshakeTimeout,
 		ExpectContinueTimeout:  1 * time.Second,
-		MaxConnsPerHost:        200, // 增加每个主机的最大连接数
+		MaxConnsPerHost:        200,
 		DisableKeepAlives:      false,
 		DisableCompression:     false,
 		ForceAttemptHTTP2:      true,
@@ -227,6 +106,12 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 		http2Transport.StrictMaxConcurrentStreams = true
 	}
 
+	// 初始化缓存管理器
+	cacheManager, err := cache.NewCacheManager("data/cache")
+	if err != nil {
+		log.Printf("[Cache] Failed to initialize cache manager: %v", err)
+	}
+
 	handler := &ProxyHandler{
 		pathMap: cfg.MAP,
 		client: &http.Client{
@@ -239,20 +124,14 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 				return nil
 			},
 		},
-		limiter:     rate.NewLimiter(rate.Limit(5000), 10000),
-		startTime:   time.Now(),
-		config:      cfg,
-		auth:        newAuthManager(),
-		rateLimiter: newRateLimitManager(),
+		startTime: time.Now(),
+		config:    cfg,
+		auth:      newAuthManager(),
+		Cache:     cacheManager,
 		errorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			log.Printf("[Error] %s %s -> %v", r.Method, r.URL.Path, err)
-			if strings.Contains(err.Error(), "rate limit exceeded") {
-				w.WriteHeader(http.StatusTooManyRequests)
-				w.Write([]byte("Too Many Requests"))
-			} else {
-				w.WriteHeader(http.StatusInternalServerError)
-				w.Write([]byte("Internal Server Error"))
-			}
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte("Internal Server Error"))
 		},
 	}
 
@@ -264,13 +143,6 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 	})
 
 	return handler
-}
-
-// SetErrorHandler 允许自定义错误处理函数
-func (h *ProxyHandler) SetErrorHandler(handler ErrorHandler) {
-	if handler != nil {
-		h.errorHandler = handler
-	}
 }
 
 // copyResponse 使用缓冲方式传输数据
@@ -328,12 +200,6 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	collector := metrics.GetCollector()
 	collector.BeginRequest()
 	defer collector.EndRequest()
-
-	// 限流检查
-	if err := h.rateLimiter.allowRequest(r); err != nil {
-		h.errorHandler(w, r, err)
-		return
-	}
 
 	start := time.Now()
 
@@ -457,6 +323,23 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// 检查是否可以使用缓存
+	if r.Method == http.MethodGet && h.Cache != nil {
+		cacheKey := h.Cache.GenerateCacheKey(r)
+		if item, hit, notModified := h.Cache.Get(cacheKey, r); hit {
+			// 从缓存提供响应
+			w.Header().Set("Content-Type", item.ContentType)
+			w.Header().Set("Proxy-Go-Cache", "HIT")
+			if notModified {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			http.ServeFile(w, r, item.FilePath)
+			collector.RecordRequest(r.URL.Path, http.StatusOK, time.Since(start), item.Size, utils.GetClientIP(r), r)
+			return
+		}
+	}
+
 	// 发送代理请求
 	resp, err := h.client.Do(proxyReq)
 	if err != nil {
@@ -473,55 +356,37 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	copyHeader(w.Header(), resp.Header)
+	// 读取响应体到缓冲区
+	buf := new(bytes.Buffer)
+	_, err = copyResponse(buf, resp.Body, nil)
+	if err != nil {
+		h.errorHandler(w, r, fmt.Errorf("error reading response: %v", err))
+		return
+	}
+	body := buf.Bytes()
 
-	// 删除严格的 CSP
+	// 如果是GET请求且响应成功，尝试缓存
+	if r.Method == http.MethodGet && resp.StatusCode == http.StatusOK && h.Cache != nil {
+		cacheKey := h.Cache.GenerateCacheKey(r)
+		if _, err := h.Cache.Put(cacheKey, resp, body); err != nil {
+			log.Printf("[Cache] Failed to cache %s: %v", r.URL.Path, err)
+		}
+	}
+
+	// 设置响应头
+	copyHeader(w.Header(), resp.Header)
+	w.Header().Set("Proxy-Go-Cache", "MISS")
 	w.Header().Del("Content-Security-Policy")
 
-	// 根据响应大小选择不同的处理策略
-	contentLength := resp.ContentLength
-	if contentLength > 0 && contentLength < 1<<20 { // 1MB 以下的小响应
-		// 获取合适大小的缓冲区
-		buf, putBuffer := getBuffer()
-		defer putBuffer()
-
-		// 使用缓冲区读取响应
-		_, err := io.Copy(buf, resp.Body)
-		if err != nil {
-			if !isConnectionClosed(err) {
-				h.errorHandler(w, r, fmt.Errorf("error reading response: %v", err))
-			}
-			return
-		}
-
-		// 设置响应状态码并一次性写入响应
-		w.WriteHeader(resp.StatusCode)
-		written, err := w.Write(buf.Bytes())
-		if err != nil {
-			if !isConnectionClosed(err) {
-				log.Printf("Error writing response: %v", err)
-			}
-		}
-		collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(start), int64(written), utils.GetClientIP(r), r)
-	} else {
-		// 大响应使用零拷贝传输
-		w.WriteHeader(resp.StatusCode)
-		var bytesCopied int64
-		var err error
-
-		if f, ok := w.(http.Flusher); ok {
-			bytesCopied, err = copyResponse(w, resp.Body, f)
-		} else {
-			bytesCopied, err = copyResponse(w, resp.Body, nil)
-		}
-
-		if err != nil && !isConnectionClosed(err) {
-			log.Printf("Error copying response: %v", err)
-		}
-
-		// 记录访问日志
-		collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(start), bytesCopied, utils.GetClientIP(r), r)
+	// 写入响应
+	w.WriteHeader(resp.StatusCode)
+	n, err := w.Write(body)
+	if err != nil && !isConnectionClosed(err) {
+		log.Printf("Error writing response: %v", err)
 	}
+
+	// 记录访问日志
+	collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(start), int64(n), utils.GetClientIP(r), r)
 }
 
 func copyHeader(dst, src http.Header) {

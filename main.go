@@ -80,6 +80,12 @@ func main() {
 						proxyHandler.AuthMiddleware(handler.NewConfigHandler(cfg).ServeHTTP)(w, r)
 					case "/admin/api/config/save":
 						proxyHandler.AuthMiddleware(handler.NewConfigHandler(cfg).ServeHTTP)(w, r)
+					case "/admin/api/cache/stats":
+						proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).GetCacheStats)(w, r)
+					case "/admin/api/cache/enable":
+						proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).SetCacheEnabled)(w, r)
+					case "/admin/api/cache/clear":
+						proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).ClearCache)(w, r)
 					default:
 						http.NotFound(w, r)
 					}

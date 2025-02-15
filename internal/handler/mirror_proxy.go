@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"proxy-go/internal/cache"
 	"proxy-go/internal/metrics"
 	"proxy-go/internal/utils"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 type MirrorProxyHandler struct {
 	client *http.Client
+	Cache  *cache.CacheManager
 }
 
 func NewMirrorProxyHandler() *MirrorProxyHandler {
@@ -23,11 +25,18 @@ func NewMirrorProxyHandler() *MirrorProxyHandler {
 		IdleConnTimeout:     90 * time.Second,
 	}
 
+	// 初始化缓存管理器
+	cacheManager, err := cache.NewCacheManager("data/mirror_cache")
+	if err != nil {
+		log.Printf("[Cache] Failed to initialize mirror cache manager: %v", err)
+	}
+
 	return &MirrorProxyHandler{
 		client: &http.Client{
 			Transport: transport,
 			Timeout:   30 * time.Second,
 		},
+		Cache: cacheManager,
 	}
 }
 
@@ -107,6 +116,23 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxyReq.Header.Set("Host", parsedURL.Host)
 	proxyReq.Host = parsedURL.Host
 
+	// 检查是否可以使用缓存
+	if r.Method == http.MethodGet && h.Cache != nil {
+		cacheKey := h.Cache.GenerateCacheKey(r)
+		if item, hit, notModified := h.Cache.Get(cacheKey, r); hit {
+			// 从缓存提供响应
+			w.Header().Set("Content-Type", item.ContentType)
+			w.Header().Set("Proxy-Go-Cache", "HIT")
+			if notModified {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			http.ServeFile(w, r, item.FilePath)
+			collector.RecordRequest(r.URL.Path, http.StatusOK, time.Since(startTime), item.Size, utils.GetClientIP(r), r)
+			return
+		}
+	}
+
 	// 发送请求
 	resp, err := h.client.Do(proxyReq)
 	if err != nil {
@@ -118,25 +144,42 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
+	// 读取响应体
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, "Error reading response", http.StatusInternalServerError)
+		log.Printf("Error reading response: %v", err)
+		return
+	}
+
+	// 如果是GET请求且响应成功，尝试缓存
+	if r.Method == http.MethodGet && resp.StatusCode == http.StatusOK && h.Cache != nil {
+		cacheKey := h.Cache.GenerateCacheKey(r)
+		if _, err := h.Cache.Put(cacheKey, resp, body); err != nil {
+			log.Printf("[Cache] Failed to cache %s: %v", actualURL, err)
+		}
+	}
+
 	// 复制响应头
 	copyHeader(w.Header(), resp.Header)
+	w.Header().Set("Proxy-Go-Cache", "MISS")
 
 	// 设置状态码
 	w.WriteHeader(resp.StatusCode)
 
-	// 复制响应体
-	bytesCopied, err := io.Copy(w, resp.Body)
+	// 写入响应体
+	written, err := w.Write(body)
 	if err != nil {
-		log.Printf("Error copying response: %v", err)
+		log.Printf("Error writing response: %v", err)
 		return
 	}
 
 	// 记录访问日志
 	log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | %s",
 		r.Method, resp.StatusCode, time.Since(startTime),
-		utils.GetClientIP(r), utils.FormatBytes(bytesCopied),
+		utils.GetClientIP(r), utils.FormatBytes(int64(written)),
 		utils.GetRequestSource(r), actualURL)
 
 	// 记录统计信息
-	collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(startTime), bytesCopied, utils.GetClientIP(r), r)
+	collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(startTime), int64(written), utils.GetClientIP(r), r)
 }

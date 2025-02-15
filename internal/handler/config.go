@@ -33,11 +33,6 @@ func (h *ConfigHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleConfigPage 处理配置页面请求
-func (h *ConfigHandler) handleConfigPage(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, "web/templates/config.html")
-}
-
 // handleGetConfig 处理获取配置请求
 func (h *ConfigHandler) handleGetConfig(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
