@@ -61,7 +61,7 @@ interface Metrics {
 }
 
 // 颜色常量
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8']
+const COLORS = ['#0088FE', '#FF8042', '#00C49F', '#FFBB28', '#FF0000']
 
 export default function DashboardPage() {
   const [metrics, setMetrics] = useState<Metrics | null>(null)
@@ -395,13 +395,14 @@ export default function DashboardPage() {
                     value,
                   }))}
                   layout="vertical"
-                  margin={{ top: 5, right: 30, left: 100, bottom: 5 }}
+                  margin={{ top: 5, right: 30, left: 120, bottom: 5 }}
                 >
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis type="number" />
-                  <YAxis type="category" dataKey="name" />
+                  <YAxis type="category" dataKey="name" width={120} />
                   <Tooltip />
-                  <Bar dataKey="value" fill="#FF8042" />
+                  <Legend />
+                  <Bar dataKey="value" name="错误次数" fill={COLORS[1]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

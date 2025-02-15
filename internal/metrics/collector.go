@@ -88,6 +88,27 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 	atomic.AddInt64(&c.totalBytes, bytes)
 	atomic.AddInt64(&c.latencySum, int64(latency))
 
+	// 更新最小和最大响应时间
+	latencyNanos := int64(latency)
+	for {
+		oldMin := atomic.LoadInt64(&c.minLatency)
+		if oldMin <= latencyNanos {
+			break
+		}
+		if atomic.CompareAndSwapInt64(&c.minLatency, oldMin, latencyNanos) {
+			break
+		}
+	}
+	for {
+		oldMax := atomic.LoadInt64(&c.maxLatency)
+		if oldMax >= latencyNanos {
+			break
+		}
+		if atomic.CompareAndSwapInt64(&c.maxLatency, oldMax, latencyNanos) {
+			break
+		}
+	}
+
 	// 更新延迟分布
 	latencyMs := latency.Milliseconds()
 	var bucketKey string
@@ -245,6 +266,13 @@ func (c *Collector) GetStats() map[string]interface{} {
 		}
 	}
 
+	// 获取最小和最大响应时间
+	minLatency := atomic.LoadInt64(&c.minLatency)
+	maxLatency := atomic.LoadInt64(&c.maxLatency)
+	if minLatency == math.MaxInt64 {
+		minLatency = 0
+	}
+
 	return map[string]interface{}{
 		"uptime":            time.Since(c.startTime).String(),
 		"active_requests":   atomic.LoadInt64(&c.activeRequests),
@@ -258,8 +286,8 @@ func (c *Collector) GetStats() map[string]interface{} {
 		"top_paths":         pathMetrics,
 		"recent_requests":   c.recentRequests,
 		"latency_stats": map[string]interface{}{
-			"min":          fmt.Sprintf("%.2fms", float64(atomic.LoadInt64(&c.minLatency))/float64(time.Millisecond)),
-			"max":          fmt.Sprintf("%.2fms", float64(atomic.LoadInt64(&c.maxLatency))/float64(time.Millisecond)),
+			"min":          fmt.Sprintf("%.2fms", float64(minLatency)/float64(time.Millisecond)),
+			"max":          fmt.Sprintf("%.2fms", float64(maxLatency)/float64(time.Millisecond)),
 			"distribution": latencyDistribution,
 		},
 		"error_stats": map[string]interface{}{
