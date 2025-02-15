@@ -70,6 +70,7 @@ jobs:
           cp Dockerfile docker-context/
           cp proxy-go-amd64/proxy-go-amd64 docker-context/proxy-go.amd64
           cp proxy-go-arm64/proxy-go-arm64 docker-context/proxy-go.arm64
+          cp -r web docker-context/
   
       - name: Build and push Docker images
         uses: docker/build-push-action@v6
