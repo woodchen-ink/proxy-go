@@ -19,42 +19,23 @@ import (
 
 // CacheKey 用于标识缓存项的唯一键
 type CacheKey struct {
-	URL            string
-	AcceptHeaders  string
-	UserAgent      string
-	VaryHeadersMap map[string]string // 存储 Vary 头部的值
+	URL           string
+	AcceptHeaders string
+	UserAgent     string
+	VaryHeaders   string // 存储 Vary 头部的值，格式：key1=value1&key2=value2
 }
 
 // String 实现 Stringer 接口，用于生成唯一的字符串表示
 func (k CacheKey) String() string {
-	// 将 VaryHeadersMap 转换为有序的字符串
-	var varyPairs []string
-	for key, value := range k.VaryHeadersMap {
-		varyPairs = append(varyPairs, key+"="+value)
-	}
-	sort.Strings(varyPairs)
-	varyStr := strings.Join(varyPairs, "&")
-
-	return fmt.Sprintf("%s|%s|%s|%s", k.URL, k.AcceptHeaders, k.UserAgent, varyStr)
+	return fmt.Sprintf("%s|%s|%s|%s", k.URL, k.AcceptHeaders, k.UserAgent, k.VaryHeaders)
 }
 
 // Equal 比较两个 CacheKey 是否相等
 func (k CacheKey) Equal(other CacheKey) bool {
-	if k.URL != other.URL || k.AcceptHeaders != other.AcceptHeaders || k.UserAgent != other.UserAgent {
-		return false
-	}
-
-	if len(k.VaryHeadersMap) != len(other.VaryHeadersMap) {
-		return false
-	}
-
-	for key, value := range k.VaryHeadersMap {
-		if otherValue, ok := other.VaryHeadersMap[key]; !ok || value != otherValue {
-			return false
-		}
-	}
-
-	return true
+	return k.URL == other.URL &&
+		k.AcceptHeaders == other.AcceptHeaders &&
+		k.UserAgent == other.UserAgent &&
+		k.VaryHeaders == other.VaryHeaders
 }
 
 // Hash 生成 CacheKey 的哈希值
@@ -128,10 +109,22 @@ func NewCacheManager(cacheDir string) (*CacheManager, error) {
 
 // GenerateCacheKey 生成缓存键
 func (cm *CacheManager) GenerateCacheKey(r *http.Request) CacheKey {
+	// 处理 Vary 头部
+	varyHeaders := make([]string, 0)
+	for _, vary := range strings.Split(r.Header.Get("Vary"), ",") {
+		vary = strings.TrimSpace(vary)
+		if vary != "" {
+			value := r.Header.Get(vary)
+			varyHeaders = append(varyHeaders, vary+"="+value)
+		}
+	}
+	sort.Strings(varyHeaders)
+
 	return CacheKey{
 		URL:           r.URL.String(),
 		AcceptHeaders: r.Header.Get("Accept"),
 		UserAgent:     r.Header.Get("User-Agent"),
+		VaryHeaders:   strings.Join(varyHeaders, "&"),
 	}
 }
 
@@ -168,7 +161,9 @@ func (cm *CacheManager) Get(key CacheKey, r *http.Request) (*CacheItem, bool, bo
 
 		// 检查 Vary 头部
 		for _, varyHeader := range item.VaryHeaders {
-			if r.Header.Get(varyHeader) != key.VaryHeadersMap[varyHeader] {
+			requestValue := r.Header.Get(varyHeader)
+			varyPair := varyHeader + "=" + requestValue
+			if !strings.Contains(key.VaryHeaders, varyPair) {
 				cm.missCount.Add(1)
 				return nil, false, false
 			}

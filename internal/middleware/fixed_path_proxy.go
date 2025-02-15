@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"proxy-go/internal/cache"
 	"proxy-go/internal/config"
 	"proxy-go/internal/metrics"
 	"proxy-go/internal/utils"
@@ -17,6 +18,16 @@ type FixedPathConfig struct {
 	Path       string `json:"Path"`
 	TargetHost string `json:"TargetHost"`
 	TargetURL  string `json:"TargetURL"`
+}
+
+var fixedPathCache *cache.CacheManager
+
+func init() {
+	var err error
+	fixedPathCache, err = cache.NewCacheManager("data/fixed_path_cache")
+	if err != nil {
+		log.Printf("[Cache] Failed to initialize fixed path cache manager: %v", err)
+	}
 }
 
 func FixedPathProxyMiddleware(configs []config.FixedPathConfig) func(http.Handler) http.Handler {
@@ -33,6 +44,23 @@ func FixedPathProxyMiddleware(configs []config.FixedPathConfig) func(http.Handle
 					// 创建新的请求
 					targetPath := strings.TrimPrefix(r.URL.Path, cfg.Path)
 					targetURL := cfg.TargetURL + targetPath
+
+					// 检查是否可以使用缓存
+					if r.Method == http.MethodGet && fixedPathCache != nil {
+						cacheKey := fixedPathCache.GenerateCacheKey(r)
+						if item, hit, notModified := fixedPathCache.Get(cacheKey, r); hit {
+							// 从缓存提供响应
+							w.Header().Set("Content-Type", item.ContentType)
+							w.Header().Set("Proxy-Go-Cache", "HIT")
+							if notModified {
+								w.WriteHeader(http.StatusNotModified)
+								return
+							}
+							http.ServeFile(w, r, item.FilePath)
+							collector.RecordRequest(r.URL.Path, http.StatusOK, time.Since(startTime), item.Size, utils.GetClientIP(r), r)
+							return
+						}
+					}
 
 					proxyReq, err := http.NewRequest(r.Method, targetURL, r.Body)
 					if err != nil {
@@ -66,24 +94,41 @@ func FixedPathProxyMiddleware(configs []config.FixedPathConfig) func(http.Handle
 					}
 					defer resp.Body.Close()
 
+					// 读取响应体
+					body, err := io.ReadAll(resp.Body)
+					if err != nil {
+						http.Error(w, "Error reading response", http.StatusInternalServerError)
+						log.Printf("Error reading response: %v", err)
+						return
+					}
+
+					// 如果是GET请求且响应成功，尝试缓存
+					if r.Method == http.MethodGet && resp.StatusCode == http.StatusOK && fixedPathCache != nil {
+						cacheKey := fixedPathCache.GenerateCacheKey(r)
+						if _, err := fixedPathCache.Put(cacheKey, resp, body); err != nil {
+							log.Printf("[Cache] Failed to cache %s: %v", targetURL, err)
+						}
+					}
+
 					// 复制响应头
 					for key, values := range resp.Header {
 						for _, value := range values {
 							w.Header().Add(key, value)
 						}
 					}
+					w.Header().Set("Proxy-Go-Cache", "MISS")
 
 					// 设置响应状态码
 					w.WriteHeader(resp.StatusCode)
 
-					// 复制响应体
-					bytesCopied, err := io.Copy(w, resp.Body)
-					if err := handleCopyError(err); err != nil {
-						log.Printf("[%s] Error copying response: %v", utils.GetClientIP(r), err)
+					// 写入响应体
+					written, err := w.Write(body)
+					if err != nil && !isConnectionClosed(err) {
+						log.Printf("[%s] Error writing response: %v", utils.GetClientIP(r), err)
 					}
 
 					// 记录统计信息
-					collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(startTime), bytesCopied, utils.GetClientIP(r), r)
+					collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(startTime), int64(written), utils.GetClientIP(r), r)
 
 					return
 				}
@@ -95,9 +140,9 @@ func FixedPathProxyMiddleware(configs []config.FixedPathConfig) func(http.Handle
 	}
 }
 
-func handleCopyError(err error) error {
+func isConnectionClosed(err error) bool {
 	if err == nil {
-		return nil
+		return false
 	}
 
 	// 忽略常见的连接关闭错误
@@ -105,8 +150,8 @@ func handleCopyError(err error) error {
 		errors.Is(err, syscall.ECONNRESET) || // connection reset by peer
 		strings.Contains(err.Error(), "broken pipe") ||
 		strings.Contains(err.Error(), "connection reset by peer") {
-		return nil
+		return true
 	}
 
-	return err
+	return false
 }
