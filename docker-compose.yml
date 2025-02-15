@@ -3,7 +3,7 @@ services:
     image: woodchen/proxy-go:latest
     container_name: proxy-go
     ports:
-      - "3334:80"
+      - "3336:3336"
     volumes:
       - ./data:/app/data
     environment:
@@ -18,7 +18,7 @@ services:
           cpus: '0.25'
           memory: 128M
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:80/"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3336/"]
       interval: 30s
       timeout: 3s
       retries: 3

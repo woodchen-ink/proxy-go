@@ -1,0 +1,216 @@
+{{define "Content"}}
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+    <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+            <h2 class="card-title">基础指标</h2>
+            <div class="stats stats-vertical shadow">
+                <div class="stat">
+                    <div class="stat-title">运行时间</div>
+                    <div class="stat-value text-lg" id="uptime"></div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title">当前活跃请求</div>
+                    <div class="stat-value text-lg" id="activeRequests"></div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title">总请求数</div>
+                    <div class="stat-value text-lg" id="totalRequests"></div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title">错误数</div>
+                    <div class="stat-value text-lg" id="totalErrors"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+            <h2 class="card-title">系统指标</h2>
+            <div class="stats stats-vertical shadow">
+                <div class="stat">
+                    <div class="stat-title">Goroutine数量</div>
+                    <div class="stat-value text-lg" id="numGoroutine"></div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title">内存使用</div>
+                    <div class="stat-value text-lg" id="memoryUsage"></div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title">平均响应时间</div>
+                    <div class="stat-value text-lg" id="avgResponseTime"></div>
+                </div>
+                <div class="stat">
+                    <div class="stat-title">每秒请求数</div>
+                    <div class="stat-value text-lg" id="requestsPerSecond"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card bg-base-100 shadow-xl mb-4">
+    <div class="card-body">
+        <h2 class="card-title">状态码统计</h2>
+        <div id="statusCodes" class="grid grid-cols-2 md:grid-cols-5 gap-4"></div>
+    </div>
+</div>
+
+<div class="card bg-base-100 shadow-xl mb-4">
+    <div class="card-body">
+        <h2 class="card-title">热门路径 (Top 10)</h2>
+        <div class="overflow-x-auto">
+            <table class="table table-zebra">
+                <thead>
+                    <tr>
+                        <th>路径</th>
+                        <th>请求数</th>
+                        <th>错误数</th>
+                        <th>平均延迟</th>
+                        <th>传输大小</th>
+                    </tr>
+                </thead>
+                <tbody id="topPaths"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="card bg-base-100 shadow-xl mb-4">
+    <div class="card-body">
+        <h2 class="card-title">最近请求</h2>
+        <div class="overflow-x-auto">
+            <table class="table table-zebra">
+                <thead>
+                    <tr>
+                        <th>时间</th>
+                        <th>路径</th>
+                        <th>状态</th>
+                        <th>延迟</th>
+                        <th>大小</th>
+                        <th>客户端IP</th>
+                    </tr>
+                </thead>
+                <tbody id="recentRequests"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    function formatBytes(bytes) {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    function formatDate(dateStr) {
+        const date = new Date(dateStr);
+        return date.toLocaleTimeString();
+    }
+
+    function formatLatency(nanoseconds) {
+        if (nanoseconds < 1000) {
+            return nanoseconds + ' ns';
+        } else if (nanoseconds < 1000000) {
+            return (nanoseconds / 1000).toFixed(2) + ' µs';
+        } else if (nanoseconds < 1000000000) {
+            return (nanoseconds / 1000000).toFixed(2) + ' ms';
+        } else {
+            return (nanoseconds / 1000000000).toFixed(2) + ' s';
+        }
+    }
+
+    function updateMetrics(data) {
+        // 更新基础指标
+        document.getElementById('uptime').textContent = data.uptime;
+        document.getElementById('activeRequests').textContent = data.active_requests;
+        document.getElementById('totalRequests').textContent = data.total_requests;
+        document.getElementById('totalErrors').textContent = data.total_errors;
+        
+        // 更新系统指标
+        document.getElementById('numGoroutine').textContent = data.num_goroutine;
+        document.getElementById('memoryUsage').textContent = data.memory_usage;
+        document.getElementById('avgResponseTime').textContent = data.avg_response_time;
+        document.getElementById('requestsPerSecond').textContent = data.requests_per_second.toFixed(2);
+
+        // 更新状态码统计
+        const statusCodesHtml = Object.entries(data.status_code_stats || {})
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([status, count]) => {
+                const firstDigit = status.charAt(0);
+                let color = 'success';
+                if (firstDigit === '4') color = 'warning';
+                if (firstDigit === '5') color = 'error';
+                if (firstDigit === '3') color = 'info';
+                
+                return `
+                    <div class="stat shadow">
+                        <div class="stat-title">状态码 ${status}</div>
+                        <div class="stat-value text-${color}">${count}</div>
+                    </div>
+                `;
+            }).join('');
+        document.getElementById('statusCodes').innerHTML = statusCodesHtml;
+
+        // 更新热门路径
+        const topPathsHtml = (data.top_paths || []).map(path => `
+            <tr>
+                <td>${path.path}</td>
+                <td>${path.request_count}</td>
+                <td>${path.error_count}</td>
+                <td>${path.avg_latency}</td>
+                <td>${formatBytes(path.bytes_transferred)}</td>
+            </tr>
+        `).join('');
+        document.getElementById('topPaths').innerHTML = topPathsHtml;
+
+        // 更新最近请求
+        const recentRequestsHtml = (data.recent_requests || []).map(req => {
+            const statusClass = {
+                2: 'success',
+                3: 'info',
+                4: 'warning',
+                5: 'error'
+            }[Math.floor(req.Status/100)] || '';
+            
+            return `
+                <tr>
+                    <td>${formatDate(req.Time)}</td>
+                    <td class="max-w-xs truncate">${req.Path}</td>
+                    <td><div class="badge badge-${statusClass}">${req.Status}</div></td>
+                    <td>${formatLatency(req.Latency)}</td>
+                    <td>${formatBytes(req.BytesSent)}</td>
+                    <td>${req.ClientIP}</td>
+                </tr>
+            `;
+        }).join('');
+        document.getElementById('recentRequests').innerHTML = recentRequestsHtml;
+    }
+
+    async function loadMetrics() {
+        try {
+            const response = await fetch('/admin/metrics', {
+                headers: getAuthHeaders()
+            });
+
+            if (!response.ok) {
+                throw new Error('加载监控数据失败');
+            }
+
+            const metrics = await response.json();
+            updateMetrics(metrics);
+        } catch (error) {
+            showToast(error.message, true);
+        }
+    }
+
+    // 初始加载监控数据
+    loadMetrics();
+
+    // 每5秒刷新一次数据
+    setInterval(loadMetrics, 5000);
+</script>
+{{end}} 

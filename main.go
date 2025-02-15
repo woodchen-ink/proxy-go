@@ -75,20 +75,34 @@ func main() {
 
 	// 创建主处理器
 	mainHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 先处理监控路由
-		switch r.URL.Path {
-		case "/metrics":
-			proxyHandler.AuthMiddleware(proxyHandler.MetricsHandler)(w, r)
+		// 处理静态文件
+		if strings.HasPrefix(r.URL.Path, "/web/static/") {
+			http.StripPrefix("/web/static/", http.FileServer(http.Dir("web/static"))).ServeHTTP(w, r)
 			return
-		case "/metrics/ui":
-			proxyHandler.MetricsPageHandler(w, r)
-			return
-		case "/metrics/auth":
-			proxyHandler.MetricsAuthHandler(w, r)
-			return
-		case "/metrics/dashboard":
-			proxyHandler.MetricsDashboardHandler(w, r)
-			return
+		}
+
+		// 处理管理路由
+		if strings.HasPrefix(r.URL.Path, "/admin/") {
+			switch r.URL.Path {
+			case "/admin/login":
+				http.ServeFile(w, r, "web/templates/admin/login.html")
+				return
+			case "/admin/metrics":
+				proxyHandler.AuthMiddleware(proxyHandler.MetricsHandler)(w, r)
+				return
+			case "/admin/config":
+				proxyHandler.AuthMiddleware(handler.NewConfigHandler(cfg).ServeHTTP)(w, r)
+				return
+			case "/admin/config/get":
+				proxyHandler.AuthMiddleware(handler.NewConfigHandler(cfg).ServeHTTP)(w, r)
+				return
+			case "/admin/config/save":
+				proxyHandler.AuthMiddleware(handler.NewConfigHandler(cfg).ServeHTTP)(w, r)
+				return
+			case "/admin/auth":
+				proxyHandler.AuthHandler(w, r)
+				return
+			}
 		}
 
 		// 遍历所有处理器
@@ -108,7 +122,7 @@ func main() {
 
 	// 创建服务器
 	server := &http.Server{
-		Addr:    ":80",
+		Addr:    ":3336",
 		Handler: handler,
 	}
 
@@ -124,7 +138,7 @@ func main() {
 	}()
 
 	// 启动服务器
-	log.Println("Starting proxy server on :80")
+	log.Println("Starting proxy server on :3336")
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatal("Error starting server:", err)
 	}

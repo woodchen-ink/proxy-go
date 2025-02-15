@@ -3,6 +3,9 @@ package handler
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -59,4 +62,52 @@ func (am *authManager) cleanExpiredTokens() {
 			return true
 		})
 	}
+}
+
+// AuthMiddleware 认证中间件
+func (h *ProxyHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if auth == "" || !strings.HasPrefix(auth, "Bearer ") {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		token := strings.TrimPrefix(auth, "Bearer ")
+		if !h.auth.validateToken(token) {
+			http.Error(w, "Invalid token", http.StatusUnauthorized)
+			return
+		}
+
+		next(w, r)
+	}
+}
+
+// AuthHandler 处理认证请求
+func (h *ProxyHandler) AuthHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if req.Password != h.config.Metrics.Password {
+		http.Error(w, "Invalid password", http.StatusUnauthorized)
+		return
+	}
+
+	token := h.auth.generateToken()
+	h.auth.addToken(token, time.Duration(h.config.Metrics.TokenExpiry)*time.Second)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"token": token,
+	})
 }

@@ -9,6 +9,6 @@ RUN mkdir -p /app/data && \
     chmod +x /app/proxy-go && \
     apk add --no-cache ca-certificates tzdata
 
-EXPOSE 80
+EXPOSE 3336
 VOLUME ["/app/data"]
 ENTRYPOINT ["/app/proxy-go"]

@@ -2,6 +2,8 @@ package utils
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net"
@@ -59,6 +61,16 @@ func init() {
 			}
 		}
 	}()
+}
+
+// GenerateRequestID 生成唯一的请求ID
+func GenerateRequestID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		// 如果随机数生成失败，使用时间戳作为备选
+		return fmt.Sprintf("%x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
 }
 
 func GetClientIP(r *http.Request) string {
@@ -222,4 +234,53 @@ func isCacheHit(url string) bool {
 		return time.Since(cache.(fileSizeCache).timestamp) < cacheTTL
 	}
 	return false
+}
+
+// SafeInt64 安全地将 interface{} 转换为 int64
+func SafeInt64(v interface{}) int64 {
+	if v == nil {
+		return 0
+	}
+	if i, ok := v.(int64); ok {
+		return i
+	}
+	return 0
+}
+
+// SafeInt 安全地将 interface{} 转换为 int
+func SafeInt(v interface{}) int {
+	if v == nil {
+		return 0
+	}
+	if i, ok := v.(int); ok {
+		return i
+	}
+	return 0
+}
+
+// SafeString 安全地将 interface{} 转换为 string
+func SafeString(v interface{}, defaultValue string) string {
+	if v == nil {
+		return defaultValue
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return defaultValue
+}
+
+// Max 返回两个 int64 中的较大值
+func Max(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// MaxFloat64 返回两个 float64 中的较大值
+func MaxFloat64(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
 }
