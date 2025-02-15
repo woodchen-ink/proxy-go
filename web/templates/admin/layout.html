@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>代理服务管理后台</title>
+    <title>{{.Title}} - 代理服务管理后台</title>
     <link href="https://cdn.jsdelivr.net/npm/daisyui@3.9.4/dist/full.css" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
@@ -22,10 +22,10 @@
     </div>
 
     <div class="container mx-auto px-4">
-        {{template "Content" .}}
+        {{template .Content .}}
     </div>
 
-    <script src="/web/static/js/auth.js"></script>
+    <script src="/admin/static/js/auth.js"></script>
     <script>
         // 检查是否已登录（除了登录页面）
         if (!window.location.pathname.includes('/login')) {
