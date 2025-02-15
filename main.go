@@ -45,6 +45,32 @@ func main() {
 		matcher func(*http.Request) bool
 		handler http.Handler
 	}{
+		// 管理路由处理器
+		{
+			matcher: func(r *http.Request) bool {
+				return strings.HasPrefix(r.URL.Path, "/admin/")
+			},
+			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				log.Printf("[Debug] 处理管理路由: %s", r.URL.Path)
+				switch r.URL.Path {
+				case "/admin/login":
+					log.Printf("[Debug] 提供登录页面")
+					http.ServeFile(w, r, "web/templates/admin/login.html")
+				case "/admin/metrics":
+					proxyHandler.AuthMiddleware(proxyHandler.MetricsHandler)(w, r)
+				case "/admin/config":
+					proxyHandler.AuthMiddleware(handler.NewConfigHandler(cfg).ServeHTTP)(w, r)
+				case "/admin/config/get":
+					proxyHandler.AuthMiddleware(handler.NewConfigHandler(cfg).ServeHTTP)(w, r)
+				case "/admin/config/save":
+					proxyHandler.AuthMiddleware(handler.NewConfigHandler(cfg).ServeHTTP)(w, r)
+				case "/admin/auth":
+					proxyHandler.AuthHandler(w, r)
+				default:
+					http.NotFound(w, r)
+				}
+			}),
+		},
 		// Mirror代理处理器
 		{
 			matcher: func(r *http.Request) bool {
@@ -75,34 +101,13 @@ func main() {
 
 	// 创建主处理器
 	mainHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[Debug] 收到请求: %s %s", r.Method, r.URL.Path)
+
 		// 处理静态文件
 		if strings.HasPrefix(r.URL.Path, "/web/static/") {
+			log.Printf("[Debug] 处理静态文件: %s", r.URL.Path)
 			http.StripPrefix("/web/static/", http.FileServer(http.Dir("web/static"))).ServeHTTP(w, r)
 			return
-		}
-
-		// 处理管理路由
-		if strings.HasPrefix(r.URL.Path, "/admin/") {
-			switch r.URL.Path {
-			case "/admin/login":
-				http.ServeFile(w, r, "web/templates/admin/login.html")
-				return
-			case "/admin/metrics":
-				proxyHandler.AuthMiddleware(proxyHandler.MetricsHandler)(w, r)
-				return
-			case "/admin/config":
-				proxyHandler.AuthMiddleware(handler.NewConfigHandler(cfg).ServeHTTP)(w, r)
-				return
-			case "/admin/config/get":
-				proxyHandler.AuthMiddleware(handler.NewConfigHandler(cfg).ServeHTTP)(w, r)
-				return
-			case "/admin/config/save":
-				proxyHandler.AuthMiddleware(handler.NewConfigHandler(cfg).ServeHTTP)(w, r)
-				return
-			case "/admin/auth":
-				proxyHandler.AuthHandler(w, r)
-				return
-			}
 		}
 
 		// 遍历所有处理器
@@ -112,6 +117,9 @@ func main() {
 				return
 			}
 		}
+
+		log.Printf("[Debug] 未找到处理器: %s", r.URL.Path)
+		http.NotFound(w, r)
 	})
 
 	// 添加压缩中间件
