@@ -13,6 +13,7 @@ import (
 	"proxy-go/internal/middleware"
 	"strings"
 	"syscall"
+	"text/template"
 )
 
 func main() {
@@ -20,6 +21,17 @@ func main() {
 	cfg, err := config.Load("data/config.json")
 	if err != nil {
 		log.Fatal("Error loading config:", err)
+	}
+
+	// 加载模板
+	tmpl, err := template.ParseFiles(
+		"/app/web/templates/admin/layout.html",
+		"/app/web/templates/admin/login.html",
+		"/app/web/templates/admin/metrics.html",
+		"/app/web/templates/admin/config.html",
+	)
+	if err != nil {
+		log.Fatal("Error parsing templates:", err)
 	}
 
 	// 更新常量配置
@@ -63,11 +75,27 @@ func main() {
 				switch r.URL.Path {
 				case "/admin/login":
 					log.Printf("[Debug] 提供登录页面，文件路径: /app/web/templates/admin/login.html")
-					http.ServeFile(w, r, "/app/web/templates/admin/login.html")
+					w.Header().Set("Content-Type", "text/html; charset=utf-8")
+					if err := tmpl.ExecuteTemplate(w, "login.html", nil); err != nil {
+						log.Printf("[Error] 渲染登录页面失败: %v", err)
+						http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+					}
 				case "/admin/metrics":
-					proxyHandler.AuthMiddleware(proxyHandler.MetricsHandler)(w, r)
+					proxyHandler.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						w.Header().Set("Content-Type", "text/html; charset=utf-8")
+						if err := tmpl.ExecuteTemplate(w, "metrics.html", nil); err != nil {
+							log.Printf("[Error] 渲染监控页面失败: %v", err)
+							http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+						}
+					}))(w, r)
 				case "/admin/config":
-					proxyHandler.AuthMiddleware(handler.NewConfigHandler(cfg).ServeHTTP)(w, r)
+					proxyHandler.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						w.Header().Set("Content-Type", "text/html; charset=utf-8")
+						if err := tmpl.ExecuteTemplate(w, "config.html", nil); err != nil {
+							log.Printf("[Error] 渲染配置页面失败: %v", err)
+							http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+						}
+					}))(w, r)
 				case "/admin/config/get":
 					proxyHandler.AuthMiddleware(handler.NewConfigHandler(cfg).ServeHTTP)(w, r)
 				case "/admin/config/save":
