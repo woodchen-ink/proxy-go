@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/net/http2"
 	"golang.org/x/time/rate"
 )
 
@@ -25,11 +26,11 @@ const (
 	largeBufferSize  = 64 * 1024 // 64KB
 
 	// 超时时间常量
-	clientConnTimeout   = 3 * time.Second   // 客户端连接超时
-	proxyRespTimeout    = 10 * time.Second  // 代理响应超时
-	backendServTimeout  = 8 * time.Second   // 后端服务超时
+	clientConnTimeout   = 5 * time.Second   // 客户端连接超时
+	proxyRespTimeout    = 30 * time.Second  // 代理响应超时
+	backendServTimeout  = 20 * time.Second  // 后端服务超时
 	idleConnTimeout     = 120 * time.Second // 空闲连接超时
-	tlsHandshakeTimeout = 5 * time.Second   // TLS握手超时
+	tlsHandshakeTimeout = 10 * time.Second  // TLS握手超时
 
 	// 限流相关常量
 	globalRateLimit   = 1000             // 全局每秒请求数限制
@@ -237,18 +238,30 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 
 	transport := &http.Transport{
 		DialContext:           dialer.DialContext,
-		MaxIdleConns:          200,
-		MaxIdleConnsPerHost:   20,
+		MaxIdleConns:          300, // 增加最大空闲连接数
+		MaxIdleConnsPerHost:   50,  // 增加每个主机的最大空闲连接数
 		IdleConnTimeout:       idleConnTimeout,
 		TLSHandshakeTimeout:   tlsHandshakeTimeout,
 		ExpectContinueTimeout: 1 * time.Second,
-		MaxConnsPerHost:       50,
+		MaxConnsPerHost:       100, // 增加每个主机的最大连接数
 		DisableKeepAlives:     false,
 		DisableCompression:    false,
 		ForceAttemptHTTP2:     true,
 		WriteBufferSize:       64 * 1024,
 		ReadBufferSize:        64 * 1024,
 		ResponseHeaderTimeout: backendServTimeout,
+		// HTTP/2 特定设置
+		MaxResponseHeaderBytes: 64 * 1024, // 增加最大响应头大小
+	}
+
+	// 设置HTTP/2传输配置
+	http2Transport, err := http2.ConfigureTransports(transport)
+	if err == nil && http2Transport != nil {
+		http2Transport.ReadIdleTimeout = 10 * time.Second // HTTP/2读取超时
+		http2Transport.PingTimeout = 5 * time.Second      // HTTP/2 ping超时
+		http2Transport.AllowHTTP = false                  // 只允许HTTPS
+		http2Transport.MaxReadFrameSize = 32 * 1024       // 增加帧大小
+		http2Transport.StrictMaxConcurrentStreams = true  // 严格遵守最大并发流
 	}
 
 	return &ProxyHandler{
