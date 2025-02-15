@@ -18,7 +18,7 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      const response = await fetch("/api/auth", {
+      const response = await fetch("/admin/api/auth", {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -34,7 +34,7 @@ export default function LoginPage() {
       localStorage.setItem("token", data.token)
       
       // 验证token
-      const verifyResponse = await fetch("/api/check-auth", {
+      const verifyResponse = await fetch("/admin/api/check-auth", {
         headers: {
           'Authorization': `Bearer ${data.token}`,
         },

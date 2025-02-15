@@ -25,7 +25,7 @@ export default function ConfigPage() {
         return
       }
 
-      const response = await fetch("/api/config/get", {
+      const response = await fetch("/admin/api/config/get", {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
@@ -68,7 +68,7 @@ export default function ConfigPage() {
         return
       }
 
-      const response = await fetch("/api/config/save", {
+      const response = await fetch("/admin/api/config/save", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

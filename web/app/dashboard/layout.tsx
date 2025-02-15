@@ -46,7 +46,7 @@ export default function DashboardLayout({
     }
 
     // 验证 token 有效性
-    fetch("/api/check-auth").catch(() => {
+    fetch("/admin/api/check-auth").catch(() => {
       localStorage.removeItem("token")
       router.push("/login")
     })

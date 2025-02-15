@@ -12,7 +12,7 @@ export function Nav() {
 
   const handleLogout = async () => {
     try {
-      const response = await fetch("/api/logout", {
+      const response = await fetch("/admin/api/logout", {
         method: "POST",
       })
 
