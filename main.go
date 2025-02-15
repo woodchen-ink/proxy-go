@@ -40,6 +40,7 @@ func main() {
 	// 创建代理处理器
 	mirrorHandler := handler.NewMirrorProxyHandler()
 	proxyHandler := handler.NewProxyHandler(cfg)
+	fixedPathCache := middleware.GetFixedPathCache()
 
 	// 创建处理器链
 	handlers := []struct {
@@ -81,11 +82,11 @@ func main() {
 					case "/admin/api/config/save":
 						proxyHandler.AuthMiddleware(handler.NewConfigHandler(cfg).ServeHTTP)(w, r)
 					case "/admin/api/cache/stats":
-						proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).GetCacheStats)(w, r)
+						proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache, fixedPathCache).GetCacheStats)(w, r)
 					case "/admin/api/cache/enable":
-						proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).SetCacheEnabled)(w, r)
+						proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache, fixedPathCache).SetCacheEnabled)(w, r)
 					case "/admin/api/cache/clear":
-						proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).ClearCache)(w, r)
+						proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache, fixedPathCache).ClearCache)(w, r)
 					default:
 						http.NotFound(w, r)
 					}

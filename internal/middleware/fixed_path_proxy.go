@@ -155,3 +155,8 @@ func isConnectionClosed(err error) bool {
 
 	return false
 }
+
+// GetFixedPathCache 获取固定路径缓存管理器
+func GetFixedPathCache() *cache.CacheManager {
+	return fixedPathCache
+}

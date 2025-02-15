@@ -19,6 +19,7 @@ interface CacheStats {
 interface CacheData {
   proxy: CacheStats
   mirror: CacheStats
+  fixedPath: CacheStats
 }
 
 function formatBytes(bytes: number) {
@@ -65,7 +66,7 @@ export default function CachePage() {
     return () => clearInterval(interval)
   }, [fetchStats])
 
-  const handleToggleCache = async (type: "proxy" | "mirror", enabled: boolean) => {
+  const handleToggleCache = async (type: "proxy" | "mirror" | "fixedPath", enabled: boolean) => {
     try {
       const response = await fetch("/admin/api/cache/enable", {
         method: "POST",
@@ -77,7 +78,7 @@ export default function CachePage() {
       
       toast({
         title: "成功",
-        description: `${type === "proxy" ? "代理" : "镜像"}缓存已${enabled ? "启用" : "禁用"}`,
+        description: `${type === "proxy" ? "代理" : type === "mirror" ? "镜像" : "固定路径"}缓存已${enabled ? "启用" : "禁用"}`,
       })
       
       fetchStats()
@@ -90,7 +91,7 @@ export default function CachePage() {
     }
   }
 
-  const handleClearCache = async (type: "proxy" | "mirror" | "all") => {
+  const handleClearCache = async (type: "proxy" | "mirror" | "fixedPath" | "all") => {
     try {
       const response = await fetch("/admin/api/cache/clear", {
         method: "POST",
@@ -226,6 +227,54 @@ export default function CachePage() {
               <div className="flex justify-between">
                 <dt className="text-sm font-medium text-gray-500">节省带宽</dt>
                 <dd className="text-sm text-gray-900">{formatBytes(stats?.mirror.bytes_saved ?? 0)}</dd>
+              </div>
+            </dl>
+          </CardContent>
+        </Card>
+
+        {/* 固定路径缓存 */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle>固定路径缓存</CardTitle>
+            <div className="flex items-center space-x-2">
+              <Switch
+                checked={stats?.fixedPath.enabled ?? false}
+                onCheckedChange={(checked) => handleToggleCache("fixedPath", checked)}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleClearCache("fixedPath")}
+              >
+                清理
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <dl className="space-y-2">
+              <div className="flex justify-between">
+                <dt className="text-sm font-medium text-gray-500">缓存项数量</dt>
+                <dd className="text-sm text-gray-900">{stats?.fixedPath.total_items ?? 0}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-sm font-medium text-gray-500">总大小</dt>
+                <dd className="text-sm text-gray-900">{formatBytes(stats?.fixedPath.total_size ?? 0)}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-sm font-medium text-gray-500">命中次数</dt>
+                <dd className="text-sm text-gray-900">{stats?.fixedPath.hit_count ?? 0}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-sm font-medium text-gray-500">未命中次数</dt>
+                <dd className="text-sm text-gray-900">{stats?.fixedPath.miss_count ?? 0}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-sm font-medium text-gray-500">命中率</dt>
+                <dd className="text-sm text-gray-900">{(stats?.fixedPath.hit_rate ?? 0).toFixed(2)}%</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-sm font-medium text-gray-500">节省带宽</dt>
+                <dd className="text-sm text-gray-900">{formatBytes(stats?.fixedPath.bytes_saved ?? 0)}</dd>
               </div>
             </dl>
           </CardContent>

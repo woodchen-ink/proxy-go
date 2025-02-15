@@ -7,14 +7,16 @@ import (
 )
 
 type CacheAdminHandler struct {
-	proxyCache  *cache.CacheManager
-	mirrorCache *cache.CacheManager
+	proxyCache     *cache.CacheManager
+	mirrorCache    *cache.CacheManager
+	fixedPathCache *cache.CacheManager
 }
 
-func NewCacheAdminHandler(proxyCache, mirrorCache *cache.CacheManager) *CacheAdminHandler {
+func NewCacheAdminHandler(proxyCache, mirrorCache, fixedPathCache *cache.CacheManager) *CacheAdminHandler {
 	return &CacheAdminHandler{
-		proxyCache:  proxyCache,
-		mirrorCache: mirrorCache,
+		proxyCache:     proxyCache,
+		mirrorCache:    mirrorCache,
+		fixedPathCache: fixedPathCache,
 	}
 }
 
@@ -26,8 +28,9 @@ func (h *CacheAdminHandler) GetCacheStats(w http.ResponseWriter, r *http.Request
 	}
 
 	stats := map[string]cache.CacheStats{
-		"proxy":  h.proxyCache.GetStats(),
-		"mirror": h.mirrorCache.GetStats(),
+		"proxy":     h.proxyCache.GetStats(),
+		"mirror":    h.mirrorCache.GetStats(),
+		"fixedPath": h.fixedPathCache.GetStats(),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -42,7 +45,7 @@ func (h *CacheAdminHandler) SetCacheEnabled(w http.ResponseWriter, r *http.Reque
 	}
 
 	var req struct {
-		Type    string `json:"type"`    // "proxy" 或 "mirror"
+		Type    string `json:"type"`    // "proxy", "mirror" 或 "fixedPath"
 		Enabled bool   `json:"enabled"` // true 或 false
 	}
 
@@ -56,6 +59,8 @@ func (h *CacheAdminHandler) SetCacheEnabled(w http.ResponseWriter, r *http.Reque
 		h.proxyCache.SetEnabled(req.Enabled)
 	case "mirror":
 		h.mirrorCache.SetEnabled(req.Enabled)
+	case "fixedPath":
+		h.fixedPathCache.SetEnabled(req.Enabled)
 	default:
 		http.Error(w, "Invalid cache type", http.StatusBadRequest)
 		return
@@ -72,7 +77,7 @@ func (h *CacheAdminHandler) ClearCache(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Type string `json:"type"` // "proxy", "mirror" 或 "all"
+		Type string `json:"type"` // "proxy", "mirror", "fixedPath" 或 "all"
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -86,10 +91,15 @@ func (h *CacheAdminHandler) ClearCache(w http.ResponseWriter, r *http.Request) {
 		err = h.proxyCache.ClearCache()
 	case "mirror":
 		err = h.mirrorCache.ClearCache()
+	case "fixedPath":
+		err = h.fixedPathCache.ClearCache()
 	case "all":
 		err = h.proxyCache.ClearCache()
 		if err == nil {
 			err = h.mirrorCache.ClearCache()
+		}
+		if err == nil {
+			err = h.fixedPathCache.ClearCache()
 		}
 	default:
 		http.Error(w, "Invalid cache type", http.StatusBadRequest)

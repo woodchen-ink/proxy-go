@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,20 +21,18 @@ type CacheKey struct {
 	URL           string
 	AcceptHeaders string
 	UserAgent     string
-	VaryHeaders   string // 存储 Vary 头部的值，格式：key1=value1&key2=value2
 }
 
 // String 实现 Stringer 接口，用于生成唯一的字符串表示
 func (k CacheKey) String() string {
-	return fmt.Sprintf("%s|%s|%s|%s", k.URL, k.AcceptHeaders, k.UserAgent, k.VaryHeaders)
+	return fmt.Sprintf("%s|%s|%s", k.URL, k.AcceptHeaders, k.UserAgent)
 }
 
 // Equal 比较两个 CacheKey 是否相等
 func (k CacheKey) Equal(other CacheKey) bool {
 	return k.URL == other.URL &&
 		k.AcceptHeaders == other.AcceptHeaders &&
-		k.UserAgent == other.UserAgent &&
-		k.VaryHeaders == other.VaryHeaders
+		k.UserAgent == other.UserAgent
 }
 
 // Hash 生成 CacheKey 的哈希值
@@ -47,19 +44,13 @@ func (k CacheKey) Hash() uint64 {
 
 // CacheItem 表示一个缓存项
 type CacheItem struct {
-	FilePath     string
-	ContentType  string
-	Size         int64
-	LastAccess   time.Time
-	Hash         string
-	ETag         string
-	LastModified time.Time
-	CacheControl string
-	VaryHeaders  []string
-	// 新增防穿透字段
-	NegativeCache bool  // 标记是否为空结果缓存
-	AccessCount   int64 // 访问计数
-	CreatedAt     time.Time
+	FilePath    string
+	ContentType string
+	Size        int64
+	LastAccess  time.Time
+	Hash        string
+	CreatedAt   time.Time
+	AccessCount int64
 }
 
 // CacheStats 缓存统计信息
@@ -124,206 +115,99 @@ func (cm *CacheManager) GenerateCacheKey(r *http.Request) CacheKey {
 		URL:           r.URL.String(),
 		AcceptHeaders: r.Header.Get("Accept"),
 		UserAgent:     r.Header.Get("User-Agent"),
-		VaryHeaders:   strings.Join(varyHeaders, "&"),
 	}
 }
 
 // Get 获取缓存项
 func (cm *CacheManager) Get(key CacheKey, r *http.Request) (*CacheItem, bool, bool) {
-	// 如果缓存被禁用，直接返回未命中
 	if !cm.enabled.Load() {
+		return nil, false, false
+	}
+
+	// 检查缓存项是否存在
+	value, ok := cm.items.Load(key)
+	if !ok {
 		cm.missCount.Add(1)
 		return nil, false, false
 	}
 
-	// 检查是否存在缓存项
-	if value, ok := cm.items.Load(key); ok {
-		item := value.(*CacheItem)
+	item := value.(*CacheItem)
 
-		// 检查文件是否存在
-		if _, err := os.Stat(item.FilePath); err != nil {
-			cm.items.Delete(key)
-			cm.missCount.Add(1)
-			return nil, false, false
-		}
-
-		// 检查是否为负缓存（防止缓存穿透）
-		if item.NegativeCache {
-			// 如果访问次数较少且是负缓存，允许重新验证
-			if item.AccessCount < 10 {
-				item.AccessCount++
-				return nil, false, false
-			}
-			// 返回空结果，但标记为命中
-			cm.hitCount.Add(1)
-			return nil, true, true
-		}
-
-		// 检查 Vary 头部
-		for _, varyHeader := range item.VaryHeaders {
-			requestValue := r.Header.Get(varyHeader)
-			varyPair := varyHeader + "=" + requestValue
-			if !strings.Contains(key.VaryHeaders, varyPair) {
-				cm.missCount.Add(1)
-				return nil, false, false
-			}
-		}
-
-		// 处理条件请求
-		ifNoneMatch := r.Header.Get("If-None-Match")
-		ifModifiedSince := r.Header.Get("If-Modified-Since")
-
-		// ETag 匹配
-		if ifNoneMatch != "" && item.ETag != "" {
-			if ifNoneMatch == item.ETag {
-				cm.hitCount.Add(1)
-				return item, true, true
-			}
-		}
-
-		// Last-Modified 匹配
-		if ifModifiedSince != "" && !item.LastModified.IsZero() {
-			if modifiedSince, err := time.Parse(time.RFC1123, ifModifiedSince); err == nil {
-				if !item.LastModified.After(modifiedSince) {
-					cm.hitCount.Add(1)
-					return item, true, true
-				}
-			}
-		}
-
-		// 检查 Cache-Control
-		if item.CacheControl != "" {
-			if cm.isCacheExpired(item) {
-				cm.items.Delete(key)
-				cm.missCount.Add(1)
-				return nil, false, false
-			}
-		}
-
-		// 更新访问统计
-		item.LastAccess = time.Now()
-		item.AccessCount++
-		cm.hitCount.Add(1)
-		cm.bytesSaved.Add(item.Size)
-		return item, true, false
+	// 验证文件是否存在
+	if _, err := os.Stat(item.FilePath); err != nil {
+		cm.items.Delete(key)
+		cm.missCount.Add(1)
+		return nil, false, false
 	}
 
-	cm.missCount.Add(1)
-	return nil, false, false
-}
-
-// isCacheExpired 检查缓存是否过期
-func (cm *CacheManager) isCacheExpired(item *CacheItem) bool {
-	if item.CacheControl == "" {
-		return false
+	// 只检查基本的缓存过期
+	if time.Since(item.CreatedAt) > cm.maxAge {
+		cm.items.Delete(key)
+		os.Remove(item.FilePath)
+		cm.missCount.Add(1)
+		return nil, false, false
 	}
 
-	// 解析 max-age
-	if strings.Contains(item.CacheControl, "max-age=") {
-		parts := strings.Split(item.CacheControl, "max-age=")
-		if len(parts) > 1 {
-			maxAge := strings.Split(parts[1], ",")[0]
-			if seconds, err := strconv.Atoi(maxAge); err == nil {
-				return time.Since(item.CreatedAt) > time.Duration(seconds)*time.Second
-			}
-		}
-	}
+	// 更新访问信息
+	item.LastAccess = time.Now()
+	atomic.AddInt64(&item.AccessCount, 1)
+	cm.hitCount.Add(1)
+	cm.bytesSaved.Add(item.Size)
 
-	return false
+	return item, true, false
 }
 
 // Put 添加缓存项
 func (cm *CacheManager) Put(key CacheKey, resp *http.Response, body []byte) (*CacheItem, error) {
-	// 检查缓存控制头
-	if !cm.shouldCache(resp) {
-		return nil, fmt.Errorf("response should not be cached")
-	}
-
-	// 生成文件名
-	hash := sha256.Sum256([]byte(fmt.Sprintf("%v-%v-%v-%v", key.URL, key.AcceptHeaders, key.UserAgent, time.Now().UnixNano())))
-	fileName := hex.EncodeToString(hash[:])
-	filePath := filepath.Join(cm.cacheDir, fileName)
-
-	// 使用更安全的文件权限
-	if err := os.WriteFile(filePath, body, 0600); err != nil {
-		return nil, fmt.Errorf("failed to write cache file: %v", err)
+	// 只检查基本的响应状态
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("response status not OK")
 	}
 
 	// 计算内容哈希
 	contentHash := sha256.Sum256(body)
+	hashStr := hex.EncodeToString(contentHash[:])
 
-	// 解析缓存控制头
-	cacheControl := resp.Header.Get("Cache-Control")
-	lastModified := resp.Header.Get("Last-Modified")
-	etag := resp.Header.Get("ETag")
-
-	var lastModifiedTime time.Time
-	if lastModified != "" {
-		if t, err := time.Parse(time.RFC1123, lastModified); err == nil {
-			lastModifiedTime = t
-		}
-	}
-
-	// 处理 Vary 头部
-	varyHeaders := strings.Split(resp.Header.Get("Vary"), ",")
-	for i, h := range varyHeaders {
-		varyHeaders[i] = strings.TrimSpace(h)
-	}
-
-	item := &CacheItem{
-		FilePath:     filePath,
-		ContentType:  resp.Header.Get("Content-Type"),
-		Size:         int64(len(body)),
-		LastAccess:   time.Now(),
-		Hash:         hex.EncodeToString(contentHash[:]),
-		ETag:         etag,
-		LastModified: lastModifiedTime,
-		CacheControl: cacheControl,
-		VaryHeaders:  varyHeaders,
-		CreatedAt:    time.Now(),
-		AccessCount:  1,
-	}
-
-	// 检查是否有相同内容的缓存
+	// 检查是否存在相同哈希的缓存项
 	var existingItem *CacheItem
 	cm.items.Range(func(k, v interface{}) bool {
-		if i := v.(*CacheItem); i.Hash == item.Hash {
-			existingItem = i
-			return false
+		if item := v.(*CacheItem); item.Hash == hashStr {
+			if _, err := os.Stat(item.FilePath); err == nil {
+				existingItem = item
+				return false
+			}
+			cm.items.Delete(k)
 		}
 		return true
 	})
 
 	if existingItem != nil {
-		// 如果找到相同内容的缓存，删除新文件，复用现有缓存
-		os.Remove(filePath)
 		cm.items.Store(key, existingItem)
-		log.Printf("[Cache] Found duplicate content for %s, reusing existing cache", key.URL)
+		log.Printf("[Cache] Reusing existing cache for %s", key.URL)
 		return existingItem, nil
 	}
 
-	// 存储新的缓存项
+	// 生成文件名并存储
+	fileName := hashStr
+	filePath := filepath.Join(cm.cacheDir, fileName)
+
+	if err := os.WriteFile(filePath, body, 0600); err != nil {
+		return nil, fmt.Errorf("failed to write cache file: %v", err)
+	}
+
+	item := &CacheItem{
+		FilePath:    filePath,
+		ContentType: resp.Header.Get("Content-Type"),
+		Size:        int64(len(body)),
+		LastAccess:  time.Now(),
+		Hash:        hashStr,
+		CreatedAt:   time.Now(),
+		AccessCount: 1,
+	}
+
 	cm.items.Store(key, item)
 	log.Printf("[Cache] Cached %s (%s)", key.URL, formatBytes(item.Size))
 	return item, nil
-}
-
-// shouldCache 检查响应是否应该被缓存
-func (cm *CacheManager) shouldCache(resp *http.Response) bool {
-	// 检查状态码
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotModified {
-		return false
-	}
-
-	// 解析 Cache-Control 头
-	cacheControl := resp.Header.Get("Cache-Control")
-	if strings.Contains(cacheControl, "no-store") ||
-		strings.Contains(cacheControl, "no-cache") ||
-		strings.Contains(cacheControl, "private") {
-		return false
-	}
-
-	return true
 }
 
 // cleanup 定期清理过期的缓存项
