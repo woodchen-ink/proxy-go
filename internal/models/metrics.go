@@ -11,6 +11,16 @@ type PathStats struct {
 	LatencySum atomic.Int64
 }
 
+// PathMetrics 路径指标
+type PathMetrics struct {
+	Path             string `json:"path"`
+	RequestCount     int64  `json:"request_count"`
+	ErrorCount       int64  `json:"error_count"`
+	TotalLatency     int64  `json:"total_latency"`
+	BytesTransferred int64  `json:"bytes_transferred"`
+	AvgLatency       string `json:"avg_latency"`
+}
+
 type HistoricalMetrics struct {
 	Timestamp     string  `json:"timestamp"`
 	TotalRequests int64   `json:"total_requests"`

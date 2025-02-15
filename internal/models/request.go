@@ -15,16 +15,6 @@ type RequestLog struct {
 	ClientIP  string    `json:"ClientIP"`
 }
 
-// PathMetrics 路径指标
-type PathMetrics struct {
-	Path             string `json:"path"`
-	RequestCount     int64  `json:"request_count"`
-	ErrorCount       int64  `json:"error_count"`
-	TotalLatency     int64  `json:"-"`
-	AvgLatency       string `json:"avg_latency"`
-	BytesTransferred int64  `json:"bytes_transferred"`
-}
-
 // RequestQueue 请求队列
 type RequestQueue struct {
 	sync.RWMutex

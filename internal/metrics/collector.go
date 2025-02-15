@@ -127,10 +127,19 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 		}
 	}
 
+	// 更新状态码统计
+	statusKey := fmt.Sprintf("%d", status)
+	if counter, ok := c.statusCodeStats.Load(statusKey); ok {
+		atomic.AddInt64(counter.(*int64), 1)
+	} else {
+		var count int64 = 1
+		c.statusCodeStats.Store(statusKey, &count)
+	}
+
 	// 更新路径统计
 	c.pathStatsMutex.Lock()
 	if value, ok := c.pathStats.Load(path); ok {
-		stat := value.(models.PathMetrics)
+		stat := value.(*models.PathMetrics)
 		atomic.AddInt64(&stat.RequestCount, 1)
 		if status >= 400 {
 			atomic.AddInt64(&stat.ErrorCount, 1)
@@ -303,7 +312,7 @@ func (c *Collector) validateLoadedData() error {
 	// 验证路径统计
 	var totalPathRequests int64
 	c.pathStats.Range(func(_, value interface{}) bool {
-		stats := value.(models.PathMetrics)
+		stats := value.(*models.PathMetrics)
 		if stats.RequestCount < 0 || stats.ErrorCount < 0 {
 			return false
 		}
