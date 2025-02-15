@@ -51,6 +51,9 @@ func FixedPathProxyMiddleware(configs []config.FixedPathConfig) func(http.Handle
 						if item, hit, notModified := fixedPathCache.Get(cacheKey, r); hit {
 							// 从缓存提供响应
 							w.Header().Set("Content-Type", item.ContentType)
+							if item.ContentEncoding != "" {
+								w.Header().Set("Content-Encoding", item.ContentEncoding)
+							}
 							w.Header().Set("Proxy-Go-Cache", "HIT")
 							if notModified {
 								w.WriteHeader(http.StatusNotModified)

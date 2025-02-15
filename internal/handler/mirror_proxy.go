@@ -122,6 +122,9 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if item, hit, notModified := h.Cache.Get(cacheKey, r); hit {
 			// 从缓存提供响应
 			w.Header().Set("Content-Type", item.ContentType)
+			if item.ContentEncoding != "" {
+				w.Header().Set("Content-Encoding", item.ContentEncoding)
+			}
 			w.Header().Set("Proxy-Go-Cache", "HIT")
 			if notModified {
 				w.WriteHeader(http.StatusNotModified)

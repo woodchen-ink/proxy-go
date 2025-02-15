@@ -44,13 +44,14 @@ func (k CacheKey) Hash() uint64 {
 
 // CacheItem 表示一个缓存项
 type CacheItem struct {
-	FilePath    string
-	ContentType string
-	Size        int64
-	LastAccess  time.Time
-	Hash        string
-	CreatedAt   time.Time
-	AccessCount int64
+	FilePath        string
+	ContentType     string
+	ContentEncoding string
+	Size            int64
+	LastAccess      time.Time
+	Hash            string
+	CreatedAt       time.Time
+	AccessCount     int64
 }
 
 // CacheStats 缓存统计信息
@@ -196,13 +197,14 @@ func (cm *CacheManager) Put(key CacheKey, resp *http.Response, body []byte) (*Ca
 	}
 
 	item := &CacheItem{
-		FilePath:    filePath,
-		ContentType: resp.Header.Get("Content-Type"),
-		Size:        int64(len(body)),
-		LastAccess:  time.Now(),
-		Hash:        hashStr,
-		CreatedAt:   time.Now(),
-		AccessCount: 1,
+		FilePath:        filePath,
+		ContentType:     resp.Header.Get("Content-Type"),
+		ContentEncoding: resp.Header.Get("Content-Encoding"),
+		Size:            int64(len(body)),
+		LastAccess:      time.Now(),
+		Hash:            hashStr,
+		CreatedAt:       time.Now(),
+		AccessCount:     1,
 	}
 
 	cm.items.Store(key, item)
@@ -391,13 +393,14 @@ func (cm *CacheManager) Commit(key CacheKey, tempPath string, resp *http.Respons
 
 	// 创建缓存项
 	item := &CacheItem{
-		FilePath:    filePath,
-		ContentType: resp.Header.Get("Content-Type"),
-		Size:        size,
-		LastAccess:  time.Now(),
-		Hash:        hashStr,
-		CreatedAt:   time.Now(),
-		AccessCount: 1,
+		FilePath:        filePath,
+		ContentType:     resp.Header.Get("Content-Type"),
+		ContentEncoding: resp.Header.Get("Content-Encoding"),
+		Size:            size,
+		LastAccess:      time.Now(),
+		Hash:            hashStr,
+		CreatedAt:       time.Now(),
+		AccessCount:     1,
 	}
 
 	cm.items.Store(key, item)
