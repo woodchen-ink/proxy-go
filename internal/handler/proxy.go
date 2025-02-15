@@ -237,34 +237,33 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 	}
 
 	transport := &http.Transport{
-		DialContext:           dialer.DialContext,
-		MaxIdleConns:          300, // 增加最大空闲连接数
-		MaxIdleConnsPerHost:   50,  // 增加每个主机的最大空闲连接数
-		IdleConnTimeout:       idleConnTimeout,
-		TLSHandshakeTimeout:   tlsHandshakeTimeout,
-		ExpectContinueTimeout: 1 * time.Second,
-		MaxConnsPerHost:       100, // 增加每个主机的最大连接数
-		DisableKeepAlives:     false,
-		DisableCompression:    false,
-		ForceAttemptHTTP2:     true,
-		WriteBufferSize:       64 * 1024,
-		ReadBufferSize:        64 * 1024,
-		ResponseHeaderTimeout: backendServTimeout,
-		// HTTP/2 特定设置
-		MaxResponseHeaderBytes: 64 * 1024, // 增加最大响应头大小
+		DialContext:            dialer.DialContext,
+		MaxIdleConns:           300,
+		MaxIdleConnsPerHost:    50,
+		IdleConnTimeout:        idleConnTimeout,
+		TLSHandshakeTimeout:    tlsHandshakeTimeout,
+		ExpectContinueTimeout:  1 * time.Second,
+		MaxConnsPerHost:        100,
+		DisableKeepAlives:      false,
+		DisableCompression:     false,
+		ForceAttemptHTTP2:      true,
+		WriteBufferSize:        64 * 1024,
+		ReadBufferSize:         64 * 1024,
+		ResponseHeaderTimeout:  backendServTimeout,
+		MaxResponseHeaderBytes: 64 * 1024,
 	}
 
 	// 设置HTTP/2传输配置
 	http2Transport, err := http2.ConfigureTransports(transport)
 	if err == nil && http2Transport != nil {
-		http2Transport.ReadIdleTimeout = 10 * time.Second // HTTP/2读取超时
-		http2Transport.PingTimeout = 5 * time.Second      // HTTP/2 ping超时
-		http2Transport.AllowHTTP = false                  // 只允许HTTPS
-		http2Transport.MaxReadFrameSize = 32 * 1024       // 增加帧大小
-		http2Transport.StrictMaxConcurrentStreams = true  // 严格遵守最大并发流
+		http2Transport.ReadIdleTimeout = 10 * time.Second
+		http2Transport.PingTimeout = 5 * time.Second
+		http2Transport.AllowHTTP = false
+		http2Transport.MaxReadFrameSize = 32 * 1024
+		http2Transport.StrictMaxConcurrentStreams = true
 	}
 
-	return &ProxyHandler{
+	handler := &ProxyHandler{
 		pathMap: cfg.MAP,
 		client: &http.Client{
 			Transport: transport,
@@ -292,6 +291,15 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 			}
 		},
 	}
+
+	// 注册配置更新回调
+	config.RegisterUpdateCallback(func(newCfg *config.Config) {
+		handler.pathMap = newCfg.MAP
+		handler.config = newCfg
+		log.Printf("[Config] 配置已更新并生效")
+	})
+
+	return handler
 }
 
 // SetErrorHandler 允许自定义错误处理函数

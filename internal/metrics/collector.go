@@ -56,14 +56,6 @@ func InitCollector(config *config.Config) error {
 	// 初始化监控器
 	globalCollector.monitor = monitor.NewMonitor(globalCollector)
 
-	// 如果配置了飞书webhook，则启用飞书告警
-	if config.Metrics.FeishuWebhook != "" {
-		globalCollector.monitor.AddHandler(
-			monitor.NewFeishuHandler(config.Metrics.FeishuWebhook),
-		)
-		log.Printf("Feishu alert enabled")
-	}
-
 	// 初始化对象池
 	globalCollector.statsPool = sync.Pool{
 		New: func() interface{} {

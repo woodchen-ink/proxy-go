@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -13,7 +14,6 @@ import (
 	"proxy-go/internal/middleware"
 	"strings"
 	"syscall"
-	"text/template"
 )
 
 func main() {
@@ -22,15 +22,6 @@ func main() {
 	if err != nil {
 		log.Fatal("Error loading config:", err)
 	}
-
-	// 加载模板
-	tmpl := template.New("layout.html")
-	tmpl = template.Must(tmpl.ParseFiles(
-		"/app/web/templates/admin/layout.html",
-		"/app/web/templates/admin/login.html",
-		"/app/web/templates/admin/metrics.html",
-		"/app/web/templates/admin/config.html",
-	))
 
 	// 更新常量配置
 	constants.UpdateFromConfig(cfg)
@@ -61,58 +52,53 @@ func main() {
 				return strings.HasPrefix(r.URL.Path, "/admin/")
 			},
 			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				log.Printf("[Debug] 处理管理路由: %s", r.URL.Path)
-
-				// 处理静态文件
-				if strings.HasPrefix(r.URL.Path, "/admin/static/") {
-					log.Printf("[Debug] 处理静态文件: %s", r.URL.Path)
-					http.StripPrefix("/admin/static/", http.FileServer(http.Dir("/app/web/static"))).ServeHTTP(w, r)
+				// API请求处理
+				if strings.HasPrefix(r.URL.Path, "/admin/api/") {
+					switch r.URL.Path {
+					case "/admin/api/auth":
+						if r.Method == http.MethodPost {
+							proxyHandler.AuthHandler(w, r)
+						} else {
+							http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+						}
+					case "/admin/api/check-auth":
+						proxyHandler.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+							w.WriteHeader(http.StatusOK)
+							json.NewEncoder(w).Encode(map[string]bool{"authenticated": true})
+						}))(w, r)
+					case "/admin/api/logout":
+						if r.Method == http.MethodPost {
+							proxyHandler.LogoutHandler(w, r)
+						} else {
+							http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+						}
+					case "/admin/api/metrics":
+						proxyHandler.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+							proxyHandler.MetricsHandler(w, r)
+						}))(w, r)
+					case "/admin/api/config/get":
+						proxyHandler.AuthMiddleware(handler.NewConfigHandler(cfg).ServeHTTP)(w, r)
+					case "/admin/api/config/save":
+						proxyHandler.AuthMiddleware(handler.NewConfigHandler(cfg).ServeHTTP)(w, r)
+					default:
+						http.NotFound(w, r)
+					}
 					return
 				}
 
-				switch r.URL.Path {
-				case "/admin/login":
-					log.Printf("[Debug] 提供登录页面")
-					w.Header().Set("Content-Type", "text/html; charset=utf-8")
-					if err := tmpl.ExecuteTemplate(w, "layout.html", map[string]interface{}{
-						"Title":   "管理员登录",
-						"Content": "login.html",
-					}); err != nil {
-						log.Printf("[Error] 渲染登录页面失败: %v", err)
-						http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-					}
-				case "/admin/metrics":
-					proxyHandler.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						w.Header().Set("Content-Type", "text/html; charset=utf-8")
-						if err := tmpl.ExecuteTemplate(w, "layout.html", map[string]interface{}{
-							"Title":   "监控面板",
-							"Content": "metrics.html",
-						}); err != nil {
-							log.Printf("[Error] 渲染监控页面失败: %v", err)
-							http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-						}
-					}))(w, r)
-				case "/admin/config":
-					proxyHandler.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						w.Header().Set("Content-Type", "text/html; charset=utf-8")
-						if err := tmpl.ExecuteTemplate(w, "layout.html", map[string]interface{}{
-							"Title":   "配置管理",
-							"Content": "config.html",
-						}); err != nil {
-							log.Printf("[Error] 渲染配置页面失败: %v", err)
-							http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-						}
-					}))(w, r)
-				case "/admin/config/get":
-					proxyHandler.AuthMiddleware(handler.NewConfigHandler(cfg).ServeHTTP)(w, r)
-				case "/admin/config/save":
-					proxyHandler.AuthMiddleware(handler.NewConfigHandler(cfg).ServeHTTP)(w, r)
-				case "/admin/auth":
-					proxyHandler.AuthHandler(w, r)
-				default:
-					log.Printf("[Debug] 未找到管理路由: %s", r.URL.Path)
-					http.NotFound(w, r)
+				// 静态文件处理
+				path := r.URL.Path
+				if path == "/admin" || path == "/admin/" {
+					path = "/admin/index.html"
 				}
+
+				// 从web/out目录提供静态文件
+				filePath := "web/out" + strings.TrimPrefix(path, "/admin")
+				if _, err := os.Stat(filePath); os.IsNotExist(err) {
+					// 如果文件不存在，返回index.html（用于客户端路由）
+					filePath = "web/out/index.html"
+				}
+				http.ServeFile(w, r, filePath)
 			}),
 		},
 		// Mirror代理处理器
@@ -145,15 +131,6 @@ func main() {
 
 	// 创建主处理器
 	mainHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("[Debug] 收到请求: %s %s", r.Method, r.URL.Path)
-
-		// 处理静态文件
-		if strings.HasPrefix(r.URL.Path, "/admin/static/") {
-			log.Printf("[Debug] 处理静态文件: %s", r.URL.Path)
-			http.StripPrefix("/admin/static/", http.FileServer(http.Dir("/app/web/static"))).ServeHTTP(w, r)
-			return
-		}
-
 		// 遍历所有处理器
 		for _, h := range handlers {
 			if h.matcher(r) {

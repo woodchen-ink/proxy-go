@@ -21,3 +21,7 @@ vendor/
 .vscode/
 *.swp
 *.swo
+web/node_modules/
+web/dist/
+data/config.json
+data/config.json

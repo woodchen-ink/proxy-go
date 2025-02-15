@@ -3,8 +3,24 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
+)
+
+// Config 配置结构体
+type configImpl struct {
+	sync.RWMutex
+	Config
+	// 配置更新回调函数
+	onConfigUpdate []func(*Config)
+}
+
+var (
+	instance        *configImpl
+	once            sync.Once
+	configCallbacks []func(*Config)
+	callbackMutex   sync.RWMutex
 )
 
 type ConfigManager struct {
@@ -26,18 +42,63 @@ func (cm *ConfigManager) watchConfig() {
 	}
 }
 
+// Load 加载配置
 func Load(path string) (*Config, error) {
+	var err error
+	once.Do(func() {
+		instance = &configImpl{}
+		err = instance.reload(path)
+	})
+	return &instance.Config, err
+}
+
+// RegisterUpdateCallback 注册配置更新回调函数
+func RegisterUpdateCallback(callback func(*Config)) {
+	callbackMutex.Lock()
+	defer callbackMutex.Unlock()
+	configCallbacks = append(configCallbacks, callback)
+}
+
+// TriggerCallbacks 触发所有回调
+func TriggerCallbacks(cfg *Config) {
+	callbackMutex.RLock()
+	defer callbackMutex.RUnlock()
+	for _, callback := range configCallbacks {
+		callback(cfg)
+	}
+}
+
+// Update 更新配置并触发回调
+func (c *configImpl) Update(newConfig *Config) {
+	c.Lock()
+	defer c.Unlock()
+
+	// 更新配置
+	c.MAP = newConfig.MAP
+	c.Compression = newConfig.Compression
+	c.FixedPaths = newConfig.FixedPaths
+	c.Metrics = newConfig.Metrics
+
+	// 触发回调
+	for _, callback := range c.onConfigUpdate {
+		callback(newConfig)
+	}
+}
+
+// reload 重新加载配置文件
+func (c *configImpl) reload(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	var config Config
-	if err := json.Unmarshal(data, &config); err != nil {
-		return nil, err
+	var newConfig Config
+	if err := json.Unmarshal(data, &newConfig); err != nil {
+		return err
 	}
 
-	return &config, nil
+	c.Update(&newConfig)
+	return nil
 }
 
 func (cm *ConfigManager) loadConfig() error {

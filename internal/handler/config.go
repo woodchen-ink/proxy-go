@@ -24,11 +24,9 @@ func NewConfigHandler(cfg *config.Config) *ConfigHandler {
 // ServeHTTP 实现http.Handler接口
 func (h *ConfigHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
-	case "/metrics/config":
-		h.handleConfigPage(w, r)
-	case "/metrics/config/get":
+	case "/admin/api/config/get":
 		h.handleGetConfig(w, r)
-	case "/metrics/config/save":
+	case "/admin/api/config/save":
 		h.handleSaveConfig(w, r)
 	default:
 		http.NotFound(w, r)
@@ -96,6 +94,7 @@ func (h *ConfigHandler) handleSaveConfig(w http.ResponseWriter, r *http.Request)
 
 	// 更新运行时配置
 	*h.config = newConfig
+	config.TriggerCallbacks(h.config)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"message": "配置已更新并生效"}`))
