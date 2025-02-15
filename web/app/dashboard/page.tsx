@@ -4,6 +4,21 @@ import { useEffect, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useToast } from "@/components/ui/use-toast"
 import { useRouter } from "next/navigation"
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  LineChart,
+  Line,
+} from "recharts"
 
 interface Metrics {
   uptime: string
@@ -30,7 +45,23 @@ interface Metrics {
     BytesSent: number
     ClientIP: string
   }>
+  latency_stats: {
+    min: string
+    max: string
+    distribution: Record<string, number>
+  }
+  error_stats: {
+    client_errors: number
+    server_errors: number
+    types: Record<string, number>
+  }
+  bandwidth_history: Record<string, string>
+  current_bandwidth: string
+  total_bytes: number
 }
+
+// 颜色常量
+const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8']
 
 export default function DashboardPage() {
   const [metrics, setMetrics] = useState<Metrics | null>(null)
@@ -251,8 +282,10 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {(metrics.recent_requests || []).map((req, index) => (
-                  <tr key={index} className="border-b">
+                {(metrics.recent_requests || [])
+                  .slice(0, 20)  // 只显示最近20条记录
+                  .map((req, index) => (
+                  <tr key={index} className="border-b hover:bg-gray-50">
                     <td className="p-2">{formatDate(req.Time)}</td>
                     <td className="p-2 max-w-xs truncate">{req.Path}</td>
                     <td className="p-2">
@@ -271,6 +304,144 @@ export default function DashboardPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>延迟统计</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-gray-500">最小响应时间</div>
+              <div className="text-lg font-semibold">{metrics?.latency_stats?.min}</div>
+            </div>
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-gray-500">最大响应时间</div>
+              <div className="text-lg font-semibold">{metrics?.latency_stats?.max}</div>
+            </div>
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-gray-500">平均响应时间</div>
+              <div className="text-lg font-semibold">{metrics?.avg_response_time}</div>
+            </div>
+          </div>
+          <div className="h-80 mt-6">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={Object.entries(metrics?.latency_stats?.distribution || {}).map(([name, value]) => ({
+                  name,
+                  value,
+                }))}
+                margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" />
+                <YAxis />
+                <Tooltip />
+                <Legend />
+                <Bar dataKey="value" name="请求数" fill="#8884d8" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>错误分布</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={[
+                      { name: '客户端错误', value: metrics?.error_stats?.client_errors || 0 },
+                      { name: '服务器错误', value: metrics?.error_stats?.server_errors || 0 },
+                    ]}
+                    cx="50%"
+                    cy="50%"
+                    labelLine={false}
+                    label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                    outerRadius={80}
+                    fill="#8884d8"
+                    dataKey="value"
+                  >
+                    {[0, 1].map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>错误类型统计</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={Object.entries(metrics?.error_stats?.types || {}).map(([name, value]) => ({
+                    name,
+                    value,
+                  }))}
+                  layout="vertical"
+                  margin={{ top: 5, right: 30, left: 100, bottom: 5 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis type="number" />
+                  <YAxis type="category" dataKey="name" />
+                  <Tooltip />
+                  <Bar dataKey="value" fill="#FF8042" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>带宽统计</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-gray-500">当前带宽</div>
+              <div className="text-lg font-semibold">{metrics?.current_bandwidth}</div>
+            </div>
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-gray-500">总传输数据</div>
+              <div className="text-lg font-semibold">{formatBytes(metrics?.total_bytes || 0)}</div>
+            </div>
+          </div>
+          <div className="h-80">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart
+                data={Object.entries(metrics?.bandwidth_history || {}).map(([time, value]) => ({
+                  time,
+                  value: parseFloat(value.split(' ')[0]),
+                  unit: value.split(' ')[1],
+                }))}
+                margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="time" />
+                <YAxis />
+                <Tooltip formatter={(value, name, props) => [`${value} ${props.payload.unit}`, '带宽']} />
+                <Legend />
+                <Line type="monotone" dataKey="value" name="带宽" stroke="#8884d8" />
+              </LineChart>
+            </ResponsiveContainer>
           </div>
         </CardContent>
       </Card>

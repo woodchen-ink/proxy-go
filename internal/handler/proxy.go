@@ -21,76 +21,40 @@ import (
 )
 
 const (
-	smallBufferSize  = 4 * 1024  // 4KB
-	mediumBufferSize = 32 * 1024 // 32KB
-	largeBufferSize  = 64 * 1024 // 64KB
+	// 缓冲区大小
+	defaultBufferSize = 32 * 1024 // 32KB
 
 	// 超时时间常量
-	clientConnTimeout   = 5 * time.Second   // 客户端连接超时
-	proxyRespTimeout    = 30 * time.Second  // 代理响应超时
-	backendServTimeout  = 20 * time.Second  // 后端服务超时
-	idleConnTimeout     = 120 * time.Second // 空闲连接超时
-	tlsHandshakeTimeout = 10 * time.Second  // TLS握手超时
+	clientConnTimeout   = 10 * time.Second
+	proxyRespTimeout    = 60 * time.Second
+	backendServTimeout  = 40 * time.Second
+	idleConnTimeout     = 120 * time.Second
+	tlsHandshakeTimeout = 10 * time.Second
 
 	// 限流相关常量
-	globalRateLimit   = 1000             // 全局每秒请求数限制
-	globalBurstLimit  = 200              // 全局突发请求数限制
-	perHostRateLimit  = 100              // 每个host每秒请求数限制
-	perHostBurstLimit = 50               // 每个host突发请求数限制
-	perIPRateLimit    = 20               // 每个IP每秒请求数限制
-	perIPBurstLimit   = 10               // 每个IP突发请求数限制
-	cleanupInterval   = 10 * time.Minute // 清理过期限流器的间隔
+	globalRateLimit   = 2000
+	globalBurstLimit  = 500
+	perHostRateLimit  = 200
+	perHostBurstLimit = 100
+	perIPRateLimit    = 50
+	perIPBurstLimit   = 20
+	cleanupInterval   = 10 * time.Minute
 )
 
-// 定义不同大小的缓冲池
-var (
-	smallBufferPool = sync.Pool{
-		New: func() interface{} {
-			return bytes.NewBuffer(make([]byte, smallBufferSize))
-		},
-	}
+// 统一的缓冲池
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		return bytes.NewBuffer(make([]byte, defaultBufferSize))
+	},
+}
 
-	mediumBufferPool = sync.Pool{
-		New: func() interface{} {
-			return bytes.NewBuffer(make([]byte, mediumBufferSize))
-		},
-	}
-
-	largeBufferPool = sync.Pool{
-		New: func() interface{} {
-			return bytes.NewBuffer(make([]byte, largeBufferSize))
-		},
-	}
-
-	// 用于大文件传输的字节切片池
-	byteSlicePool = sync.Pool{
-		New: func() interface{} {
-			b := make([]byte, largeBufferSize)
-			return &b
-		},
-	}
-)
-
-// getBuffer 根据大小选择合适的缓冲池
-func getBuffer(size int64) (*bytes.Buffer, func()) {
-	var buf *bytes.Buffer
-	var pool *sync.Pool
-
-	switch {
-	case size <= smallBufferSize:
-		pool = &smallBufferPool
-	case size <= mediumBufferSize:
-		pool = &mediumBufferPool
-	default:
-		pool = &largeBufferPool
-	}
-
-	buf = pool.Get().(*bytes.Buffer)
-	buf.Reset() // 重置缓冲区
-
+// getBuffer 获取缓冲区
+func getBuffer() (*bytes.Buffer, func()) {
+	buf := bufferPool.Get().(*bytes.Buffer)
+	buf.Reset()
 	return buf, func() {
 		if buf != nil {
-			pool.Put(buf)
+			bufferPool.Put(buf)
 		}
 	}
 }
@@ -238,12 +202,12 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 
 	transport := &http.Transport{
 		DialContext:            dialer.DialContext,
-		MaxIdleConns:           300,
-		MaxIdleConnsPerHost:    50,
+		MaxIdleConns:           1000, // 增加最大空闲连接数
+		MaxIdleConnsPerHost:    100,  // 增加每个主机的最大空闲连接数
 		IdleConnTimeout:        idleConnTimeout,
 		TLSHandshakeTimeout:    tlsHandshakeTimeout,
 		ExpectContinueTimeout:  1 * time.Second,
-		MaxConnsPerHost:        100,
+		MaxConnsPerHost:        200, // 增加每个主机的最大连接数
 		DisableKeepAlives:      false,
 		DisableCompression:     false,
 		ForceAttemptHTTP2:      true,
@@ -309,16 +273,47 @@ func (h *ProxyHandler) SetErrorHandler(handler ErrorHandler) {
 	}
 }
 
-// copyResponse 使用零拷贝方式传输数据
+// copyResponse 使用缓冲方式传输数据
 func copyResponse(dst io.Writer, src io.Reader, flusher http.Flusher) (int64, error) {
-	buf := byteSlicePool.Get().(*[]byte)
-	defer byteSlicePool.Put(buf)
+	buf := bufferPool.Get().(*bytes.Buffer)
+	defer bufferPool.Put(buf)
+	buf.Reset()
 
-	written, err := io.CopyBuffer(dst, src, *buf)
-	if err == nil && flusher != nil {
+	var written int64
+	for {
+		// 清空缓冲区
+		buf.Reset()
+
+		// 读取数据到缓冲区
+		_, er := io.CopyN(buf, src, defaultBufferSize)
+		if er != nil && er != io.EOF {
+			return written, er
+		}
+
+		// 如果有数据，写入目标
+		if buf.Len() > 0 {
+			nw, ew := dst.Write(buf.Bytes())
+			if ew != nil {
+				return written, ew
+			}
+			written += int64(nw)
+
+			// 定期刷新缓冲区
+			if flusher != nil && written%(1024*1024) == 0 { // 每1MB刷新一次
+				flusher.Flush()
+			}
+		}
+
+		if er == io.EOF {
+			break
+		}
+	}
+
+	// 最后一次刷新
+	if flusher != nil {
 		flusher.Flush()
 	}
-	return written, err
+	return written, nil
 }
 
 func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -414,11 +409,6 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 添加请求追踪标识
-	requestID := utils.GenerateRequestID()
-	proxyReq.Header.Set("X-Request-ID", requestID)
-	w.Header().Set("X-Request-ID", requestID)
-
 	// 复制并处理请求头
 	copyHeader(proxyReq.Header, r.Header)
 
@@ -492,13 +482,15 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	contentLength := resp.ContentLength
 	if contentLength > 0 && contentLength < 1<<20 { // 1MB 以下的小响应
 		// 获取合适大小的缓冲区
-		buf, putBuffer := getBuffer(contentLength)
+		buf, putBuffer := getBuffer()
 		defer putBuffer()
 
 		// 使用缓冲区读取响应
 		_, err := io.Copy(buf, resp.Body)
 		if err != nil {
-			h.errorHandler(w, r, fmt.Errorf("error reading response: %v", err))
+			if !isConnectionClosed(err) {
+				h.errorHandler(w, r, fmt.Errorf("error reading response: %v", err))
+			}
 			return
 		}
 
@@ -528,17 +520,6 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// 记录访问日志
-		log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | %-50s -> %s",
-			r.Method,                       // HTTP方法，左对齐占6位
-			resp.StatusCode,                // 状态码，占3位
-			time.Since(start),              // 处理时间，占12位
-			utils.GetClientIP(r),           // IP地址，占15位
-			utils.FormatBytes(bytesCopied), // 传输大小，占10位
-			utils.GetRequestSource(r),      // 请求来源
-			r.URL.Path,                     // 请求路径，左对齐占50位
-			targetURL,                      // 目标URL
-		)
-
 		collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(start), bytesCopied, utils.GetClientIP(r), r)
 	}
 }
