@@ -4,6 +4,7 @@ ARG TARGETARCH
 WORKDIR /app
 
 COPY proxy-go.${TARGETARCH} /app/proxy-go
+COPY web /app/web
 
 RUN mkdir -p /app/data && \
     chmod +x /app/proxy-go && \

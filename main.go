@@ -52,10 +52,18 @@ func main() {
 			},
 			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[Debug] 处理管理路由: %s", r.URL.Path)
+
+				// 处理静态文件
+				if strings.HasPrefix(r.URL.Path, "/admin/static/") {
+					log.Printf("[Debug] 处理静态文件: %s", r.URL.Path)
+					http.StripPrefix("/admin/static/", http.FileServer(http.Dir("/app/web/static"))).ServeHTTP(w, r)
+					return
+				}
+
 				switch r.URL.Path {
 				case "/admin/login":
-					log.Printf("[Debug] 提供登录页面")
-					http.ServeFile(w, r, "web/templates/admin/login.html")
+					log.Printf("[Debug] 提供登录页面，文件路径: /app/web/templates/admin/login.html")
+					http.ServeFile(w, r, "/app/web/templates/admin/login.html")
 				case "/admin/metrics":
 					proxyHandler.AuthMiddleware(proxyHandler.MetricsHandler)(w, r)
 				case "/admin/config":
@@ -67,6 +75,7 @@ func main() {
 				case "/admin/auth":
 					proxyHandler.AuthHandler(w, r)
 				default:
+					log.Printf("[Debug] 未找到管理路由: %s", r.URL.Path)
 					http.NotFound(w, r)
 				}
 			}),
@@ -106,7 +115,7 @@ func main() {
 		// 处理静态文件
 		if strings.HasPrefix(r.URL.Path, "/web/static/") {
 			log.Printf("[Debug] 处理静态文件: %s", r.URL.Path)
-			http.StripPrefix("/web/static/", http.FileServer(http.Dir("web/static"))).ServeHTTP(w, r)
+			http.StripPrefix("/web/static/", http.FileServer(http.Dir("/app/web/static"))).ServeHTTP(w, r)
 			return
 		}
 
