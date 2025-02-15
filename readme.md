@@ -4,6 +4,15 @@ A 'simple' reverse proxy server written in Go.
 
 使用方法: https://q58.club/t/topic/165?u=wood
 
+## 图片
+
+### 仪表统计盘
+![image](https://github.com/user-attachments/assets/40083aea-8fc4-4bb3-93c8-736ff410883d)
+
+### 配置可在线修改并热重载
+![image](https://github.com/user-attachments/assets/53517eaf-2bbd-462c-b1ff-5f8f85764436)
+
+
 ## 说明
 
 1. 支持gzip和brotli压缩, 在`config.json`中配置
@@ -12,7 +21,7 @@ A 'simple' reverse proxy server written in Go.
 4. 大文件使用流式传输, 小文件直接提供
 5. 可以按照文件后缀名代理不同站点, 方便图片处理等
 6. 适配Cloudflare Images的图片自适应功能, 透传`Accept`头, 支持`format=auto`
-7. 支持metrics监控, 在`/metrics/ui`查看, 具体可以看帖子里写的用法
+7. 支持网页端监控和管理
 
 
 
