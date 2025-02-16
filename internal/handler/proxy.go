@@ -117,7 +117,7 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 		auth:      newAuthManager(),
 		Cache:     cacheManager,
 		errorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			log.Printf("[Error] %s %s -> %v", r.Method, r.URL.Path, err)
+			log.Printf("[Error] %s %s -> %v from %s", r.Method, r.URL.Path, err, utils.GetRequestSource(r))
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte("Internal Server Error"))
 		},
@@ -137,7 +137,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 添加 panic 恢复
 	defer func() {
 		if err := recover(); err != nil {
-			log.Printf("[Panic] %s %s -> %v", r.Method, r.URL.Path, err)
+			log.Printf("[Panic] %s %s -> %v from %s", r.Method, r.URL.Path, err, utils.GetRequestSource(r))
 			h.errorHandler(w, r, fmt.Errorf("panic: %v", err))
 		}
 	}()
@@ -157,8 +157,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/" {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "Welcome to CZL proxy.")
-		log.Printf("[%s] %s %s -> %d (root path) [%v]",
-			utils.GetClientIP(r), r.Method, r.URL.Path, http.StatusOK, time.Since(start))
+		log.Printf("[Proxy] %s %s -> %d (%s) from %s", r.Method, r.URL.Path, http.StatusOK, utils.GetClientIP(r), utils.GetRequestSource(r))
 		return
 	}
 
@@ -176,8 +175,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 如果没有匹配的路径，返回 404
 	if matchedPrefix == "" {
 		http.NotFound(w, r)
-		log.Printf("[%s] %s %s -> 404 (not found) [%v]",
-			utils.GetClientIP(r), r.Method, r.URL.Path, time.Since(start))
+		log.Printf("[Proxy] %s %s -> 404 (%s) from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 		return
 	}
 
@@ -188,8 +186,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	decodedPath, err := url.QueryUnescape(targetPath)
 	if err != nil {
 		h.errorHandler(w, r, fmt.Errorf("error decoding path: %v", err))
-		log.Printf("[%s] %s %s -> 500 (error decoding path: %v) [%v]",
-			utils.GetClientIP(r), r.Method, r.URL.Path, err, time.Since(start))
+		log.Printf("[Proxy] ERR %s %s -> 500 (%s) decode error from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 		return
 	}
 
@@ -208,8 +205,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	parsedURL, err := url.Parse(targetURL)
 	if err != nil {
 		h.errorHandler(w, r, fmt.Errorf("error parsing URL: %v", err))
-		log.Printf("[%s] %s %s -> 500 (error parsing URL: %v) [%v]",
-			utils.GetClientIP(r), r.Method, r.URL.Path, err, time.Since(start))
+		log.Printf("[Proxy] ERR %s %s -> 500 (%s) parse error from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 		return
 	}
 
@@ -217,6 +213,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxyReq, err := http.NewRequestWithContext(ctx, r.Method, targetURL, r.Body)
 	if err != nil {
 		h.errorHandler(w, r, fmt.Errorf("error creating request: %v", err))
+		log.Printf("[Proxy] ERR %s %s -> 500 (%s) create request error from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 		return
 	}
 
@@ -293,12 +290,10 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			h.errorHandler(w, r, fmt.Errorf("request timeout after %v", proxyRespTimeout))
-			log.Printf("[Timeout] %s %s -> timeout after %v",
-				r.Method, r.URL.Path, proxyRespTimeout)
+			log.Printf("[Proxy] ERR %s %s -> 408 (%s) timeout from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 		} else {
 			h.errorHandler(w, r, fmt.Errorf("proxy error: %v", err))
-			log.Printf("[%s] %s %s -> 502 (proxy error: %v) [%v]",
-				utils.GetClientIP(r), r.Method, r.URL.Path, err, time.Since(start))
+			log.Printf("[Proxy] ERR %s %s -> 502 (%s) proxy error from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 		}
 		return
 	}
@@ -325,14 +320,14 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			written, err = io.Copy(w, resp.Body)
 			if err != nil && !isConnectionClosed(err) {
-				log.Printf("[%s] Error writing response: %v", utils.GetClientIP(r), err)
+				log.Printf("[Proxy] ERR %s %s -> write error (%s) from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 				return
 			}
 		}
 	} else {
 		written, err = io.Copy(w, resp.Body)
 		if err != nil && !isConnectionClosed(err) {
-			log.Printf("[%s] Error writing response: %v", utils.GetClientIP(r), err)
+			log.Printf("[Proxy] ERR %s %s -> write error (%s) from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 			return
 		}
 	}

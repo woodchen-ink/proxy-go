@@ -323,13 +323,13 @@ func (c *Collector) SaveMetrics(stats map[string]interface{}) error {
 // LoadRecentStats 简化为只进行数据验证
 func (c *Collector) LoadRecentStats() error {
 	start := time.Now()
-	log.Printf("Starting to validate stats...")
+	log.Printf("[Metrics] Loading stats...")
 
 	if err := c.validateLoadedData(); err != nil {
 		return fmt.Errorf("data validation failed: %v", err)
 	}
 
-	log.Printf("Successfully validated stats in %v", time.Since(start))
+	log.Printf("[Metrics] Loaded stats in %v", time.Since(start))
 	return nil
 }
 

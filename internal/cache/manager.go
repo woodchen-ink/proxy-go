@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"proxy-go/internal/utils"
 	"sort"
 	"strings"
 	"sync"
@@ -198,7 +199,7 @@ func (cm *CacheManager) Put(key CacheKey, resp *http.Response, body []byte) (*Ca
 
 	if existingItem != nil {
 		cm.items.Store(key, existingItem)
-		log.Printf("[Cache] Reusing existing cache for %s", key.URL)
+		log.Printf("[Cache] HIT %s %s (%s) from %s", resp.Request.Method, key.URL, formatBytes(existingItem.Size), utils.GetRequestSource(resp.Request))
 		return existingItem, nil
 	}
 
@@ -222,7 +223,7 @@ func (cm *CacheManager) Put(key CacheKey, resp *http.Response, body []byte) (*Ca
 	}
 
 	cm.items.Store(key, item)
-	log.Printf("[Cache] Cached %s (%s)", key.URL, formatBytes(item.Size))
+	log.Printf("[Cache] NEW %s %s (%s) from %s", resp.Request.Method, key.URL, formatBytes(item.Size), utils.GetRequestSource(resp.Request))
 	return item, nil
 }
 
@@ -278,7 +279,7 @@ func (cm *CacheManager) cleanup() {
 			cacheItem := item.(*CacheItem)
 			os.Remove(cacheItem.FilePath)
 			cm.items.Delete(key)
-			log.Printf("[Cache] Removed expired item: %s", key.URL)
+			log.Printf("[Cache] DEL %s (expired)", key.URL)
 		}
 	}
 }
@@ -365,7 +366,7 @@ func (cm *CacheManager) ClearCache() error {
 		}
 		filePath := filepath.Join(cm.cacheDir, entry.Name())
 		if err := os.Remove(filePath); err != nil {
-			log.Printf("[Cache] Failed to remove file %s: %v", filePath, err)
+			log.Printf("[Cache] ERR Failed to remove file: %s", entry.Name())
 		}
 	}
 
@@ -394,7 +395,7 @@ func (cm *CacheManager) cleanStaleFiles() error {
 		// 清理临时文件
 		if strings.HasPrefix(entry.Name(), "temp-") {
 			if err := os.Remove(filePath); err != nil {
-				log.Printf("[Cache] Failed to remove temp file %s: %v", filePath, err)
+				log.Printf("[Cache] ERR Failed to remove temp file: %s", entry.Name())
 			}
 			continue
 		}
@@ -413,7 +414,7 @@ func (cm *CacheManager) cleanStaleFiles() error {
 		// 如果文件不在缓存记录中，删除它
 		if !fileFound {
 			if err := os.Remove(filePath); err != nil {
-				log.Printf("[Cache] Failed to remove stale file %s: %v", filePath, err)
+				log.Printf("[Cache] ERR Failed to remove stale file: %s", entry.Name())
 			}
 		}
 	}
@@ -473,7 +474,7 @@ func (cm *CacheManager) Commit(key CacheKey, tempPath string, resp *http.Respons
 
 	cm.items.Store(key, item)
 	cm.bytesSaved.Add(size)
-	log.Printf("[Cache] Cached %s (%s)", key.URL, formatBytes(size))
+	log.Printf("[Cache] NEW %s %s (%s)", resp.Request.Method, key.URL, formatBytes(size))
 	return nil
 }
 

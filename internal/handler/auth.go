@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"proxy-go/internal/utils"
 	"strings"
 	"sync"
 	"time"
@@ -74,12 +75,15 @@ func (h *ProxyHandler) CheckAuth(token string) bool {
 func (h *ProxyHandler) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	auth := r.Header.Get("Authorization")
 	if auth == "" || !strings.HasPrefix(auth, "Bearer ") {
+		log.Printf("[Auth] ERR %s %s -> 401 (%s) no token from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	token := strings.TrimPrefix(auth, "Bearer ")
 	h.auth.tokens.Delete(token)
+
+	log.Printf("[Auth] %s %s -> 200 (%s) logout success from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
@@ -92,12 +96,14 @@ func (h *ProxyHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 		if auth == "" || !strings.HasPrefix(auth, "Bearer ") {
+			log.Printf("[Auth] ERR %s %s -> 401 (%s) no token from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 
 		token := strings.TrimPrefix(auth, "Bearer ")
 		if !h.auth.validateToken(token) {
+			log.Printf("[Auth] ERR %s %s -> 401 (%s) invalid token from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 			http.Error(w, "Invalid token", http.StatusUnauthorized)
 			return
 		}
@@ -109,29 +115,27 @@ func (h *ProxyHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 // AuthHandler 处理认证请求
 func (h *ProxyHandler) AuthHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		log.Printf("[Auth] 方法不允许: %s", r.Method)
+		log.Printf("[Auth] ERR %s %s -> 405 (%s) method not allowed", r.Method, r.URL.Path, utils.GetClientIP(r))
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	// 解析表单数据
 	if err := r.ParseForm(); err != nil {
-		log.Printf("[Auth] 表单解析失败: %v", err)
+		log.Printf("[Auth] ERR %s %s -> 400 (%s) form parse error", r.Method, r.URL.Path, utils.GetClientIP(r))
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
 
 	password := r.FormValue("password")
-	log.Printf("[Auth] 收到登录请求，密码长度: %d", len(password))
-
 	if password == "" {
-		log.Printf("[Auth] 密码为空")
+		log.Printf("[Auth] ERR %s %s -> 400 (%s) empty password", r.Method, r.URL.Path, utils.GetClientIP(r))
 		http.Error(w, "Password is required", http.StatusBadRequest)
 		return
 	}
 
 	if password != h.config.Metrics.Password {
-		log.Printf("[Auth] 密码错误")
+		log.Printf("[Auth] ERR %s %s -> 401 (%s) invalid password", r.Method, r.URL.Path, utils.GetClientIP(r))
 		http.Error(w, "Invalid password", http.StatusUnauthorized)
 		return
 	}
@@ -139,7 +143,7 @@ func (h *ProxyHandler) AuthHandler(w http.ResponseWriter, r *http.Request) {
 	token := h.auth.generateToken()
 	h.auth.addToken(token, time.Duration(h.config.Metrics.TokenExpiry)*time.Second)
 
-	log.Printf("[Auth] 登录成功，生成令牌")
+	log.Printf("[Auth] %s %s -> 200 (%s) login success", r.Method, r.URL.Path, utils.GetClientIP(r))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

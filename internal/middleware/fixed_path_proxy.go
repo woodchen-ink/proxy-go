@@ -68,8 +68,7 @@ func FixedPathProxyMiddleware(configs []config.FixedPathConfig) func(http.Handle
 					proxyReq, err := http.NewRequest(r.Method, targetURL, r.Body)
 					if err != nil {
 						http.Error(w, "Error creating proxy request", http.StatusInternalServerError)
-						log.Printf("[%s] %s %s -> 500 (error creating request: %v) [%v]",
-							utils.GetClientIP(r), r.Method, r.URL.Path, err, time.Since(startTime))
+						log.Printf("[Fixed] ERR %s %s -> 500 (%s) create request error from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 						return
 					}
 
@@ -91,8 +90,7 @@ func FixedPathProxyMiddleware(configs []config.FixedPathConfig) func(http.Handle
 					resp, err := client.Do(proxyReq)
 					if err != nil {
 						http.Error(w, "Error forwarding request", http.StatusBadGateway)
-						log.Printf("[%s] %s %s -> 502 (proxy error: %v) [%v]",
-							utils.GetClientIP(r), r.Method, r.URL.Path, err, time.Since(startTime))
+						log.Printf("[Fixed] ERR %s %s -> 502 (%s) proxy error from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 						return
 					}
 					defer resp.Body.Close()
@@ -126,8 +124,9 @@ func FixedPathProxyMiddleware(configs []config.FixedPathConfig) func(http.Handle
 						written, err = io.Copy(w, resp.Body)
 					}
 
+					// 写入响应错误处理
 					if err != nil && !isConnectionClosed(err) {
-						log.Printf("[%s] Error writing response: %v", utils.GetClientIP(r), err)
+						log.Printf("[Fixed] ERR %s %s -> write error (%s) from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 					}
 
 					// 记录统计信息
