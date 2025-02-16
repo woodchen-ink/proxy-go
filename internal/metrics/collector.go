@@ -110,7 +110,9 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 	now := time.Now()
 	if now.Sub(c.lastMinute) >= time.Minute {
 		currentMinute := now.Format("15:04")
-		c.bandwidthStats.Store(currentMinute, atomic.SwapInt64(&c.minuteBytes, 0))
+		counter := new(int64)
+		*counter = atomic.SwapInt64(&c.minuteBytes, 0)
+		c.bandwidthStats.Store(currentMinute, counter)
 		c.lastMinute = now
 	}
 
@@ -334,7 +336,11 @@ func (c *Collector) GetStats() map[string]interface{} {
 	// 收集错误类型统计
 	errorTypeStats := make(map[string]int64)
 	c.errorTypes.Range(func(key, value interface{}) bool {
-		errorTypeStats[key.(string)] = atomic.LoadInt64(value.(*int64))
+		if counter, ok := value.(*int64); ok {
+			errorTypeStats[key.(string)] = atomic.LoadInt64(counter)
+		} else {
+			errorTypeStats[key.(string)] = value.(int64)
+		}
 		return true
 	})
 
@@ -351,7 +357,11 @@ func (c *Collector) GetStats() map[string]interface{} {
 	}
 	for _, t := range times {
 		if bytes, ok := c.bandwidthStats.Load(t); ok {
-			bandwidthHistory[t] = utils.FormatBytes(atomic.LoadInt64(bytes.(*int64))) + "/min"
+			if counter, ok := bytes.(*int64); ok {
+				bandwidthHistory[t] = utils.FormatBytes(atomic.LoadInt64(counter)) + "/min"
+			} else {
+				bandwidthHistory[t] = utils.FormatBytes(bytes.(int64)) + "/min"
+			}
 		}
 	}
 

@@ -26,6 +26,16 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { Slider } from "@/components/ui/slider"
 import { Plus, Trash2, Edit, Save, Download, Upload } from "lucide-react"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 interface PathMapping {
   DefaultTarget: string
@@ -78,6 +88,7 @@ export default function ConfigPage() {
   })
   const [extensionMapDialogOpen, setExtensionMapDialogOpen] = useState(false)
   const [editingPath, setEditingPath] = useState<string | null>(null)
+  const [editingExtension, setEditingExtension] = useState<{ext: string, target: string} | null>(null)
   const [newExtension, setNewExtension] = useState({ ext: "", target: "" })
 
   const [editingPathData, setEditingPathData] = useState<{
@@ -86,6 +97,10 @@ export default function ConfigPage() {
     sizeThreshold: number;
     sizeUnit: 'B' | 'KB' | 'MB' | 'GB';
   } | null>(null);
+
+  const [deletingPath, setDeletingPath] = useState<string | null>(null)
+  const [deletingFixedPath, setDeletingFixedPath] = useState<FixedPath | null>(null)
+  const [deletingExtension, setDeletingExtension] = useState<{path: string, ext: string} | null>(null)
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -176,24 +191,38 @@ export default function ConfigPage() {
     }
   }
 
-  const handleEditPath = (path: string, target: PathMapping | string) => {
-    setPathDialogOpen(true)
-    if (typeof target === 'string') {
-      setEditingPathData({
-        path,
-        defaultTarget: target,
+  const handlePathDialogOpenChange = (open: boolean) => {
+    setPathDialogOpen(open)
+    if (!open) {
+      setEditingPathData(null)
+      setNewPathData({
+        path: "",
+        defaultTarget: "",
+        extensionMap: {},
         sizeThreshold: 0,
-        sizeUnit: 'MB'
+        sizeUnit: 'MB',
       })
-    } else {
-      const sizeThreshold = target.SizeThreshold || 0
-      const { value, unit } = convertBytesToUnit(sizeThreshold)
-      setEditingPathData({
-        path,
-        defaultTarget: target.DefaultTarget,
-        sizeThreshold: value,
-        sizeUnit: unit
+    }
+  }
+
+  const handleFixedPathDialogOpenChange = (open: boolean) => {
+    setFixedPathDialogOpen(open)
+    if (!open) {
+      setEditingFixedPath(null)
+      setNewFixedPath({
+        Path: "",
+        TargetHost: "",
+        TargetURL: "",
       })
+    }
+  }
+
+  const handleExtensionMapDialogOpenChange = (open: boolean) => {
+    setExtensionMapDialogOpen(open)
+    if (!open) {
+      setEditingPath(null)
+      setEditingExtension(null)
+      setNewExtension({ ext: "", target: "" })
     }
   }
 
@@ -201,10 +230,33 @@ export default function ConfigPage() {
     if (!config) return
     const data = editingPathData ? editingPathData : newPathData
     
-    if (!data.path || !data.defaultTarget) {
+    // 验证输入
+    if (!data.path.trim() || !data.defaultTarget.trim()) {
       toast({
         title: "错误",
         description: "路径和默认目标不能为空",
+        variant: "destructive",
+      })
+      return
+    }
+
+    // 验证路径格式
+    if (!data.path.startsWith('/')) {
+      toast({
+        title: "错误",
+        description: "路径必须以/开头",
+        variant: "destructive",
+      })
+      return
+    }
+
+    // 验证URL格式
+    try {
+      new URL(data.defaultTarget)
+    } catch {
+      toast({
+        title: "错误",
+        description: "默认目标URL格式不正确",
         variant: "destructive",
       })
       return
@@ -244,13 +296,27 @@ export default function ConfigPage() {
       sizeThreshold: 0,
       sizeUnit: 'MB',
     })
+
+    toast({
+      title: "成功",
+      description: "路径映射已更新",
+    })
   }
 
   const deletePath = (path: string) => {
-    if (!config) return
+    setDeletingPath(path)
+  }
+
+  const confirmDeletePath = () => {
+    if (!config || !deletingPath) return
     const newConfig = { ...config }
-    delete newConfig.MAP[path]
+    delete newConfig.MAP[deletingPath]
     setConfig(newConfig)
+    setDeletingPath(null)
+    toast({
+      title: "成功",
+      description: "路径映射已删除",
+    })
   }
 
   const updateCompression = (type: 'Gzip' | 'Brotli', field: 'Enabled' | 'Level', value: boolean | number) => {
@@ -264,18 +330,50 @@ export default function ConfigPage() {
     setConfig(newConfig)
   }
 
-  const handleExtensionMapEdit = (path: string) => {
+  const handleExtensionMapEdit = (path: string, ext?: string, target?: string) => {
     setEditingPath(path)
+    if (ext && target) {
+      setEditingExtension({ ext, target })
+      setNewExtension({ ext, target })
+    } else {
+      setEditingExtension(null)
+      setNewExtension({ ext: "", target: "" })
+    }
     setExtensionMapDialogOpen(true)
   }
 
-  const addExtensionMap = () => {
+  const addOrUpdateExtensionMap = () => {
     if (!config || !editingPath) return
     const { ext, target } = newExtension
-    if (!ext || !target) {
+    
+    // 验证输入
+    if (!ext.trim() || !target.trim()) {
       toast({
         title: "错误",
         description: "扩展名和目标不能为空",
+        variant: "destructive",
+      })
+      return
+    }
+
+    // 验证扩展名格式
+    const extensions = ext.split(',').map(e => e.trim())
+    if (extensions.some(e => !e || e.includes('.'))) {
+      toast({
+        title: "错误",
+        description: "扩展名格式不正确，不需要包含点号",
+        variant: "destructive",
+      })
+      return
+    }
+
+    // 验证URL格式
+    try {
+      new URL(target)
+    } catch {
+      toast({
+        title: "错误",
+        description: "目标URL格式不正确",
         variant: "destructive",
       })
       return
@@ -289,6 +387,13 @@ export default function ConfigPage() {
         ExtensionMap: { [ext]: target }
       }
     } else {
+      // 如果是编辑现有的扩展名映射，先删除旧的
+      if (editingExtension) {
+        const newExtMap = { ...mapping.ExtensionMap }
+        delete newExtMap[editingExtension.ext]
+        mapping.ExtensionMap = newExtMap
+      }
+      // 添加新的映射
       mapping.ExtensionMap = {
         ...mapping.ExtensionMap,
         [ext]: target
@@ -296,29 +401,78 @@ export default function ConfigPage() {
     }
 
     setConfig(newConfig)
+    setExtensionMapDialogOpen(false)
+    setEditingExtension(null)
     setNewExtension({ ext: "", target: "" })
+    
+    toast({
+      title: "成功",
+      description: "扩展名映射已更新",
+    })
   }
 
   const deleteExtensionMap = (path: string, ext: string) => {
-    if (!config) return
+    setDeletingExtension({ path, ext })
+  }
+
+  const confirmDeleteExtensionMap = () => {
+    if (!config || !deletingExtension) return
     const newConfig = { ...config }
-    const mapping = newConfig.MAP[path]
+    const mapping = newConfig.MAP[deletingExtension.path]
     if (typeof mapping !== "string" && mapping.ExtensionMap) {
       const newExtensionMap = { ...mapping.ExtensionMap }
-      delete newExtensionMap[ext]
+      delete newExtensionMap[deletingExtension.ext]
       mapping.ExtensionMap = newExtensionMap
     }
     setConfig(newConfig)
+    setDeletingExtension(null)
+    toast({
+      title: "成功",
+      description: "扩展名映射已删除",
+    })
   }
 
   const addFixedPath = () => {
     if (!config) return
     const { Path, TargetHost, TargetURL } = newFixedPath
     
-    if (!Path || !TargetHost || !TargetURL) {
+    // 验证输入
+    if (!Path.trim() || !TargetHost.trim() || !TargetURL.trim()) {
       toast({
         title: "错误",
         description: "所有字段都不能为空",
+        variant: "destructive",
+      })
+      return
+    }
+
+    // 验证路径格式
+    if (!Path.startsWith('/')) {
+      toast({
+        title: "错误",
+        description: "路径必须以/开头",
+        variant: "destructive",
+      })
+      return
+    }
+
+    // 验证URL格式
+    try {
+      new URL(TargetURL)
+    } catch {
+      toast({
+        title: "错误",
+        description: "目标URL格式不正确",
+        variant: "destructive",
+      })
+      return
+    }
+
+    // 验证主机名格式
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9-_.]+[a-zA-Z0-9]$/.test(TargetHost)) {
+      toast({
+        title: "错误",
+        description: "目标主机格式不正确",
         variant: "destructive",
       })
       return
@@ -331,6 +485,15 @@ export default function ConfigPage() {
         newConfig.FixedPaths[index] = newFixedPath
       }
     } else {
+      // 检查路径是否已存在
+      if (newConfig.FixedPaths.some(p => p.Path === Path)) {
+        toast({
+          title: "错误",
+          description: "该路径已存在",
+          variant: "destructive",
+        })
+        return
+      }
       newConfig.FixedPaths.push(newFixedPath)
     }
 
@@ -342,19 +505,59 @@ export default function ConfigPage() {
       TargetHost: "",
       TargetURL: "",
     })
+
+    toast({
+      title: "成功",
+      description: "固定路径已更新",
+    })
   }
 
   const editFixedPath = (path: FixedPath) => {
     setEditingFixedPath(path)
-    setNewFixedPath(path)
+    setNewFixedPath({
+      Path: path.Path,
+      TargetHost: path.TargetHost,
+      TargetURL: path.TargetURL,
+    })
+    setFixedPathDialogOpen(true)
+  }
+
+  const openAddPathDialog = () => {
+    setEditingPathData(null)
+    setNewPathData({
+      path: "",
+      defaultTarget: "",
+      extensionMap: {},
+      sizeThreshold: 0,
+      sizeUnit: 'MB',
+    })
+    setPathDialogOpen(true)
+  }
+
+  const openAddFixedPathDialog = () => {
+    setEditingFixedPath(null)
+    setNewFixedPath({
+      Path: "",
+      TargetHost: "",
+      TargetURL: "",
+    })
     setFixedPathDialogOpen(true)
   }
 
   const deleteFixedPath = (path: FixedPath) => {
-    if (!config) return
+    setDeletingFixedPath(path)
+  }
+
+  const confirmDeleteFixedPath = () => {
+    if (!config || !deletingFixedPath) return
     const newConfig = { ...config }
-    newConfig.FixedPaths = newConfig.FixedPaths.filter(p => p.Path !== path.Path)
+    newConfig.FixedPaths = newConfig.FixedPaths.filter(p => p.Path !== deletingFixedPath.Path)
     setConfig(newConfig)
+    setDeletingFixedPath(null)
+    toast({
+      title: "成功",
+      description: "固定路径已删除",
+    })
   }
 
   const exportConfig = () => {
@@ -379,20 +582,85 @@ export default function ConfigPage() {
       try {
         const content = e.target?.result as string
         const newConfig = JSON.parse(content)
+
+        // 验证配置结构
+        if (!newConfig.MAP || typeof newConfig.MAP !== 'object') {
+          throw new Error('配置文件缺少 MAP 字段或格式不正确')
+        }
+
+        if (!newConfig.Compression || 
+            typeof newConfig.Compression !== 'object' ||
+            !newConfig.Compression.Gzip ||
+            !newConfig.Compression.Brotli) {
+          throw new Error('配置文件压缩设置格式不正确')
+        }
+
+        if (!Array.isArray(newConfig.FixedPaths)) {
+          throw new Error('配置文件固定路径格式不正确')
+        }
+
+        // 验证路径映射
+        for (const [path, target] of Object.entries(newConfig.MAP)) {
+          if (!path.startsWith('/')) {
+            throw new Error(`路径 ${path} 必须以/开头`)
+          }
+
+          if (typeof target === 'string') {
+            try {
+              new URL(target)
+            } catch {
+              throw new Error(`路径 ${path} 的目标URL格式不正确`)
+            }
+          } else if (target && typeof target === 'object') {
+            const mapping = target as PathMapping
+            if (!mapping.DefaultTarget || typeof mapping.DefaultTarget !== 'string') {
+              throw new Error(`路径 ${path} 的默认目标格式不正确`)
+            }
+            try {
+              new URL(mapping.DefaultTarget)
+            } catch {
+              throw new Error(`路径 ${path} 的默认目标URL格式不正确`)
+            }
+          } else {
+            throw new Error(`路径 ${path} 的目标格式不正确`)
+          }
+        }
+
         setConfig(newConfig)
         toast({
           title: "成功",
           description: "配置已导入",
         })
-      } catch {
+      } catch (error) {
         toast({
           title: "错误",
-          description: "配置文件格式错误",
+          description: error instanceof Error ? error.message : "配置文件格式错误",
           variant: "destructive",
         })
       }
     }
     reader.readAsText(file)
+  }
+
+  const handleEditPath = (path: string, target: PathMapping | string) => {
+    if (typeof target === 'string') {
+      setEditingPathData({
+        path,
+        defaultTarget: target,
+        sizeThreshold: 0,
+        sizeUnit: 'MB'
+      })
+    } else {
+      const sizeThreshold = target.SizeThreshold || 0
+      const { value, unit } = convertBytesToUnit(sizeThreshold)
+      setEditingPathData({
+        path,
+        defaultTarget: target.DefaultTarget,
+        sizeThreshold: value,
+        sizeUnit: unit
+      })
+    }
+    setPathDialogOpen(true)
   }
 
   if (loading) {
@@ -444,9 +712,9 @@ export default function ConfigPage() {
 
             <TabsContent value="paths" className="space-y-4">
               <div className="flex justify-end">
-                <Dialog open={pathDialogOpen} onOpenChange={setPathDialogOpen}>
+                <Dialog open={pathDialogOpen} onOpenChange={handlePathDialogOpenChange}>
                   <DialogTrigger asChild>
-                    <Button>
+                    <Button onClick={openAddPathDialog}>
                       <Plus className="w-4 h-4 mr-2" />
                       添加路径
                     </Button>
@@ -556,22 +824,69 @@ export default function ConfigPage() {
                       </TableCell>
                       <TableCell>
                         {typeof target === 'object' && target.ExtensionMap ? (
-                          <div className="space-y-1">
-                            {Object.entries(target.ExtensionMap).map(([ext, url]) => (
-                              <div key={ext} className="flex items-center space-x-2">
-                                <span className="text-sm" title={url}>{ext}: {truncateUrl(url)}</span>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-6 w-6"
-                                  onClick={() => deleteExtensionMap(path, ext)}
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </Button>
-                              </div>
-                            ))}
+                          <div className="space-y-4">
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead className="w-1/3">扩展名</TableHead>
+                                  <TableHead className="w-1/2">目标地址</TableHead>
+                                  <TableHead className="w-1/6">操作</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {Object.entries(target.ExtensionMap).map(([ext, url]) => (
+                                  <TableRow key={ext}>
+                                    <TableCell>{ext}</TableCell>
+                                    <TableCell>
+                                      <span title={url}>{truncateUrl(url)}</span>
+                                    </TableCell>
+                                    <TableCell>
+                                      <div className="flex space-x-2">
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="h-6 w-6"
+                                          onClick={() => handleExtensionMapEdit(path, ext, url)}
+                                        >
+                                          <Edit className="h-3 w-3" />
+                                        </Button>
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="h-6 w-6"
+                                          onClick={() => deleteExtensionMap(path, ext)}
+                                        >
+                                          <Trash2 className="h-3 w-3" />
+                                        </Button>
+                                      </div>
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                            <div className="flex justify-end">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleExtensionMapEdit(path)}
+                              >
+                                <Plus className="w-3 h-3 mr-2" />
+                                添加扩展名映射
+                              </Button>
+                            </div>
                           </div>
-                        ) : '-'}
+                        ) : (
+                          <div className="flex justify-end">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleExtensionMapEdit(path)}
+                            >
+                              <Plus className="w-3 h-3 mr-2" />
+                              添加扩展名映射
+                            </Button>
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell>
                         <div className="flex space-x-2">
@@ -581,13 +896,6 @@ export default function ConfigPage() {
                             onClick={() => handleEditPath(path, target)}
                           >
                             <Edit className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleExtensionMapEdit(path)}
-                          >
-                            <Plus className="w-4 h-4" />
                           </Button>
                           <Button
                             variant="ghost"
@@ -602,39 +910,6 @@ export default function ConfigPage() {
                   ))}
                 </TableBody>
               </Table>
-
-              <Dialog open={extensionMapDialogOpen} onOpenChange={setExtensionMapDialogOpen}>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>添加扩展名映射</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label>扩展名</Label>
-                      <Input
-                        value={newExtension.ext}
-                        onChange={(e) => setNewExtension({ ...newExtension, ext: e.target.value })}
-                        placeholder="jpg,png,webp"
-                      />
-                      <p className="text-sm text-muted-foreground">
-                        多个扩展名用逗号分隔，不需要包含点号
-                      </p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>目标 URL</Label>
-                      <Input
-                        value={newExtension.target}
-                        onChange={(e) => setNewExtension({ ...newExtension, target: e.target.value })}
-                        placeholder="https://example.com"
-                      />
-                      <p className="text-sm text-muted-foreground">
-                        当文件大小超过阈值且扩展名匹配时，将使用此地址
-                      </p>
-                    </div>
-                    <Button onClick={addExtensionMap}>添加</Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
             </TabsContent>
 
             <TabsContent value="compression" className="space-y-6">
@@ -691,7 +966,7 @@ export default function ConfigPage() {
 
             <TabsContent value="fixed-paths">
               <div className="flex justify-end mb-4">
-                <Button onClick={() => setFixedPathDialogOpen(true)}>
+                <Button onClick={openAddFixedPathDialog}>
                   <Plus className="w-4 h-4 mr-2" />
                   添加固定路径
                 </Button>
@@ -735,7 +1010,7 @@ export default function ConfigPage() {
                 </TableBody>
               </Table>
 
-              <Dialog open={fixedPathDialogOpen} onOpenChange={setFixedPathDialogOpen}>
+              <Dialog open={fixedPathDialogOpen} onOpenChange={handleFixedPathDialogOpenChange}>
                 <DialogContent>
                   <DialogHeader>
                     <DialogTitle>
@@ -746,7 +1021,7 @@ export default function ConfigPage() {
                     <div className="space-y-2">
                       <Label>路径</Label>
                       <Input
-                        value={newFixedPath.Path}
+                        value={editingFixedPath ? editingFixedPath.Path : newFixedPath.Path}
                         onChange={(e) => setNewFixedPath({ ...newFixedPath, Path: e.target.value })}
                         placeholder="/example"
                       />
@@ -754,7 +1029,7 @@ export default function ConfigPage() {
                     <div className="space-y-2">
                       <Label>目标主机</Label>
                       <Input
-                        value={newFixedPath.TargetHost}
+                        value={editingFixedPath ? editingFixedPath.TargetHost : newFixedPath.TargetHost}
                         onChange={(e) => setNewFixedPath({ ...newFixedPath, TargetHost: e.target.value })}
                         placeholder="example.com"
                       />
@@ -762,7 +1037,7 @@ export default function ConfigPage() {
                     <div className="space-y-2">
                       <Label>目标 URL</Label>
                       <Input
-                        value={newFixedPath.TargetURL}
+                        value={editingFixedPath ? editingFixedPath.TargetURL : newFixedPath.TargetURL}
                         onChange={(e) => setNewFixedPath({ ...newFixedPath, TargetURL: e.target.value })}
                         placeholder="https://example.com"
                       />
@@ -777,6 +1052,88 @@ export default function ConfigPage() {
           </Tabs>
         </CardContent>
       </Card>
+
+      <Dialog open={extensionMapDialogOpen} onOpenChange={handleExtensionMapDialogOpenChange}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {editingExtension ? "编辑扩展名映射" : "添加扩展名映射"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>扩展名</Label>
+              <Input
+                value={newExtension.ext}
+                onChange={(e) => setNewExtension({ ...newExtension, ext: e.target.value })}
+                placeholder="jpg,png,webp"
+              />
+              <p className="text-sm text-muted-foreground">
+                多个扩展名用逗号分隔，不需要包含点号
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>目标 URL</Label>
+              <Input
+                value={newExtension.target}
+                onChange={(e) => setNewExtension({ ...newExtension, target: e.target.value })}
+                placeholder="https://example.com"
+              />
+              <p className="text-sm text-muted-foreground">
+                当文件大小超过阈值且扩展名匹配时，将使用此地址
+              </p>
+            </div>
+            <Button onClick={addOrUpdateExtensionMap}>
+              {editingExtension ? "保存" : "添加"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!deletingPath} onOpenChange={(open) => !open && setDeletingPath(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认删除</AlertDialogTitle>
+            <AlertDialogDescription>
+              确定要删除路径 &ldquo;{deletingPath}&rdquo; 的映射吗？此操作无法撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDeletePath}>删除</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!deletingFixedPath} onOpenChange={(open) => !open && setDeletingFixedPath(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认删除</AlertDialogTitle>
+            <AlertDialogDescription>
+              确定要删除固定路径 &ldquo;{deletingFixedPath?.Path}&rdquo; 吗？此操作无法撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDeleteFixedPath}>删除</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!deletingExtension} onOpenChange={(open) => !open && setDeletingExtension(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认删除</AlertDialogTitle>
+            <AlertDialogDescription>
+              确定要删除扩展名 &ldquo;{deletingExtension?.ext}&rdquo; 的映射吗？此操作无法撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDeleteExtensionMap}>删除</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -800,20 +1157,21 @@ const truncateUrl = (url: string) => {
 
 // 辅助函数：单位转换
 const convertToBytes = (value: number, unit: 'B' | 'KB' | 'MB' | 'GB'): number => {
+  if (value < 0) return 0
   const multipliers = {
     'B': 1,
     'KB': 1024,
     'MB': 1024 * 1024,
     'GB': 1024 * 1024 * 1024
   }
-  return value * multipliers[unit]
+  return Math.floor(value * multipliers[unit])
 }
 
 const convertBytesToUnit = (bytes: number): { value: number, unit: 'B' | 'KB' | 'MB' | 'GB' } => {
-  if (bytes === 0) return { value: 0, unit: 'MB' }
+  if (bytes <= 0) return { value: 0, unit: 'MB' }
   const k = 1024
   const sizes: Array<'B' | 'KB' | 'MB' | 'GB'> = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1)
   return {
     value: Number((bytes / Math.pow(k, i)).toFixed(2)),
     unit: sizes[i]
