@@ -102,6 +102,11 @@ func NewCacheManager(cacheDir string) (*CacheManager, error) {
 		log.Printf("[Cache] Failed to load config: %v, using default values", err)
 	}
 
+	// 启动时清理过期和临时文件
+	if err := cm.cleanStaleFiles(); err != nil {
+		log.Printf("[Cache] Failed to clean stale files: %v", err)
+	}
+
 	// 启动清理协程
 	cm.startCleanup()
 
@@ -336,25 +341,82 @@ func (cm *CacheManager) SetEnabled(enabled bool) {
 
 // ClearCache 清空缓存
 func (cm *CacheManager) ClearCache() error {
-	// 删除所有缓存文件
+	// 清除内存中的缓存项
 	var keysToDelete []CacheKey
 	cm.items.Range(func(key, value interface{}) bool {
 		cacheKey := key.(CacheKey)
-		item := value.(*CacheItem)
-		os.Remove(item.FilePath)
 		keysToDelete = append(keysToDelete, cacheKey)
 		return true
 	})
 
-	// 清除缓存项
 	for _, key := range keysToDelete {
 		cm.items.Delete(key)
+	}
+
+	// 清理缓存目录中的所有文件
+	entries, err := os.ReadDir(cm.cacheDir)
+	if err != nil {
+		return fmt.Errorf("failed to read cache directory: %v", err)
+	}
+
+	for _, entry := range entries {
+		if entry.Name() == "config.json" {
+			continue // 保留配置文件
+		}
+		filePath := filepath.Join(cm.cacheDir, entry.Name())
+		if err := os.Remove(filePath); err != nil {
+			log.Printf("[Cache] Failed to remove file %s: %v", filePath, err)
+		}
 	}
 
 	// 重置统计信息
 	cm.hitCount.Store(0)
 	cm.missCount.Store(0)
 	cm.bytesSaved.Store(0)
+
+	return nil
+}
+
+// cleanStaleFiles 清理过期和临时文件
+func (cm *CacheManager) cleanStaleFiles() error {
+	entries, err := os.ReadDir(cm.cacheDir)
+	if err != nil {
+		return fmt.Errorf("failed to read cache directory: %v", err)
+	}
+
+	for _, entry := range entries {
+		if entry.Name() == "config.json" {
+			continue // 保留配置文件
+		}
+
+		filePath := filepath.Join(cm.cacheDir, entry.Name())
+
+		// 清理临时文件
+		if strings.HasPrefix(entry.Name(), "temp-") {
+			if err := os.Remove(filePath); err != nil {
+				log.Printf("[Cache] Failed to remove temp file %s: %v", filePath, err)
+			}
+			continue
+		}
+
+		// 检查文件是否仍在缓存记录中
+		fileFound := false
+		cm.items.Range(func(_, value interface{}) bool {
+			item := value.(*CacheItem)
+			if item.FilePath == filePath {
+				fileFound = true
+				return false
+			}
+			return true
+		})
+
+		// 如果文件不在缓存记录中，删除它
+		if !fileFound {
+			if err := os.Remove(filePath); err != nil {
+				log.Printf("[Cache] Failed to remove stale file %s: %v", filePath, err)
+			}
+		}
+	}
 
 	return nil
 }
