@@ -194,6 +194,21 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 	c.recentRequestsMutex.Unlock()
 }
 
+// formatUptime 格式化运行时间
+func formatUptime(d time.Duration) string {
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	minutes := int(d.Minutes()) % 60
+
+	if days > 0 {
+		return fmt.Sprintf("%d天%d小时%d分钟", days, hours, minutes)
+	}
+	if hours > 0 {
+		return fmt.Sprintf("%d小时%d分钟", hours, minutes)
+	}
+	return fmt.Sprintf("%d分钟", minutes)
+}
+
 // GetStats 获取统计数据
 func (c *Collector) GetStats() map[string]interface{} {
 	var mem runtime.MemStats
@@ -274,7 +289,7 @@ func (c *Collector) GetStats() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"uptime":            time.Since(c.startTime).String(),
+		"uptime":            formatUptime(time.Since(c.startTime)),
 		"active_requests":   atomic.LoadInt64(&c.activeRequests),
 		"total_requests":    atomic.LoadInt64(&c.totalRequests),
 		"total_errors":      atomic.LoadInt64(&c.totalErrors),

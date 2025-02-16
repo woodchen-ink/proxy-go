@@ -72,10 +72,12 @@ type CacheManager struct {
 	maxAge       time.Duration
 	cleanupTick  time.Duration
 	maxCacheSize int64
-	enabled      atomic.Bool  // 缓存开关
-	hitCount     atomic.Int64 // 命中计数
-	missCount    atomic.Int64 // 未命中计数
-	bytesSaved   atomic.Int64 // 节省的带宽
+	enabled      atomic.Bool   // 缓存开关
+	hitCount     atomic.Int64  // 命中计数
+	missCount    atomic.Int64  // 未命中计数
+	bytesSaved   atomic.Int64  // 节省的带宽
+	cleanupTimer *time.Ticker  // 添加清理定时器
+	stopCleanup  chan struct{} // 添加停止信号通道
 }
 
 // NewCacheManager 创建新的缓存管理器
@@ -89,12 +91,13 @@ func NewCacheManager(cacheDir string) (*CacheManager, error) {
 		maxAge:       30 * time.Minute,
 		cleanupTick:  5 * time.Minute,
 		maxCacheSize: 10 * 1024 * 1024 * 1024, // 10GB
+		stopCleanup:  make(chan struct{}),
 	}
 
 	cm.enabled.Store(true) // 默认启用缓存
 
 	// 启动清理协程
-	go cm.cleanup()
+	cm.startCleanup()
 
 	return cm, nil
 }
@@ -214,60 +217,57 @@ func (cm *CacheManager) Put(key CacheKey, resp *http.Response, body []byte) (*Ca
 
 // cleanup 定期清理过期的缓存项
 func (cm *CacheManager) cleanup() {
-	ticker := time.NewTicker(cm.cleanupTick)
-	for range ticker.C {
-		var totalSize int64
-		var keysToDelete []CacheKey
+	var totalSize int64
+	var keysToDelete []CacheKey
 
-		// 收集需要删除的键和计算总大小
+	// 收集需要删除的键和计算总大小
+	cm.items.Range(func(k, v interface{}) bool {
+		key := k.(CacheKey)
+		item := v.(*CacheItem)
+		totalSize += item.Size
+
+		if time.Since(item.LastAccess) > cm.maxAge {
+			keysToDelete = append(keysToDelete, key)
+		}
+		return true
+	})
+
+	// 如果总大小超过限制，按最后访问时间排序删除
+	if totalSize > cm.maxCacheSize {
+		var items []*CacheItem
 		cm.items.Range(func(k, v interface{}) bool {
-			key := k.(CacheKey)
-			item := v.(*CacheItem)
-			totalSize += item.Size
-
-			if time.Since(item.LastAccess) > cm.maxAge {
-				keysToDelete = append(keysToDelete, key)
-			}
+			items = append(items, v.(*CacheItem))
 			return true
 		})
 
-		// 如果总大小超过限制，按最后访问时间排序删除
-		if totalSize > cm.maxCacheSize {
-			var items []*CacheItem
+		// 按最后访问时间排序
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].LastAccess.Before(items[j].LastAccess)
+		})
+
+		// 删除最旧的项直到总大小小于限制
+		for _, item := range items {
+			if totalSize <= cm.maxCacheSize {
+				break
+			}
 			cm.items.Range(func(k, v interface{}) bool {
-				items = append(items, v.(*CacheItem))
+				if v.(*CacheItem) == item {
+					keysToDelete = append(keysToDelete, k.(CacheKey))
+					totalSize -= item.Size
+					return false
+				}
 				return true
 			})
-
-			// 按最后访问时间排序
-			sort.Slice(items, func(i, j int) bool {
-				return items[i].LastAccess.Before(items[j].LastAccess)
-			})
-
-			// 删除最旧的项直到总大小小于限制
-			for _, item := range items {
-				if totalSize <= cm.maxCacheSize {
-					break
-				}
-				cm.items.Range(func(k, v interface{}) bool {
-					if v.(*CacheItem) == item {
-						keysToDelete = append(keysToDelete, k.(CacheKey))
-						totalSize -= item.Size
-						return false
-					}
-					return true
-				})
-			}
 		}
+	}
 
-		// 删除过期和超出大小限制的缓存项
-		for _, key := range keysToDelete {
-			if item, ok := cm.items.Load(key); ok {
-				cacheItem := item.(*CacheItem)
-				os.Remove(cacheItem.FilePath)
-				cm.items.Delete(key)
-				log.Printf("[Cache] Removed expired item: %s", key.URL)
-			}
+	// 删除过期和超出大小限制的缓存项
+	for _, key := range keysToDelete {
+		if item, ok := cm.items.Load(key); ok {
+			cacheItem := item.(*CacheItem)
+			os.Remove(cacheItem.FilePath)
+			cm.items.Delete(key)
+			log.Printf("[Cache] Removed expired item: %s", key.URL)
 		}
 	}
 }
@@ -407,4 +407,58 @@ func (cm *CacheManager) Commit(key CacheKey, tempPath string, resp *http.Respons
 	cm.bytesSaved.Add(size)
 	log.Printf("[Cache] Cached %s (%s)", key.URL, formatBytes(size))
 	return nil
+}
+
+// GetConfig 获取缓存配置
+func (cm *CacheManager) GetConfig() CacheConfig {
+	return CacheConfig{
+		MaxAge:       int64(cm.maxAge.Minutes()),
+		CleanupTick:  int64(cm.cleanupTick.Minutes()),
+		MaxCacheSize: cm.maxCacheSize / (1024 * 1024 * 1024), // 转换为GB
+	}
+}
+
+// UpdateConfig 更新缓存配置
+func (cm *CacheManager) UpdateConfig(maxAge, cleanupTick, maxCacheSize int64) error {
+	if maxAge <= 0 || cleanupTick <= 0 || maxCacheSize <= 0 {
+		return fmt.Errorf("invalid config values: all values must be positive")
+	}
+
+	cm.maxAge = time.Duration(maxAge) * time.Minute
+	cm.maxCacheSize = maxCacheSize * 1024 * 1024 * 1024 // 转换为字节
+
+	// 如果清理间隔发生变化，重启清理协程
+	newCleanupTick := time.Duration(cleanupTick) * time.Minute
+	if cm.cleanupTick != newCleanupTick {
+		cm.cleanupTick = newCleanupTick
+		// 停止当前的清理协程
+		cm.stopCleanup <- struct{}{}
+		// 启动新的清理协程
+		cm.startCleanup()
+	}
+
+	return nil
+}
+
+// CacheConfig 缓存配置结构
+type CacheConfig struct {
+	MaxAge       int64 `json:"max_age"`        // 最大缓存时间（分钟）
+	CleanupTick  int64 `json:"cleanup_tick"`   // 清理间隔（分钟）
+	MaxCacheSize int64 `json:"max_cache_size"` // 最大缓存大小（GB）
+}
+
+// startCleanup 启动清理协程
+func (cm *CacheManager) startCleanup() {
+	cm.cleanupTimer = time.NewTicker(cm.cleanupTick)
+	go func() {
+		for {
+			select {
+			case <-cm.cleanupTimer.C:
+				cm.cleanup()
+			case <-cm.stopCleanup:
+				cm.cleanupTimer.Stop()
+				return
+			}
+		}
+	}()
 }

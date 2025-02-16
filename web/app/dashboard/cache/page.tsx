@@ -5,6 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/ui/use-toast"
 import { Switch } from "@/components/ui/switch"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 
 interface CacheStats {
   total_items: number
@@ -16,10 +18,22 @@ interface CacheStats {
   enabled: boolean
 }
 
+interface CacheConfig {
+  max_age: number
+  cleanup_tick: number
+  max_cache_size: number
+}
+
 interface CacheData {
   proxy: CacheStats
   mirror: CacheStats
   fixedPath: CacheStats
+}
+
+interface CacheConfigs {
+  proxy: CacheConfig
+  mirror: CacheConfig
+  fixedPath: CacheConfig
 }
 
 function formatBytes(bytes: number) {
@@ -37,6 +51,7 @@ function formatBytes(bytes: number) {
 
 export default function CachePage() {
   const [stats, setStats] = useState<CacheData | null>(null)
+  const [configs, setConfigs] = useState<CacheConfigs | null>(null)
   const [loading, setLoading] = useState(true)
   const { toast } = useToast()
 
@@ -57,14 +72,30 @@ export default function CachePage() {
     }
   }, [toast])
 
+  const fetchConfigs = useCallback(async () => {
+    try {
+      const response = await fetch("/admin/api/cache/config")
+      if (!response.ok) throw new Error("获取缓存配置失败")
+      const data = await response.json()
+      setConfigs(data)
+    } catch (error) {
+      toast({
+        title: "错误",
+        description: error instanceof Error ? error.message : "获取缓存配置失败",
+        variant: "destructive",
+      })
+    }
+  }, [toast])
+
   useEffect(() => {
     // 立即获取一次数据
     fetchStats()
+    fetchConfigs()
 
     // 设置定时刷新
     const interval = setInterval(fetchStats, 5000)
     return () => clearInterval(interval)
-  }, [fetchStats])
+  }, [fetchStats, fetchConfigs])
 
   const handleToggleCache = async (type: "proxy" | "mirror" | "fixedPath", enabled: boolean) => {
     try {
@@ -86,6 +117,31 @@ export default function CachePage() {
       toast({
         title: "错误",
         description: error instanceof Error ? error.message : "切换缓存状态失败",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleUpdateConfig = async (type: "proxy" | "mirror" | "fixedPath", config: CacheConfig) => {
+    try {
+      const response = await fetch("/admin/api/cache/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type, config }),
+      })
+      
+      if (!response.ok) throw new Error("更新缓存配置失败")
+      
+      toast({
+        title: "成功",
+        description: "缓存配置已更新",
+      })
+      
+      fetchConfigs()
+    } catch (error) {
+      toast({
+        title: "错误",
+        description: error instanceof Error ? error.message : "更新缓存配置失败",
         variant: "destructive",
       })
     }
@@ -114,6 +170,61 @@ export default function CachePage() {
         variant: "destructive",
       })
     }
+  }
+
+  const renderCacheConfig = (type: "proxy" | "mirror" | "fixedPath") => {
+    if (!configs) return null
+
+    const config = configs[type]
+    return (
+      <div className="space-y-4 mt-4">
+        <h3 className="text-sm font-medium">缓存配置</h3>
+        <div className="grid gap-4">
+          <div className="grid grid-cols-2 items-center gap-4">
+            <Label htmlFor={`${type}-max-age`}>最大缓存时间（分钟）</Label>
+            <Input
+              id={`${type}-max-age`}
+              type="number"
+              value={config.max_age}
+              onChange={(e) => {
+                const newConfigs = { ...configs }
+                newConfigs[type].max_age = parseInt(e.target.value)
+                setConfigs(newConfigs)
+              }}
+              onBlur={() => handleUpdateConfig(type, config)}
+            />
+          </div>
+          <div className="grid grid-cols-2 items-center gap-4">
+            <Label htmlFor={`${type}-cleanup-tick`}>清理间隔（分钟）</Label>
+            <Input
+              id={`${type}-cleanup-tick`}
+              type="number"
+              value={config.cleanup_tick}
+              onChange={(e) => {
+                const newConfigs = { ...configs }
+                newConfigs[type].cleanup_tick = parseInt(e.target.value)
+                setConfigs(newConfigs)
+              }}
+              onBlur={() => handleUpdateConfig(type, config)}
+            />
+          </div>
+          <div className="grid grid-cols-2 items-center gap-4">
+            <Label htmlFor={`${type}-max-cache-size`}>最大缓存大小（GB）</Label>
+            <Input
+              id={`${type}-max-cache-size`}
+              type="number"
+              value={config.max_cache_size}
+              onChange={(e) => {
+                const newConfigs = { ...configs }
+                newConfigs[type].max_cache_size = parseInt(e.target.value)
+                setConfigs(newConfigs)
+              }}
+              onBlur={() => handleUpdateConfig(type, config)}
+            />
+          </div>
+        </div>
+      </div>
+    )
   }
 
   if (loading) {
@@ -181,6 +292,7 @@ export default function CachePage() {
                 <dd className="text-sm text-gray-900">{formatBytes(stats?.proxy.bytes_saved ?? 0)}</dd>
               </div>
             </dl>
+            {renderCacheConfig("proxy")}
           </CardContent>
         </Card>
 
@@ -229,6 +341,7 @@ export default function CachePage() {
                 <dd className="text-sm text-gray-900">{formatBytes(stats?.mirror.bytes_saved ?? 0)}</dd>
               </div>
             </dl>
+            {renderCacheConfig("mirror")}
           </CardContent>
         </Card>
 
@@ -277,6 +390,7 @@ export default function CachePage() {
                 <dd className="text-sm text-gray-900">{formatBytes(stats?.fixedPath.bytes_saved ?? 0)}</dd>
               </div>
             </dl>
+            {renderCacheConfig("fixedPath")}
           </CardContent>
         </Card>
       </div>

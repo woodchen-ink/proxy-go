@@ -20,6 +20,13 @@ func NewCacheAdminHandler(proxyCache, mirrorCache, fixedPathCache *cache.CacheMa
 	}
 }
 
+// CacheConfig 缓存配置结构
+type CacheConfig struct {
+	MaxAge       int64 `json:"max_age"`        // 最大缓存时间（分钟）
+	CleanupTick  int64 `json:"cleanup_tick"`   // 清理间隔（分钟）
+	MaxCacheSize int64 `json:"max_cache_size"` // 最大缓存大小（GB）
+}
+
 // GetCacheStats 获取缓存统计信息
 func (h *CacheAdminHandler) GetCacheStats(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -35,6 +42,61 @@ func (h *CacheAdminHandler) GetCacheStats(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
+}
+
+// GetCacheConfig 获取缓存配置
+func (h *CacheAdminHandler) GetCacheConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	configs := map[string]cache.CacheConfig{
+		"proxy":     h.proxyCache.GetConfig(),
+		"mirror":    h.mirrorCache.GetConfig(),
+		"fixedPath": h.fixedPathCache.GetConfig(),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(configs)
+}
+
+// UpdateCacheConfig 更新缓存配置
+func (h *CacheAdminHandler) UpdateCacheConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Type   string      `json:"type"`   // "proxy", "mirror" 或 "fixedPath"
+		Config CacheConfig `json:"config"` // 新的配置
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	var targetCache *cache.CacheManager
+	switch req.Type {
+	case "proxy":
+		targetCache = h.proxyCache
+	case "mirror":
+		targetCache = h.mirrorCache
+	case "fixedPath":
+		targetCache = h.fixedPathCache
+	default:
+		http.Error(w, "Invalid cache type", http.StatusBadRequest)
+		return
+	}
+
+	if err := targetCache.UpdateConfig(req.Config.MaxAge, req.Config.CleanupTick, req.Config.MaxCacheSize); err != nil {
+		http.Error(w, "Failed to update config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 // SetCacheEnabled 设置缓存开关状态
