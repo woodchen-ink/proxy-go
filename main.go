@@ -57,8 +57,14 @@ func main() {
 				if strings.HasPrefix(r.URL.Path, "/admin/api/") {
 					switch r.URL.Path {
 					case "/admin/api/auth":
-						if r.Method == http.MethodPost {
-							proxyHandler.AuthHandler(w, r)
+						if r.Method == http.MethodGet {
+							proxyHandler.LoginHandler(w, r)
+						} else {
+							http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+						}
+					case "/admin/api/oauth/callback":
+						if r.Method == http.MethodGet {
+							proxyHandler.OAuthCallbackHandler(w, r)
 						} else {
 							http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 						}

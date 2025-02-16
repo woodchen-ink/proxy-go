@@ -8,17 +8,6 @@ services:
       - ./data:/app/data
     environment:
       - TZ=Asia/Shanghai
+      - OAUTH_CLIENT_ID=your_client_id
+      - OAUTH_ALLOWED_USERS=user1,user2,user3
     restart: always
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 512M
-        reservations:
-          cpus: '0.25'
-          memory: 128M
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3336/"]
-      interval: 30s
-      timeout: 3s
-      retries: 3

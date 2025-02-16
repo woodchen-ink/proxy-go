@@ -4,26 +4,51 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"net/url"
+	"os"
 	"proxy-go/internal/utils"
 	"strings"
 	"sync"
 	"time"
 )
 
+const (
+	tokenExpiry = 30 * 24 * time.Hour // Token 过期时间为 30 天
+)
+
+type OAuthUserInfo struct {
+	ID        string   `json:"id"`
+	Email     string   `json:"email"`
+	Username  string   `json:"username"`
+	Name      string   `json:"name"`
+	AvatarURL string   `json:"avatar_url"`
+	Admin     bool     `json:"admin"`
+	Moderator bool     `json:"moderator"`
+	Groups    []string `json:"groups"`
+}
+
+type OAuthToken struct {
+	AccessToken string `json:"access_token"`
+	TokenType   string `json:"token_type"`
+	ExpiresIn   int    `json:"expires_in"`
+}
+
 type tokenInfo struct {
 	createdAt time.Time
 	expiresIn time.Duration
+	username  string
 }
 
 type authManager struct {
 	tokens sync.Map
+	states sync.Map
 }
 
 func newAuthManager() *authManager {
 	am := &authManager{}
-	// 启动token清理goroutine
 	go am.cleanExpiredTokens()
 	return am
 }
@@ -34,10 +59,11 @@ func (am *authManager) generateToken() string {
 	return base64.URLEncoding.EncodeToString(b)
 }
 
-func (am *authManager) addToken(token string, expiry time.Duration) {
+func (am *authManager) addToken(token string, username string, expiry time.Duration) {
 	am.tokens.Store(token, tokenInfo{
 		createdAt: time.Now(),
 		expiresIn: expiry,
+		username:  username,
 	})
 }
 
@@ -112,42 +138,115 @@ func (h *ProxyHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// AuthHandler 处理认证请求
-func (h *ProxyHandler) AuthHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		log.Printf("[Auth] ERR %s %s -> 405 (%s) method not allowed", r.Method, r.URL.Path, utils.GetClientIP(r))
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+// getCallbackURL 从请求中获取回调地址
+func getCallbackURL(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s/admin/api/oauth/callback", scheme, r.Host)
+}
+
+// LoginHandler 处理登录请求，重定向到 OAuth 授权页面
+func (h *ProxyHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
+	state := h.auth.generateToken()
+	h.auth.states.Store(state, time.Now())
+
+	clientID := os.Getenv("OAUTH_CLIENT_ID")
+	redirectURI := getCallbackURL(r)
+
+	authURL := fmt.Sprintf("https://connect.q58.club/oauth/authorize?%s",
+		url.Values{
+			"response_type": {"code"},
+			"client_id":     {clientID},
+			"redirect_uri":  {redirectURI},
+			"state":         {state},
+		}.Encode())
+
+	http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
+}
+
+// isAllowedUser 检查用户是否在允许列表中
+func isAllowedUser(username string) bool {
+	allowedUsers := strings.Split(os.Getenv("OAUTH_ALLOWED_USERS"), ",")
+	for _, allowed := range allowedUsers {
+		if strings.TrimSpace(allowed) == username {
+			return true
+		}
+	}
+	return false
+}
+
+// OAuthCallbackHandler 处理 OAuth 回调
+func (h *ProxyHandler) OAuthCallbackHandler(w http.ResponseWriter, r *http.Request) {
+	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
+
+	// 验证 state
+	if _, ok := h.auth.states.Load(state); !ok {
+		http.Error(w, "Invalid state", http.StatusBadRequest)
+		return
+	}
+	h.auth.states.Delete(state)
+
+	// 获取访问令牌
+	redirectURI := getCallbackURL(r)
+	resp, err := http.PostForm("https://connect.q58.club/api/oauth/access_token",
+		url.Values{
+			"code":         {code},
+			"redirect_uri": {redirectURI},
+		})
+	if err != nil {
+		http.Error(w, "Failed to get access token", http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	var token OAuthToken
+	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {
+		http.Error(w, "Failed to parse token response", http.StatusInternalServerError)
 		return
 	}
 
-	// 解析表单数据
-	if err := r.ParseForm(); err != nil {
-		log.Printf("[Auth] ERR %s %s -> 400 (%s) form parse error", r.Method, r.URL.Path, utils.GetClientIP(r))
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	// 获取用户信息
+	req, _ := http.NewRequest("GET", "https://connect.q58.club/api/oauth/user", nil)
+	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+	client := &http.Client{}
+	userResp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "Failed to get user info", http.StatusInternalServerError)
+		return
+	}
+	defer userResp.Body.Close()
+
+	var userInfo OAuthUserInfo
+	if err := json.NewDecoder(userResp.Body).Decode(&userInfo); err != nil {
+		http.Error(w, "Failed to parse user info", http.StatusInternalServerError)
 		return
 	}
 
-	password := r.FormValue("password")
-	if password == "" {
-		log.Printf("[Auth] ERR %s %s -> 400 (%s) empty password", r.Method, r.URL.Path, utils.GetClientIP(r))
-		http.Error(w, "Password is required", http.StatusBadRequest)
+	// 检查用户是否在允许列表中
+	if !isAllowedUser(userInfo.Username) {
+		http.Error(w, "Unauthorized user", http.StatusUnauthorized)
 		return
 	}
 
-	if password != h.config.Metrics.Password {
-		log.Printf("[Auth] ERR %s %s -> 401 (%s) invalid password", r.Method, r.URL.Path, utils.GetClientIP(r))
-		http.Error(w, "Invalid password", http.StatusUnauthorized)
-		return
-	}
+	// 生成内部访问令牌
+	internalToken := h.auth.generateToken()
+	h.auth.addToken(internalToken, userInfo.Username, tokenExpiry)
 
-	token := h.auth.generateToken()
-	h.auth.addToken(token, time.Duration(h.config.Metrics.TokenExpiry)*time.Second)
-
-	log.Printf("[Auth] %s %s -> 200 (%s) login success", r.Method, r.URL.Path, utils.GetClientIP(r))
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
-		"token": token,
-	})
+	// 返回登录成功页面
+	w.Header().Set("Content-Type", "text/html")
+	fmt.Fprintf(w, `
+		<html>
+		<head><title>登录成功</title></head>
+		<body>
+			<script>
+				localStorage.setItem('token', '%s');
+				localStorage.setItem('user', '%s');
+				window.location.href = '/admin';
+			</script>
+		</body>
+		</html>
+	`, internalToken, userInfo.Username)
 }

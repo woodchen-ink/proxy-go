@@ -77,7 +77,6 @@ func (c *configImpl) Update(newConfig *Config) {
 	c.MAP = newConfig.MAP
 	c.Compression = newConfig.Compression
 	c.FixedPaths = newConfig.FixedPaths
-	c.Metrics = newConfig.Metrics
 
 	// 触发回调
 	for _, callback := range c.onConfigUpdate {

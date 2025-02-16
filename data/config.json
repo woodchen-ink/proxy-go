@@ -35,36 +35,5 @@
       "TargetHost": "cdn.jsdelivr.net",
       "TargetURL": "https://cdn.jsdelivr.net"
     }
-  ],
-  "Metrics": {
-    "Password": "admin123",
-    "TokenExpiry": 86400,
-    "FeishuWebhook": "https://open.feishu.cn/open-apis/bot/v2/hook/****",
-    "Alert": {
-      "WindowSize": 12,
-      "WindowInterval": "5m",
-      "DedupeWindow": "15m",
-      "MinRequests": 10,
-      "ErrorRate": 0.8,
-      "AlertInterval": "24h"
-    },
-    "Latency": {
-      "SmallFileSize": 1048576,
-      "MediumFileSize": 10485760,
-      "LargeFileSize": 104857600,
-      "SmallLatency": "3s",
-      "MediumLatency": "8s",
-      "LargeLatency": "30s",
-      "HugeLatency": "300s"
-    },
-    "Performance": {
-      "MaxRequestsPerMinute": 1000,
-      "MaxBytesPerMinute": 104857600,
-      "MaxSaveInterval": "15m"
-    },
-    "Validation": {
-      "max_error_rate": 0.8,
-      "max_data_deviation": 0.01
-    }
-  }
+  ]
 }
