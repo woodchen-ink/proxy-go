@@ -119,8 +119,9 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 	if counter, ok := c.intervalStatusCodes.Load(statusKey); ok {
 		atomic.AddInt64(counter.(*int64), 1)
 	} else {
-		var count int64 = 1
-		c.intervalStatusCodes.Store(statusKey, &count)
+		counter := new(int64)
+		*counter = 1
+		c.intervalStatusCodes.Store(statusKey, counter)
 	}
 
 	// 更新最小和最大响应时间
@@ -179,18 +180,31 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 		if counter, ok := c.errorTypes.Load(errKey); ok {
 			atomic.AddInt64(counter.(*int64), 1)
 		} else {
-			var count int64 = 1
-			c.errorTypes.Store(errKey, &count)
+			counter := new(int64)
+			*counter = 1
+			c.errorTypes.Store(errKey, counter)
 		}
 	}
+
+	// 收集状态码统计
+	statusCodeStats := make(map[string]int64)
+	c.statusCodeStats.Range(func(key, value interface{}) bool {
+		if counter, ok := value.(*int64); ok {
+			statusCodeStats[key.(string)] = atomic.LoadInt64(counter)
+		} else {
+			statusCodeStats[key.(string)] = value.(int64)
+		}
+		return true
+	})
 
 	// 更新状态码统计
 	statusKey = fmt.Sprintf("%d", status)
 	if counter, ok := c.statusCodeStats.Load(statusKey); ok {
 		atomic.AddInt64(counter.(*int64), 1)
 	} else {
-		var count int64 = 1
-		c.statusCodeStats.Store(statusKey, &count)
+		counter := new(int64)
+		*counter = 1
+		c.statusCodeStats.Store(statusKey, counter)
 	}
 
 	// 更新路径统计
