@@ -3,6 +3,7 @@ package cache
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"log"
@@ -95,6 +96,11 @@ func NewCacheManager(cacheDir string) (*CacheManager, error) {
 	}
 
 	cm.enabled.Store(true) // 默认启用缓存
+
+	// 尝试加载配置
+	if err := cm.loadConfig(); err != nil {
+		log.Printf("[Cache] Failed to load config: %v, using default values", err)
+	}
 
 	// 启动清理协程
 	cm.startCleanup()
@@ -437,6 +443,11 @@ func (cm *CacheManager) UpdateConfig(maxAge, cleanupTick, maxCacheSize int64) er
 		cm.startCleanup()
 	}
 
+	// 保存配置到文件
+	if err := cm.saveConfig(); err != nil {
+		log.Printf("[Cache] Failed to save config: %v", err)
+	}
+
 	return nil
 }
 
@@ -461,4 +472,59 @@ func (cm *CacheManager) startCleanup() {
 			}
 		}
 	}()
+}
+
+// saveConfig 保存配置到文件
+func (cm *CacheManager) saveConfig() error {
+	config := CacheConfig{
+		MaxAge:       int64(cm.maxAge.Minutes()),
+		CleanupTick:  int64(cm.cleanupTick.Minutes()),
+		MaxCacheSize: cm.maxCacheSize / (1024 * 1024 * 1024), // 转换为GB
+	}
+
+	configPath := filepath.Join(cm.cacheDir, "config.json")
+	data, err := json.Marshal(config)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %v", err)
+	}
+
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
+		return fmt.Errorf("failed to write config file: %v", err)
+	}
+
+	return nil
+}
+
+// loadConfig 从文件加载配置
+func (cm *CacheManager) loadConfig() error {
+	configPath := filepath.Join(cm.cacheDir, "config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// 如果配置文件不存在，使用默认配置并保存
+			return cm.saveConfig()
+		}
+		return fmt.Errorf("failed to read config file: %v", err)
+	}
+
+	var config CacheConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return fmt.Errorf("failed to unmarshal config: %v", err)
+	}
+
+	// 更新配置
+	cm.maxAge = time.Duration(config.MaxAge) * time.Minute
+	cm.maxCacheSize = config.MaxCacheSize * 1024 * 1024 * 1024 // 转换为字节
+
+	// 如果清理间隔发生变化，重启清理协程
+	newCleanupTick := time.Duration(config.CleanupTick) * time.Minute
+	if cm.cleanupTick != newCleanupTick {
+		cm.cleanupTick = newCleanupTick
+		if cm.cleanupTimer != nil {
+			cm.stopCleanup <- struct{}{}
+		}
+		cm.startCleanup()
+	}
+
+	return nil
 }
