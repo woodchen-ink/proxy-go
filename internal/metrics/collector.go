@@ -162,8 +162,9 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 	if counter, ok := c.latencyBuckets.Load(bucketKey); ok {
 		atomic.AddInt64(counter.(*int64), 1)
 	} else {
-		var count int64 = 1
-		c.latencyBuckets.Store(bucketKey, &count)
+		counter := new(int64)
+		*counter = 1
+		c.latencyBuckets.Store(bucketKey, counter)
 	}
 
 	// 更新错误统计
@@ -308,7 +309,11 @@ func (c *Collector) GetStats() map[string]interface{} {
 	// 收集延迟分布
 	latencyDistribution := make(map[string]int64)
 	c.latencyBuckets.Range(func(key, value interface{}) bool {
-		latencyDistribution[key.(string)] = atomic.LoadInt64(value.(*int64))
+		if counter, ok := value.(*int64); ok {
+			latencyDistribution[key.(string)] = atomic.LoadInt64(counter)
+		} else {
+			latencyDistribution[key.(string)] = value.(int64)
+		}
 		return true
 	})
 
