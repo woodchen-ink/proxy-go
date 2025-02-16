@@ -95,7 +95,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchMetrics()
-    const interval = setInterval(fetchMetrics, 5000)
+    const interval = setInterval(fetchMetrics, 1000)
     return () => clearInterval(interval)
   }, [fetchMetrics])
 

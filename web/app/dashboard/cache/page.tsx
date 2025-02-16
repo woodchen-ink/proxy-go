@@ -129,7 +129,7 @@ export default function CachePage() {
     fetchConfigs()
 
     // 设置定时刷新
-    const interval = setInterval(fetchStats, 5000)
+    const interval = setInterval(fetchStats, 1000)
     return () => clearInterval(interval)
   }, [fetchStats, fetchConfigs])
 

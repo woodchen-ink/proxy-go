@@ -6,8 +6,8 @@ import { Toaster } from "@/components/ui/toaster";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "代理服务管理后台",
-  description: "代理服务管理后台",
+  title: "Proxy Go控制台",
+  description: "Proxy Go控制台",
 };
 
 export default function RootLayout({
