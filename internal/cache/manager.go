@@ -144,15 +144,15 @@ func (cm *CacheManager) Get(key CacheKey, r *http.Request) (*CacheItem, bool, bo
 		return nil, false, false
 	}
 
-	// 只检查基本的缓存过期
-	if time.Since(item.CreatedAt) > cm.maxAge {
+	// 检查是否过期（使用LastAccess而不是CreatedAt）
+	if time.Since(item.LastAccess) > cm.maxAge {
 		cm.items.Delete(key)
 		os.Remove(item.FilePath)
 		cm.missCount.Add(1)
 		return nil, false, false
 	}
 
-	// 更新访问信息
+	// 更新访问信息（重置过期时间）
 	item.LastAccess = time.Now()
 	atomic.AddInt64(&item.AccessCount, 1)
 	cm.hitCount.Add(1)
