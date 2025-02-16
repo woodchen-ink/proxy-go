@@ -7,12 +7,12 @@ import (
 
 // RequestLog 请求日志
 type RequestLog struct {
-	Time      time.Time `json:"time"`
-	Path      string    `json:"path"`
-	Status    int       `json:"status"`
-	Latency   int64     `json:"latency"`
-	BytesSent int64     `json:"bytes_sent"`
-	ClientIP  string    `json:"client_ip"`
+	Time      time.Time `json:"Time"`
+	Path      string    `json:"Path"`
+	Status    int       `json:"Status"`
+	Latency   int64     `json:"Latency"`
+	BytesSent int64     `json:"BytesSent"`
+	ClientIP  string    `json:"ClientIP"`
 }
 
 // RequestQueue 请求队列

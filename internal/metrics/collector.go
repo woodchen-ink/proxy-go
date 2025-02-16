@@ -161,12 +161,12 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 		newStat := &models.PathMetrics{
 			Path: path,
 		}
-		newStat.AddRequest()
+		newStat.RequestCount.Store(1)
 		if status >= 400 {
-			newStat.AddError()
+			newStat.ErrorCount.Store(1)
 		}
-		newStat.AddLatency(int64(latency))
-		newStat.AddBytes(bytes)
+		newStat.TotalLatency.Store(int64(latency))
+		newStat.BytesTransferred.Store(bytes)
 		c.pathStats.Store(path, newStat)
 	}
 	c.pathStatsMutex.Unlock()
@@ -215,6 +215,8 @@ func (c *Collector) GetStats() map[string]interface{} {
 	c.statusCodeStats.Range(func(key, value interface{}) bool {
 		if counter, ok := value.(*int64); ok {
 			totalRequests += atomic.LoadInt64(counter)
+		} else {
+			totalRequests += value.(int64)
 		}
 		return true
 	})
@@ -247,8 +249,8 @@ func (c *Collector) GetStats() map[string]interface{} {
 			totalLatency := stats.GetTotalLatency()
 			avgLatencyMs := float64(totalLatency) / float64(requestCount) / float64(time.Millisecond)
 			stats.AvgLatency = fmt.Sprintf("%.2fms", avgLatencyMs)
+			pathMetrics = append(pathMetrics, stats)
 		}
-		pathMetrics = append(pathMetrics, stats)
 		return true
 	})
 
@@ -260,6 +262,23 @@ func (c *Collector) GetStats() map[string]interface{} {
 	// 只保留前10个
 	if len(pathMetrics) > 10 {
 		pathMetrics = pathMetrics[:10]
+	}
+
+	// 转换为值切片
+	pathMetricsValues := make([]models.PathMetrics, len(pathMetrics))
+	for i, metric := range pathMetrics {
+		pathMetricsValues[i] = models.PathMetrics{
+			Path:             metric.Path,
+			AvgLatency:       metric.AvgLatency,
+			RequestCount:     atomic.Int64{},
+			ErrorCount:       atomic.Int64{},
+			TotalLatency:     atomic.Int64{},
+			BytesTransferred: atomic.Int64{},
+		}
+		pathMetricsValues[i].RequestCount.Store(metric.RequestCount.Load())
+		pathMetricsValues[i].ErrorCount.Store(metric.ErrorCount.Load())
+		pathMetricsValues[i].TotalLatency.Store(metric.TotalLatency.Load())
+		pathMetricsValues[i].BytesTransferred.Store(metric.BytesTransferred.Load())
 	}
 
 	// 收集延迟分布
@@ -296,7 +315,7 @@ func (c *Collector) GetStats() map[string]interface{} {
 		"requests_per_second": requestsPerSecond,
 		"bytes_per_second":    float64(atomic.LoadInt64(&c.totalBytes)) / totalRuntime.Seconds(),
 		"status_code_stats":   statusCodeStats,
-		"top_paths":           pathMetrics,
+		"top_paths":           pathMetricsValues,
 		"recent_requests":     recentRequests,
 		"latency_stats": map[string]interface{}{
 			"min":          fmt.Sprintf("%.2fms", float64(minLatency)/float64(time.Millisecond)),
