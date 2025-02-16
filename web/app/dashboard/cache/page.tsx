@@ -7,6 +7,7 @@ import { useToast } from "@/components/ui/use-toast"
 import { Switch } from "@/components/ui/switch"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { useRouter } from "next/navigation"
 
 interface CacheStats {
   total_items: number
@@ -54,10 +55,28 @@ export default function CachePage() {
   const [configs, setConfigs] = useState<CacheConfigs | null>(null)
   const [loading, setLoading] = useState(true)
   const { toast } = useToast()
+  const router = useRouter()
 
   const fetchStats = useCallback(async () => {
     try {
-      const response = await fetch("/admin/api/cache/stats")
+      const token = localStorage.getItem("token")
+      if (!token) {
+        router.push("/login")
+        return
+      }
+
+      const response = await fetch("/admin/api/cache/stats", {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+
+      if (response.status === 401) {
+        localStorage.removeItem("token")
+        router.push("/login")
+        return
+      }
+
       if (!response.ok) throw new Error("获取缓存统计失败")
       const data = await response.json()
       setStats(data)
@@ -70,11 +89,28 @@ export default function CachePage() {
     } finally {
       setLoading(false)
     }
-  }, [toast])
+  }, [toast, router])
 
   const fetchConfigs = useCallback(async () => {
     try {
-      const response = await fetch("/admin/api/cache/config")
+      const token = localStorage.getItem("token")
+      if (!token) {
+        router.push("/login")
+        return
+      }
+
+      const response = await fetch("/admin/api/cache/config", {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+
+      if (response.status === 401) {
+        localStorage.removeItem("token")
+        router.push("/login")
+        return
+      }
+
       if (!response.ok) throw new Error("获取缓存配置失败")
       const data = await response.json()
       setConfigs(data)
@@ -85,7 +121,7 @@ export default function CachePage() {
         variant: "destructive",
       })
     }
-  }, [toast])
+  }, [toast, router])
 
   useEffect(() => {
     // 立即获取一次数据
@@ -99,12 +135,27 @@ export default function CachePage() {
 
   const handleToggleCache = async (type: "proxy" | "mirror" | "fixedPath", enabled: boolean) => {
     try {
+      const token = localStorage.getItem("token")
+      if (!token) {
+        router.push("/login")
+        return
+      }
+
       const response = await fetch("/admin/api/cache/enable", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({ type, enabled }),
       })
       
+      if (response.status === 401) {
+        localStorage.removeItem("token")
+        router.push("/login")
+        return
+      }
+
       if (!response.ok) throw new Error("切换缓存状态失败")
       
       toast({
@@ -124,12 +175,27 @@ export default function CachePage() {
 
   const handleUpdateConfig = async (type: "proxy" | "mirror" | "fixedPath", config: CacheConfig) => {
     try {
+      const token = localStorage.getItem("token")
+      if (!token) {
+        router.push("/login")
+        return
+      }
+
       const response = await fetch("/admin/api/cache/config", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({ type, config }),
       })
       
+      if (response.status === 401) {
+        localStorage.removeItem("token")
+        router.push("/login")
+        return
+      }
+
       if (!response.ok) throw new Error("更新缓存配置失败")
       
       toast({
@@ -149,12 +215,27 @@ export default function CachePage() {
 
   const handleClearCache = async (type: "proxy" | "mirror" | "fixedPath" | "all") => {
     try {
+      const token = localStorage.getItem("token")
+      if (!token) {
+        router.push("/login")
+        return
+      }
+
       const response = await fetch("/admin/api/cache/clear", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({ type }),
       })
       
+      if (response.status === 401) {
+        localStorage.removeItem("token")
+        router.push("/login")
+        return
+      }
+
       if (!response.ok) throw new Error("清理缓存失败")
       
       toast({

@@ -87,6 +87,14 @@ func main() {
 						proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache, fixedPathCache).SetCacheEnabled)(w, r)
 					case "/admin/api/cache/clear":
 						proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache, fixedPathCache).ClearCache)(w, r)
+					case "/admin/api/cache/config":
+						if r.Method == http.MethodGet {
+							proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache, fixedPathCache).GetCacheConfig)(w, r)
+						} else if r.Method == http.MethodPost {
+							proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache, fixedPathCache).UpdateCacheConfig)(w, r)
+						} else {
+							http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+						}
 					default:
 						http.NotFound(w, r)
 					}
