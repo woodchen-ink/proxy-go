@@ -38,6 +38,14 @@ type Collector struct {
 	config              *config.Config
 	lastMinute          time.Time // 用于计算每分钟带宽
 	minuteBytes         int64     // 当前分钟的字节数
+
+	// 新增：时间段统计
+	lastStatsTime       time.Time
+	intervalRequests    int64
+	intervalErrors      int64
+	intervalBytes       int64
+	intervalLatencySum  int64
+	intervalStatusCodes sync.Map
 }
 
 var (
@@ -51,6 +59,7 @@ func InitCollector(cfg *config.Config) error {
 		instance = &Collector{
 			startTime:      time.Now(),
 			lastMinute:     time.Now(),
+			lastStatsTime:  time.Now(),
 			recentRequests: make([]models.RequestLog, 0, 1000),
 			config:         cfg,
 			minLatency:     math.MaxInt64, // 初始化为最大值
@@ -83,10 +92,36 @@ func (c *Collector) EndRequest() {
 
 // RecordRequest 记录请求
 func (c *Collector) RecordRequest(path string, status int, latency time.Duration, bytes int64, clientIP string, r *http.Request) {
-	// 批量更新基础指标
+	// 更新总体统计
 	atomic.AddInt64(&c.totalRequests, 1)
 	atomic.AddInt64(&c.totalBytes, bytes)
 	atomic.AddInt64(&c.latencySum, int64(latency))
+
+	// 更新时间段统计
+	atomic.AddInt64(&c.intervalRequests, 1)
+	atomic.AddInt64(&c.intervalBytes, bytes)
+	atomic.AddInt64(&c.intervalLatencySum, int64(latency))
+	if status >= 400 {
+		atomic.AddInt64(&c.intervalErrors, 1)
+	}
+
+	// 更新带宽统计
+	atomic.AddInt64(&c.minuteBytes, bytes)
+	now := time.Now()
+	if now.Sub(c.lastMinute) >= time.Minute {
+		currentMinute := now.Format("15:04")
+		c.bandwidthStats.Store(currentMinute, atomic.SwapInt64(&c.minuteBytes, 0))
+		c.lastMinute = now
+	}
+
+	// 更新时间段状态码统计
+	statusKey := fmt.Sprintf("%d", status)
+	if counter, ok := c.intervalStatusCodes.Load(statusKey); ok {
+		atomic.AddInt64(counter.(*int64), 1)
+	} else {
+		var count int64 = 1
+		c.intervalStatusCodes.Store(statusKey, &count)
+	}
 
 	// 更新最小和最大响应时间
 	latencyNanos := int64(latency)
@@ -149,7 +184,7 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 	}
 
 	// 更新状态码统计
-	statusKey := fmt.Sprintf("%d", status)
+	statusKey = fmt.Sprintf("%d", status)
 	if counter, ok := c.statusCodeStats.Load(statusKey); ok {
 		atomic.AddInt64(counter.(*int64), 1)
 	} else {
@@ -218,12 +253,28 @@ func (c *Collector) GetStats() map[string]interface{} {
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 
-	// 计算平均延迟
+	now := time.Now()
+	interval := now.Sub(c.lastStatsTime)
+	c.lastStatsTime = now
+
+	// 获取并重置时间段统计
+	intervalRequests := atomic.SwapInt64(&c.intervalRequests, 0)
+	intervalBytes := atomic.SwapInt64(&c.intervalBytes, 0)
+	intervalLatencySum := atomic.SwapInt64(&c.intervalLatencySum, 0)
+	intervalErrors := atomic.SwapInt64(&c.intervalErrors, 0)
+
+	// 计算时间段平均延迟
 	avgLatency := float64(0)
-	totalReqs := atomic.LoadInt64(&c.totalRequests)
-	if totalReqs > 0 {
-		avgLatency = float64(atomic.LoadInt64(&c.latencySum)) / float64(totalReqs)
+	if intervalRequests > 0 {
+		avgLatency = float64(intervalLatencySum) / float64(intervalRequests)
 	}
+
+	// 收集并重置时间段状态码统计
+	intervalStatusStats := make(map[string]int64)
+	c.intervalStatusCodes.Range(func(key, value interface{}) bool {
+		intervalStatusStats[key.(string)] = atomic.SwapInt64(value.(*int64), 0)
+		return true
+	})
 
 	// 收集状态码统计
 	statusCodeStats := make(map[string]int64)
@@ -292,18 +343,27 @@ func (c *Collector) GetStats() map[string]interface{} {
 		minLatency = 0
 	}
 
+	// 获取最近请求记录（加锁）
+	c.recentRequestsMutex.RLock()
+	recentRequests := make([]models.RequestLog, len(c.recentRequests))
+	copy(recentRequests, c.recentRequests)
+	c.recentRequestsMutex.RUnlock()
+
 	return map[string]interface{}{
-		"uptime":            FormatUptime(time.Since(c.startTime)),
-		"active_requests":   atomic.LoadInt64(&c.activeRequests),
-		"total_requests":    atomic.LoadInt64(&c.totalRequests),
-		"total_errors":      atomic.LoadInt64(&c.totalErrors),
-		"total_bytes":       atomic.LoadInt64(&c.totalBytes),
-		"num_goroutine":     runtime.NumGoroutine(),
-		"memory_usage":      utils.FormatBytes(int64(mem.Alloc)),
-		"avg_response_time": fmt.Sprintf("%.2fms", avgLatency/float64(time.Millisecond)),
-		"status_code_stats": statusCodeStats,
-		"top_paths":         pathMetrics,
-		"recent_requests":   c.recentRequests,
+		"uptime":              FormatUptime(time.Since(c.startTime)),
+		"active_requests":     atomic.LoadInt64(&c.activeRequests),
+		"total_requests":      atomic.LoadInt64(&c.totalRequests),
+		"total_errors":        atomic.LoadInt64(&c.totalErrors),
+		"interval_errors":     intervalErrors,
+		"total_bytes":         atomic.LoadInt64(&c.totalBytes),
+		"num_goroutine":       runtime.NumGoroutine(),
+		"memory_usage":        utils.FormatBytes(int64(mem.Alloc)),
+		"avg_response_time":   fmt.Sprintf("%.2fms", avgLatency/float64(time.Millisecond)),
+		"requests_per_second": float64(intervalRequests) / interval.Seconds(),
+		"bytes_per_second":    float64(intervalBytes) / interval.Seconds(),
+		"status_code_stats":   intervalStatusStats,
+		"top_paths":           pathMetrics,
+		"recent_requests":     recentRequests,
 		"latency_stats": map[string]interface{}{
 			"min":          fmt.Sprintf("%.2fms", float64(minLatency)/float64(time.Millisecond)),
 			"max":          fmt.Sprintf("%.2fms", float64(maxLatency)/float64(time.Millisecond)),

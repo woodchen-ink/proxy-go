@@ -244,7 +244,7 @@ func (h *ProxyHandler) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reque
 			<script>
 				localStorage.setItem('token', '%s');
 				localStorage.setItem('user', '%s');
-				window.location.href = '/admin';
+				window.location.href = '/admin/dashboard';
 			</script>
 		</body>
 		</html>
