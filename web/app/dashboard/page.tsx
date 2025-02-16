@@ -239,7 +239,16 @@ export default function DashboardPage() {
               <tbody>
                 {(metrics.top_paths || []).map((path, index) => (
                   <tr key={index} className="border-b">
-                    <td className="p-2">{path.path}</td>
+                    <td className="p-2">
+                      <a
+                        href={path.path}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:text-blue-800 hover:underline"
+                      >
+                        {path.path}
+                      </a>
+                    </td>
                     <td className="p-2">{path.request_count}</td>
                     <td className="p-2">{path.error_count}</td>
                     <td className="p-2">{path.avg_latency}</td>
@@ -275,7 +284,16 @@ export default function DashboardPage() {
                   .map((req, index) => (
                   <tr key={index} className="border-b hover:bg-gray-50">
                     <td className="p-2">{formatDate(req.Time)}</td>
-                    <td className="p-2 max-w-xs truncate">{req.Path}</td>
+                    <td className="p-2 max-w-xs truncate">
+                      <a
+                        href={req.Path}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:text-blue-800 hover:underline"
+                      >
+                        {req.Path}
+                      </a>
+                    </td>
                     <td className="p-2">
                       <span
                         className={`px-2 py-1 rounded-full text-xs ${getStatusColor(

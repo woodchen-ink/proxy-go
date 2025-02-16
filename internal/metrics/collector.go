@@ -202,13 +202,13 @@ func FormatUptime(d time.Duration) string {
 	seconds := int(d.Seconds()) % 60
 
 	if days > 0 {
-		return fmt.Sprintf("%d天%d小时%d分钟%d秒", days, hours, minutes, seconds)
+		return fmt.Sprintf("%d天%d时%d分%d秒", days, hours, minutes, seconds)
 	}
 	if hours > 0 {
-		return fmt.Sprintf("%d小时%d分钟%d秒", hours, minutes, seconds)
+		return fmt.Sprintf("%d时%d分%d秒", hours, minutes, seconds)
 	}
 	if minutes > 0 {
-		return fmt.Sprintf("%d分钟%d秒", minutes, seconds)
+		return fmt.Sprintf("%d分%d秒", minutes, seconds)
 	}
 	return fmt.Sprintf("%d秒", seconds)
 }
