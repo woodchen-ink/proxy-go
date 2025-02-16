@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useToast } from "@/components/ui/use-toast"
@@ -69,6 +69,9 @@ export default function ConfigPage() {
   const [saving, setSaving] = useState(false)
   const { toast } = useToast()
   const router = useRouter()
+
+  // 使用 ref 来保存滚动位置
+  const scrollPositionRef = useRef(0)
 
   // 对话框状态
   const [pathDialogOpen, setPathDialogOpen] = useState(false)
@@ -191,40 +194,60 @@ export default function ConfigPage() {
     }
   }
 
-  const handlePathDialogOpenChange = (open: boolean) => {
-    setPathDialogOpen(open)
-    if (!open) {
-      setEditingPathData(null)
-      setNewPathData({
-        path: "",
-        defaultTarget: "",
-        extensionMap: {},
-        sizeThreshold: 0,
-        sizeUnit: 'MB',
+  // 处理对话框打开和关闭时的滚动位置
+  const handleDialogOpenChange = useCallback((open: boolean, handler: (open: boolean) => void) => {
+    if (open) {
+      // 对话框打开时，保存当前滚动位置
+      scrollPositionRef.current = window.scrollY
+    } else {
+      // 对话框关闭时，恢复滚动位置
+      handler(open)
+      requestAnimationFrame(() => {
+        window.scrollTo(0, scrollPositionRef.current)
       })
     }
-  }
+  }, [])
 
-  const handleFixedPathDialogOpenChange = (open: boolean) => {
-    setFixedPathDialogOpen(open)
-    if (!open) {
-      setEditingFixedPath(null)
-      setNewFixedPath({
-        Path: "",
-        TargetHost: "",
-        TargetURL: "",
-      })
-    }
-  }
+  const handlePathDialogOpenChange = useCallback((open: boolean) => {
+    handleDialogOpenChange(open, (isOpen) => {
+      setPathDialogOpen(isOpen)
+      if (!isOpen) {
+        setEditingPathData(null)
+        setNewPathData({
+          path: "",
+          defaultTarget: "",
+          extensionMap: {},
+          sizeThreshold: 0,
+          sizeUnit: 'MB',
+        })
+      }
+    })
+  }, [handleDialogOpenChange])
 
-  const handleExtensionMapDialogOpenChange = (open: boolean) => {
-    setExtensionMapDialogOpen(open)
-    if (!open) {
-      setEditingPath(null)
-      setEditingExtension(null)
-      setNewExtension({ ext: "", target: "" })
-    }
-  }
+  const handleFixedPathDialogOpenChange = useCallback((open: boolean) => {
+    handleDialogOpenChange(open, (isOpen) => {
+      setFixedPathDialogOpen(isOpen)
+      if (!isOpen) {
+        setEditingFixedPath(null)
+        setNewFixedPath({
+          Path: "",
+          TargetHost: "",
+          TargetURL: "",
+        })
+      }
+    })
+  }, [handleDialogOpenChange])
+
+  const handleExtensionMapDialogOpenChange = useCallback((open: boolean) => {
+    handleDialogOpenChange(open, (isOpen) => {
+      setExtensionMapDialogOpen(isOpen)
+      if (!isOpen) {
+        setEditingPath(null)
+        setEditingExtension(null)
+        setNewExtension({ ext: "", target: "" })
+      }
+    })
+  }, [handleDialogOpenChange])
 
   const addOrUpdatePath = () => {
     if (!config) return
@@ -663,6 +686,18 @@ export default function ConfigPage() {
     setPathDialogOpen(true)
   }
 
+  // 处理删除对话框的滚动位置
+  const handleDeleteDialogOpenChange = useCallback((open: boolean, setter: (value: null) => void) => {
+    if (open) {
+      scrollPositionRef.current = window.scrollY
+    } else {
+      setter(null)
+      requestAnimationFrame(() => {
+        window.scrollTo(0, scrollPositionRef.current)
+      })
+    }
+  }, [])
+
   if (loading) {
     return (
       <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
@@ -1090,7 +1125,10 @@ export default function ConfigPage() {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={!!deletingPath} onOpenChange={(open) => !open && setDeletingPath(null)}>
+      <AlertDialog 
+        open={!!deletingPath} 
+        onOpenChange={(open) => handleDeleteDialogOpenChange(open, setDeletingPath)}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>确认删除</AlertDialogTitle>
@@ -1105,7 +1143,10 @@ export default function ConfigPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={!!deletingFixedPath} onOpenChange={(open) => !open && setDeletingFixedPath(null)}>
+      <AlertDialog 
+        open={!!deletingFixedPath} 
+        onOpenChange={(open) => handleDeleteDialogOpenChange(open, setDeletingFixedPath)}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>确认删除</AlertDialogTitle>
@@ -1120,7 +1161,10 @@ export default function ConfigPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={!!deletingExtension} onOpenChange={(open) => !open && setDeletingExtension(null)}>
+      <AlertDialog 
+        open={!!deletingExtension} 
+        onOpenChange={(open) => handleDeleteDialogOpenChange(open, setDeletingExtension)}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>确认删除</AlertDialogTitle>
