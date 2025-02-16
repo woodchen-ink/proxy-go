@@ -13,7 +13,7 @@ const nextConfig = {
     }
     return [
       {
-        source: '/api/:path*',
+        source: '/admin/api/:path*',
         destination: 'http://localhost:3336/admin/api/:path*',
       },
     ]

@@ -35,7 +35,7 @@ export function Nav() {
   return (
     <nav className="border-b bg-white">
       <div className="container mx-auto flex h-14 items-center px-4">
-        <div className="mr-4 font-bold">代理服务管理后台</div>
+        <div className="mr-4 font-bold">Proxy Go管理后台</div>
         <div className="flex flex-1 items-center space-x-4 md:space-x-6">
           <Link
             href="/dashboard"
