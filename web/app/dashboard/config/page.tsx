@@ -67,6 +67,7 @@ export default function ConfigPage() {
     defaultTarget: "",
     extensionMap: {} as Record<string, string>,
     sizeThreshold: 0,
+    sizeUnit: 'MB' as 'B' | 'KB' | 'MB' | 'GB',
   })
   const [fixedPathDialogOpen, setFixedPathDialogOpen] = useState(false)
   const [editingFixedPath, setEditingFixedPath] = useState<FixedPath | null>(null)
@@ -78,6 +79,13 @@ export default function ConfigPage() {
   const [extensionMapDialogOpen, setExtensionMapDialogOpen] = useState(false)
   const [editingPath, setEditingPath] = useState<string | null>(null)
   const [newExtension, setNewExtension] = useState({ ext: "", target: "" })
+
+  const [editingPathData, setEditingPathData] = useState<{
+    path: string;
+    defaultTarget: string;
+    sizeThreshold: number;
+    sizeUnit: 'B' | 'KB' | 'MB' | 'GB';
+  } | null>(null);
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -168,11 +176,32 @@ export default function ConfigPage() {
     }
   }
 
-  const addPath = () => {
+  const handleEditPath = (path: string, target: PathMapping | string) => {
+    setPathDialogOpen(true)
+    if (typeof target === 'string') {
+      setEditingPathData({
+        path,
+        defaultTarget: target,
+        sizeThreshold: 0,
+        sizeUnit: 'MB'
+      })
+    } else {
+      const sizeThreshold = target.SizeThreshold || 0
+      const { value, unit } = convertBytesToUnit(sizeThreshold)
+      setEditingPathData({
+        path,
+        defaultTarget: target.DefaultTarget,
+        sizeThreshold: value,
+        sizeUnit: unit
+      })
+    }
+  }
+
+  const addOrUpdatePath = () => {
     if (!config) return
-    const { path, defaultTarget, sizeThreshold, extensionMap } = newPathData
+    const data = editingPathData ? editingPathData : newPathData
     
-    if (!path || !defaultTarget) {
+    if (!data.path || !data.defaultTarget) {
       toast({
         title: "错误",
         description: "路径和默认目标不能为空",
@@ -181,20 +210,39 @@ export default function ConfigPage() {
       return
     }
 
+    const sizeInBytes = convertToBytes(data.sizeThreshold, data.sizeUnit)
     const newConfig = { ...config }
-    newConfig.MAP[path] = {
-      DefaultTarget: defaultTarget,
-      ...(sizeThreshold ? { SizeThreshold: sizeThreshold } : {}),
-      ...(Object.keys(extensionMap).length > 0 ? { ExtensionMap: extensionMap } : {})
+    const existingMapping = newConfig.MAP[data.path]
+    
+    if (editingPathData) {
+      if (typeof existingMapping === 'object') {
+        newConfig.MAP[data.path] = {
+          DefaultTarget: data.defaultTarget,
+          SizeThreshold: sizeInBytes,
+          ExtensionMap: existingMapping.ExtensionMap || {}
+        }
+      } else {
+        newConfig.MAP[data.path] = {
+          DefaultTarget: data.defaultTarget,
+          SizeThreshold: sizeInBytes
+        }
+      }
+    } else {
+      newConfig.MAP[data.path] = {
+        DefaultTarget: data.defaultTarget,
+        SizeThreshold: sizeInBytes
+      }
     }
 
     setConfig(newConfig)
     setPathDialogOpen(false)
+    setEditingPathData(null)
     setNewPathData({
       path: "",
       defaultTarget: "",
       extensionMap: {},
       sizeThreshold: 0,
+      sizeUnit: 'MB',
     })
   }
 
@@ -405,34 +453,78 @@ export default function ConfigPage() {
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
-                      <DialogTitle>添加路径映射</DialogTitle>
+                      <DialogTitle>{editingPathData ? "编辑路径映射" : "添加路径映射"}</DialogTitle>
                     </DialogHeader>
                     <div className="space-y-4">
                       <div className="space-y-2">
-                        <Label>路径</Label>
+                        <Label>路径 (如: /images)</Label>
                         <Input
-                          value={newPathData.path}
-                          onChange={(e) => setNewPathData({ ...newPathData, path: e.target.value })}
+                          value={editingPathData ? editingPathData.path : newPathData.path}
+                          onChange={(e) => editingPathData 
+                            ? setEditingPathData({ ...editingPathData, path: e.target.value })
+                            : setNewPathData({ ...newPathData, path: e.target.value })
+                          }
                           placeholder="/example"
                         />
+                        <p className="text-sm text-muted-foreground">
+                          请输入需要代理的路径
+                        </p>
                       </div>
                       <div className="space-y-2">
                         <Label>默认目标</Label>
                         <Input
-                          value={newPathData.defaultTarget}
-                          onChange={(e) => setNewPathData({ ...newPathData, defaultTarget: e.target.value })}
+                          value={editingPathData ? editingPathData.defaultTarget : newPathData.defaultTarget}
+                          onChange={(e) => editingPathData
+                            ? setEditingPathData({ ...editingPathData, defaultTarget: e.target.value })
+                            : setNewPathData({ ...newPathData, defaultTarget: e.target.value })
+                          }
                           placeholder="https://example.com"
                         />
+                        <p className="text-sm text-muted-foreground">
+                          默认的回源地址，所有请求都会转发到这个地址
+                        </p>
                       </div>
                       <div className="space-y-2">
-                        <Label>大小阈值 (字节)</Label>
-                        <Input
-                          type="number"
-                          value={newPathData.sizeThreshold}
-                          onChange={(e) => setNewPathData({ ...newPathData, sizeThreshold: parseInt(e.target.value) })}
-                        />
+                        <Label>大小阈值</Label>
+                        <div className="flex items-center space-x-2">
+                          <Input
+                            type="number"
+                            value={editingPathData ? editingPathData.sizeThreshold : newPathData.sizeThreshold}
+                            onChange={(e) => {
+                              const value = parseInt(e.target.value) || 0
+                              if (editingPathData) {
+                                setEditingPathData({ ...editingPathData, sizeThreshold: value })
+                              } else {
+                                setNewPathData({ ...newPathData, sizeThreshold: value })
+                              }
+                            }}
+                            min={0}
+                          />
+                          <select
+                            className="h-10 rounded-md border border-input bg-background px-3"
+                            value={editingPathData ? editingPathData.sizeUnit : newPathData.sizeUnit}
+                            onChange={(e) => {
+                              const unit = e.target.value as 'B' | 'KB' | 'MB' | 'GB'
+                              if (editingPathData) {
+                                setEditingPathData({ ...editingPathData, sizeUnit: unit })
+                              } else {
+                                setNewPathData({ ...newPathData, sizeUnit: unit })
+                              }
+                            }}
+                          >
+                            <option value="B">B</option>
+                            <option value="KB">KB</option>
+                            <option value="MB">MB</option>
+                            <option value="GB">GB</option>
+                          </select>
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          文件大小超过此阈值时，将使用扩展名映射中的目标地址（如果存在）
+                        </p>
                       </div>
-                      <Button onClick={addPath}>添加</Button>
+                      <Button onClick={addOrUpdatePath}>
+                        {editingPathData ? "保存" : "添加"}
+                      </Button>
                     </div>
                   </DialogContent>
                 </Dialog>
@@ -442,7 +534,7 @@ export default function ConfigPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>路径</TableHead>
-                    <TableHead>目标</TableHead>
+                    <TableHead>默认目标</TableHead>
                     <TableHead>大小阈值</TableHead>
                     <TableHead>扩展名映射</TableHead>
                     <TableHead>操作</TableHead>
@@ -456,14 +548,18 @@ export default function ConfigPage() {
                         {typeof target === 'string' ? target : target.DefaultTarget}
                       </TableCell>
                       <TableCell>
-                        {typeof target === 'object' && target.SizeThreshold ? target.SizeThreshold : '-'}
+                        {typeof target === 'object' && target.SizeThreshold ? (
+                          <span title={`${target.SizeThreshold} 字节`}>
+                            {formatBytes(target.SizeThreshold)}
+                          </span>
+                        ) : '-'}
                       </TableCell>
                       <TableCell>
                         {typeof target === 'object' && target.ExtensionMap ? (
                           <div className="space-y-1">
                             {Object.entries(target.ExtensionMap).map(([ext, url]) => (
                               <div key={ext} className="flex items-center space-x-2">
-                                <span className="text-sm">{ext}: {url}</span>
+                                <span className="text-sm" title={url}>{ext}: {truncateUrl(url)}</span>
                                 <Button
                                   variant="ghost"
                                   size="icon"
@@ -482,9 +578,16 @@ export default function ConfigPage() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => handleExtensionMapEdit(path)}
+                            onClick={() => handleEditPath(path, target)}
                           >
                             <Edit className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleExtensionMapEdit(path)}
+                          >
+                            <Plus className="w-4 h-4" />
                           </Button>
                           <Button
                             variant="ghost"
@@ -503,16 +606,19 @@ export default function ConfigPage() {
               <Dialog open={extensionMapDialogOpen} onOpenChange={setExtensionMapDialogOpen}>
                 <DialogContent>
                   <DialogHeader>
-                    <DialogTitle>编辑扩展名映射</DialogTitle>
+                    <DialogTitle>添加扩展名映射</DialogTitle>
                   </DialogHeader>
                   <div className="space-y-4">
                     <div className="space-y-2">
-                      <Label>扩展名 (如: jpg,png)</Label>
+                      <Label>扩展名</Label>
                       <Input
                         value={newExtension.ext}
                         onChange={(e) => setNewExtension({ ...newExtension, ext: e.target.value })}
-                        placeholder="jpg,png"
+                        placeholder="jpg,png,webp"
                       />
+                      <p className="text-sm text-muted-foreground">
+                        多个扩展名用逗号分隔，不需要包含点号
+                      </p>
                     </div>
                     <div className="space-y-2">
                       <Label>目标 URL</Label>
@@ -521,6 +627,9 @@ export default function ConfigPage() {
                         onChange={(e) => setNewExtension({ ...newExtension, target: e.target.value })}
                         placeholder="https://example.com"
                       />
+                      <p className="text-sm text-muted-foreground">
+                        当文件大小超过阈值且扩展名匹配时，将使用此地址
+                      </p>
                     </div>
                     <Button onClick={addExtensionMap}>添加</Button>
                   </div>
@@ -670,4 +779,43 @@ export default function ConfigPage() {
       </Card>
     </div>
   )
+}
+
+// 辅助函数：格式化字节大小
+const formatBytes = (bytes: number) => {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`
+}
+
+// 辅助函数：截断 URL
+const truncateUrl = (url: string) => {
+  if (url.length > 30) {
+    return url.substring(0, 27) + '...'
+  }
+  return url
+}
+
+// 辅助函数：单位转换
+const convertToBytes = (value: number, unit: 'B' | 'KB' | 'MB' | 'GB'): number => {
+  const multipliers = {
+    'B': 1,
+    'KB': 1024,
+    'MB': 1024 * 1024,
+    'GB': 1024 * 1024 * 1024
+  }
+  return value * multipliers[unit]
+}
+
+const convertBytesToUnit = (bytes: number): { value: number, unit: 'B' | 'KB' | 'MB' | 'GB' } => {
+  if (bytes === 0) return { value: 0, unit: 'MB' }
+  const k = 1024
+  const sizes: Array<'B' | 'KB' | 'MB' | 'GB'> = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return {
+    value: Number((bytes / Math.pow(k, i)).toFixed(2)),
+    unit: sizes[i]
+  }
 } 
