@@ -11,6 +11,7 @@ import (
 	"time"
 )
 
+// Metrics 定义指标结构
 type Metrics struct {
 	// 基础指标
 	Uptime         string  `json:"uptime"`
@@ -28,15 +29,15 @@ type Metrics struct {
 	RequestsPerSecond   float64 `json:"requests_per_second"`
 
 	// 新增字段
-	TotalBytes         int64                `json:"total_bytes"`
-	BytesPerSecond     float64              `json:"bytes_per_second"`
-	StatusCodeStats    map[string]int64     `json:"status_code_stats"`
-	LatencyPercentiles map[string]float64   `json:"latency_percentiles"`
-	TopPaths           []models.PathMetrics `json:"top_paths"`
-	RecentRequests     []models.RequestLog  `json:"recent_requests"`
-	TopReferers        []models.PathMetrics `json:"top_referers"`
+	TotalBytes      int64                `json:"total_bytes"`
+	BytesPerSecond  float64              `json:"bytes_per_second"`
+	StatusCodeStats map[string]int64     `json:"status_code_stats"`
+	TopPaths        []models.PathMetrics `json:"top_paths"`
+	RecentRequests  []models.RequestLog  `json:"recent_requests"`
+	TopReferers     []models.PathMetrics `json:"top_referers"`
 }
 
+// MetricsHandler 处理指标请求
 func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 	uptime := time.Since(h.startTime)
 	collector := metrics.GetCollector()
@@ -44,7 +45,7 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 
 	if stats == nil {
 		stats = map[string]interface{}{
-			"uptime":              uptime.String(),
+			"uptime":              metrics.FormatUptime(uptime),
 			"active_requests":     int64(0),
 			"total_requests":      int64(0),
 			"total_errors":        int64(0),
@@ -69,7 +70,7 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 	uptimeSeconds := uptime.Seconds()
 
 	metrics := Metrics{
-		Uptime:              uptime.String(),
+		Uptime:              metrics.FormatUptime(uptime),
 		ActiveRequests:      utils.SafeInt64(stats["active_requests"]),
 		TotalRequests:       totalRequests,
 		TotalErrors:         totalErrors,
