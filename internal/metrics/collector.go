@@ -254,9 +254,14 @@ func (c *Collector) GetStats() map[string]interface{} {
 		return true
 	})
 
-	// 按请求数降序排序
+	// 按请求数降序排序，请求数相同时按路径字典序排序
 	sort.Slice(pathMetrics, func(i, j int) bool {
-		return pathMetrics[i].GetRequestCount() > pathMetrics[j].GetRequestCount()
+		countI := pathMetrics[i].GetRequestCount()
+		countJ := pathMetrics[j].GetRequestCount()
+		if countI != countJ {
+			return countI > countJ
+		}
+		return pathMetrics[i].Path < pathMetrics[j].Path
 	})
 
 	// 只保留前10个
