@@ -906,66 +906,27 @@ export default function ConfigPage() {
                 </TableHeader>
                 <TableBody>
                   {config && Object.entries(config.MAP).map(([path, target]) => (
-                    <TableRow key={path}>
-                      <TableCell>{path}</TableCell>
-                      <TableCell>
-                        {typeof target === 'string' ? target : target.DefaultTarget}
-                      </TableCell>
-                      <TableCell>
-                        {typeof target === 'object' && (
-                          <div>
-                            <div>最小: {target.SizeThreshold ? formatBytes(target.SizeThreshold) : '-'}</div>
-                            <div>最大: {target.MaxSize ? formatBytes(target.MaxSize) : '-'}</div>
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {typeof target === 'object' && target.ExtensionMap && Object.keys(target.ExtensionMap).length > 0 ? (
-                          <Table>
-                            <TableHeader>
-                              <TableRow>
-                                <TableHead className="w-1/3">扩展名</TableHead>
-                                <TableHead className="w-1/2">目标地址</TableHead>
-                                <TableHead className="w-1/6">操作</TableHead>
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {Object.entries(target.ExtensionMap).map(([ext, url]) => (
-                                <TableRow key={ext}>
-                                  <TableCell className="py-2">{ext}</TableCell>
-                                  <TableCell className="py-2">
-                                    <span title={url}>{truncateUrl(url)}</span>
-                                  </TableCell>
-                                  <TableCell className="py-2">
-                                    <div className="flex space-x-2">
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-6 w-6"
-                                        onClick={() => handleExtensionMapEdit(path, ext, url)}
-                                      >
-                                        <Edit className="h-3 w-3" />
-                                      </Button>
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-6 w-6"
-                                        onClick={() => deleteExtensionMap(path, ext)}
-                                      >
-                                        <Trash2 className="h-3 w-3" />
-                                      </Button>
-                                    </div>
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        ) : (
-                          <div className="text-center text-sm text-muted-foreground">
-                            暂无扩展名映射
-                          </div>
-                        )}
-                        <div className="mt-2 flex justify-end">
+                    <>
+                      <TableRow key={`${path}-main`}>
+                        <TableCell>{path}</TableCell>
+                        <TableCell>
+                          {typeof target === 'string' ? target : target.DefaultTarget}
+                        </TableCell>
+                        <TableCell>
+                          {typeof target === 'object' && target.SizeThreshold ? (
+                            <span title={`${target.SizeThreshold} 字节`}>
+                              {formatBytes(target.SizeThreshold)}
+                            </span>
+                          ) : '-'}
+                        </TableCell>
+                        <TableCell>
+                          {typeof target === 'object' && target.MaxSize ? (
+                            <span title={`${target.MaxSize} 字节`}>
+                              {formatBytes(target.MaxSize)}
+                            </span>
+                          ) : '-'}
+                        </TableCell>
+                        <TableCell>
                           <Button
                             variant="outline"
                             size="sm"
@@ -974,27 +935,74 @@ export default function ConfigPage() {
                             <Plus className="w-3 h-3 mr-2" />
                             添加扩展名映射
                           </Button>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex space-x-2">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleEditPath(path, target)}
-                          >
-                            <Edit className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => deletePath(path)}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex space-x-2">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleEditPath(path, target)}
+                            >
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => deletePath(path)}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                      {typeof target === 'object' && target.ExtensionMap && Object.keys(target.ExtensionMap).length > 0 && (
+                        <TableRow key={`${path}-extensions`}>
+                          <TableCell colSpan={6} className="p-0">
+                            <div className="bg-muted/50 p-4 rounded-lg mx-2 my-2">
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead className="w-1/3">扩展名</TableHead>
+                                    <TableHead className="w-1/2">目标地址</TableHead>
+                                    <TableHead className="w-1/6">操作</TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {Object.entries(target.ExtensionMap).map(([ext, url]) => (
+                                    <TableRow key={ext}>
+                                      <TableCell className="py-2">{ext}</TableCell>
+                                      <TableCell className="py-2">
+                                        <span title={url}>{truncateUrl(url)}</span>
+                                      </TableCell>
+                                      <TableCell className="py-2">
+                                        <div className="flex space-x-2">
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-6 w-6"
+                                            onClick={() => handleExtensionMapEdit(path, ext, url)}
+                                          >
+                                            <Edit className="h-3 w-3" />
+                                          </Button>
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-6 w-6"
+                                            onClick={() => deleteExtensionMap(path, ext)}
+                                          >
+                                            <Trash2 className="h-3 w-3" />
+                                          </Button>
+                                        </div>
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </>
                   ))}
                 </TableBody>
               </Table>
