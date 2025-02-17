@@ -119,14 +119,15 @@ func FixedPathProxyMiddleware(configs []config.FixedPathConfig) func(http.Handle
 							}
 						} else {
 							written, err = io.Copy(w, resp.Body)
+							if err != nil && !isConnectionClosed(err) {
+								log.Printf("[Fixed] ERR %s %s -> write error (%s) from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
+							}
 						}
 					} else {
 						written, err = io.Copy(w, resp.Body)
-					}
-
-					// 写入响应错误处理
-					if err != nil && !isConnectionClosed(err) {
-						log.Printf("[Fixed] ERR %s %s -> write error (%s) from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
+						if err != nil && !isConnectionClosed(err) {
+							log.Printf("[Fixed] ERR %s %s -> write error (%s) from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
+						}
 					}
 
 					// 记录统计信息

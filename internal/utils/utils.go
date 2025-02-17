@@ -205,9 +205,15 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 
 				// 只有当文件大于阈值时才使用扩展名映射的目标
 				if contentLength > threshold {
-					log.Printf("[Route] %s -> %s (size: %s > %s)",
-						path, altTarget, FormatBytes(contentLength), FormatBytes(threshold))
-					targetBase = altTarget
+					// 检查扩展名映射的目标是否可访问
+					if isTargetAccessible(client, altTarget+path) {
+						log.Printf("[Route] %s -> %s (size: %s > %s)",
+							path, altTarget, FormatBytes(contentLength), FormatBytes(threshold))
+						targetBase = altTarget
+					} else {
+						log.Printf("[Route] %s -> %s (fallback: alternative target not accessible)",
+							path, targetBase)
+					}
 				} else {
 					log.Printf("[Route] %s -> %s (size: %s <= %s)",
 						path, targetBase, FormatBytes(contentLength), FormatBytes(threshold))
@@ -226,6 +232,29 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 	}
 
 	return targetBase
+}
+
+// isTargetAccessible 检查目标URL是否可访问
+func isTargetAccessible(client *http.Client, url string) bool {
+	req, err := http.NewRequest("HEAD", url, nil)
+	if err != nil {
+		log.Printf("[Check] Failed to create request for %s: %v", url, err)
+		return false
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req = req.WithContext(ctx)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("[Check] Failed to access %s: %v", url, err)
+		return false
+	}
+	defer resp.Body.Close()
+
+	// 检查状态码是否表示成功
+	return resp.StatusCode >= 200 && resp.StatusCode < 400
 }
 
 // 检查是否命中缓存
