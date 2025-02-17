@@ -896,12 +896,12 @@ export default function ConfigPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>路径</TableHead>
-                    <TableHead>默认目标</TableHead>
-                    <TableHead>最小阈值</TableHead>
-                    <TableHead>最大阈值</TableHead>
-                    <TableHead>扩展名映射</TableHead>
-                    <TableHead>操作</TableHead>
+                    <TableHead className="w-[10%]">路径</TableHead>
+                    <TableHead className="w-[40%]">默认目标</TableHead>
+                    <TableHead className="w-[10%]">最小阈值</TableHead>
+                    <TableHead className="w-[10%]">最大阈值</TableHead>
+                    <TableHead className="w-[15%]">扩展名映射</TableHead>
+                    <TableHead className="w-[15%]">操作</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -957,25 +957,25 @@ export default function ConfigPage() {
                       </TableRow>
                       {typeof target === 'object' && target.ExtensionMap && Object.keys(target.ExtensionMap).length > 0 && (
                         <TableRow key={`${path}-extensions`}>
-                          <TableCell colSpan={6} className="p-0">
-                            <div className="bg-muted/50 p-4 rounded-lg mx-2 my-2">
+                          <TableCell colSpan={6} className="p-0 border-t-0">
+                            <div className="bg-muted/30 px-2 py-1 mx-4">
                               <Table>
                                 <TableHeader>
-                                  <TableRow>
-                                    <TableHead className="w-1/3">扩展名</TableHead>
-                                    <TableHead className="w-1/2">目标地址</TableHead>
-                                    <TableHead className="w-1/6">操作</TableHead>
+                                  <TableRow className="border-0">
+                                    <TableHead className="w-[30%] h-8 text-xs">扩展名</TableHead>
+                                    <TableHead className="w-[50%] h-8 text-xs">目标地址</TableHead>
+                                    <TableHead className="w-[20%] h-8 text-xs">操作</TableHead>
                                   </TableRow>
                                 </TableHeader>
                                 <TableBody>
                                   {Object.entries(target.ExtensionMap).map(([ext, url]) => (
-                                    <TableRow key={ext}>
-                                      <TableCell className="py-2">{ext}</TableCell>
-                                      <TableCell className="py-2">
+                                    <TableRow key={ext} className="border-0">
+                                      <TableCell className="py-1 text-sm">{ext}</TableCell>
+                                      <TableCell className="py-1 text-sm">
                                         <span title={url}>{truncateUrl(url)}</span>
                                       </TableCell>
-                                      <TableCell className="py-2">
-                                        <div className="flex space-x-2">
+                                      <TableCell className="py-1">
+                                        <div className="flex space-x-1">
                                           <Button
                                             variant="ghost"
                                             size="icon"
