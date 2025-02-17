@@ -13,7 +13,8 @@ A 'simple' reverse proxy server written in Go.
 
 ### 配置页
 
-![image](https://github.com/user-attachments/assets/f915e1d6-41db-468f-b5b6-909a531ed07f)
+![image](https://github.com/user-attachments/assets/5acddc06-57f5-417c-9fec-87e906dc22af)
+
 
 
 ### 缓存页
