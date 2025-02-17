@@ -12,9 +12,11 @@ type Config struct {
 }
 
 type PathConfig struct {
-	DefaultTarget   string            `json:"DefaultTarget"` // 默认回源地址
-	ExtensionMap    map[string]string `json:"ExtensionMap"`  // 特定后缀的回源地址
-	SizeThreshold   int64             `json:"SizeThreshold"` // 文件大小阈值(字节)，超过此大小才使用ExtensionMap
+	Path            string            `json:"Path"`
+	DefaultTarget   string            `json:"DefaultTarget"`
+	ExtensionMap    map[string]string `json:"ExtensionMap"`
+	SizeThreshold   int64             `json:"SizeThreshold"` // 最小文件大小阈值
+	MaxSize         int64             `json:"MaxSize"`       // 最大文件大小阈值
 	processedExtMap map[string]string // 内部使用，存储拆分后的映射
 }
 

@@ -40,7 +40,8 @@ import {
 interface PathMapping {
   DefaultTarget: string
   ExtensionMap?: Record<string, string>
-  SizeThreshold?: number
+  SizeThreshold?: number  // 最小文件大小阈值
+  MaxSize?: number       // 最大文件大小阈值
 }
 
 interface FixedPath {
@@ -80,6 +81,7 @@ export default function ConfigPage() {
     defaultTarget: "",
     extensionMap: {} as Record<string, string>,
     sizeThreshold: 0,
+    maxSize: 0,
     sizeUnit: 'MB' as 'B' | 'KB' | 'MB' | 'GB',
   })
   const [fixedPathDialogOpen, setFixedPathDialogOpen] = useState(false)
@@ -98,6 +100,7 @@ export default function ConfigPage() {
     path: string;
     defaultTarget: string;
     sizeThreshold: number;
+    maxSize: number;
     sizeUnit: 'B' | 'KB' | 'MB' | 'GB';
   } | null>(null);
 
@@ -218,6 +221,7 @@ export default function ConfigPage() {
           defaultTarget: "",
           extensionMap: {},
           sizeThreshold: 0,
+          maxSize: 0,
           sizeUnit: 'MB',
         })
       }
@@ -251,10 +255,11 @@ export default function ConfigPage() {
 
   const addOrUpdatePath = () => {
     if (!config) return
-    const data = editingPathData ? editingPathData : newPathData
     
-    // 验证输入
-    if (!data.path.trim() || !data.defaultTarget.trim()) {
+    const data = editingPathData || newPathData
+    const { path, defaultTarget, sizeThreshold, maxSize, sizeUnit } = data
+    
+    if (!path || !defaultTarget) {
       toast({
         title: "错误",
         description: "路径和默认目标不能为空",
@@ -263,66 +268,55 @@ export default function ConfigPage() {
       return
     }
 
-    // 验证路径格式
-    if (!data.path.startsWith('/')) {
+    // 转换大小为字节
+    const sizeThresholdBytes = convertToBytes(sizeThreshold, sizeUnit)
+    const maxSizeBytes = convertToBytes(maxSize, sizeUnit)
+
+    // 验证阈值
+    if (maxSizeBytes > 0 && sizeThresholdBytes >= maxSizeBytes) {
       toast({
         title: "错误",
-        description: "路径必须以/开头",
+        description: "最大文件大小阈值必须大于最小文件大小阈值",
         variant: "destructive",
       })
       return
     }
 
-    // 验证URL格式
-    try {
-      new URL(data.defaultTarget)
-    } catch {
-      toast({
-        title: "错误",
-        description: "默认目标URL格式不正确",
-        variant: "destructive",
-      })
-      return
-    }
-
-    const sizeInBytes = convertToBytes(data.sizeThreshold, data.sizeUnit)
     const newConfig = { ...config }
-    const existingMapping = newConfig.MAP[data.path]
+    const pathConfig: PathMapping = {
+      DefaultTarget: defaultTarget,
+      ExtensionMap: {},
+      SizeThreshold: sizeThresholdBytes,
+      MaxSize: maxSizeBytes
+    }
+
+    // 如果是编辑现有路径，保留原有的扩展名映射
+    if (editingPathData && typeof config.MAP[path] === 'object') {
+      const existingConfig = config.MAP[path] as PathMapping
+      pathConfig.ExtensionMap = existingConfig.ExtensionMap
+    }
+
+    newConfig.MAP[path] = pathConfig
+    setConfig(newConfig)
     
     if (editingPathData) {
-      if (typeof existingMapping === 'object') {
-        newConfig.MAP[data.path] = {
-          DefaultTarget: data.defaultTarget,
-          SizeThreshold: sizeInBytes,
-          ExtensionMap: existingMapping.ExtensionMap || {}
-        }
-      } else {
-        newConfig.MAP[data.path] = {
-          DefaultTarget: data.defaultTarget,
-          SizeThreshold: sizeInBytes
-        }
-      }
+      setEditingPathData(null)
     } else {
-      newConfig.MAP[data.path] = {
-        DefaultTarget: data.defaultTarget,
-        SizeThreshold: sizeInBytes
-      }
+      setNewPathData({
+        path: "",
+        defaultTarget: "",
+        extensionMap: {},
+        sizeThreshold: 0,
+        maxSize: 0,
+        sizeUnit: 'MB',
+      })
     }
-
-    setConfig(newConfig)
+    
     setPathDialogOpen(false)
-    setEditingPathData(null)
-    setNewPathData({
-      path: "",
-      defaultTarget: "",
-      extensionMap: {},
-      sizeThreshold: 0,
-      sizeUnit: 'MB',
-    })
-
+    
     toast({
       title: "成功",
-      description: "路径映射已更新",
+      description: `${editingPathData ? '更新' : '添加'}路径配置成功`,
     })
   }
 
@@ -552,6 +546,7 @@ export default function ConfigPage() {
       defaultTarget: "",
       extensionMap: {},
       sizeThreshold: 0,
+      maxSize: 0,
       sizeUnit: 'MB',
     })
     setPathDialogOpen(true)
@@ -671,15 +666,18 @@ export default function ConfigPage() {
         path,
         defaultTarget: target,
         sizeThreshold: 0,
+        maxSize: 0,
         sizeUnit: 'MB'
       })
     } else {
       const sizeThreshold = target.SizeThreshold || 0
+      const maxSize = target.MaxSize || 0
       const { value, unit } = convertBytesToUnit(sizeThreshold)
       setEditingPathData({
         path,
         defaultTarget: target.DefaultTarget,
         sizeThreshold: value,
+        maxSize: maxSize,
         sizeUnit: unit
       })
     }
@@ -787,43 +785,99 @@ export default function ConfigPage() {
                           默认的回源地址，所有请求都会转发到这个地址
                         </p>
                       </div>
-                      <div className="space-y-2">
-                        <Label>大小阈值</Label>
-                        <div className="flex items-center space-x-2">
-                          <Input
-                            type="number"
-                            value={editingPathData ? editingPathData.sizeThreshold : newPathData.sizeThreshold}
-                            onChange={(e) => {
-                              const value = parseInt(e.target.value) || 0
-                              if (editingPathData) {
-                                setEditingPathData({ ...editingPathData, sizeThreshold: value })
-                              } else {
-                                setNewPathData({ ...newPathData, sizeThreshold: value })
-                              }
-                            }}
-                            min={0}
-                          />
-                          <select
-                            className="h-10 rounded-md border border-input bg-background px-3"
-                            value={editingPathData ? editingPathData.sizeUnit : newPathData.sizeUnit}
-                            onChange={(e) => {
-                              const unit = e.target.value as 'B' | 'KB' | 'MB' | 'GB'
-                              if (editingPathData) {
-                                setEditingPathData({ ...editingPathData, sizeUnit: unit })
-                              } else {
-                                setNewPathData({ ...newPathData, sizeUnit: unit })
-                              }
-                            }}
-                          >
-                            <option value="B">B</option>
-                            <option value="KB">KB</option>
-                            <option value="MB">MB</option>
-                            <option value="GB">GB</option>
-                          </select>
+                      <div className="grid gap-4">
+                        <div className="grid gap-2">
+                          <Label htmlFor="sizeThreshold">最小文件大小阈值</Label>
+                          <div className="flex gap-2">
+                            <Input
+                              id="sizeThreshold"
+                              type="number"
+                              value={editingPathData?.sizeThreshold ?? newPathData.sizeThreshold}
+                              onChange={(e) => {
+                                if (editingPathData) {
+                                  setEditingPathData({
+                                    ...editingPathData,
+                                    sizeThreshold: Number(e.target.value),
+                                  })
+                                } else {
+                                  setNewPathData({
+                                    ...newPathData,
+                                    sizeThreshold: Number(e.target.value),
+                                  })
+                                }
+                              }}
+                            />
+                            <select
+                              className="w-24 rounded-md border border-input bg-background px-3"
+                              value={editingPathData?.sizeUnit ?? newPathData.sizeUnit}
+                              onChange={(e) => {
+                                const unit = e.target.value as 'B' | 'KB' | 'MB' | 'GB'
+                                if (editingPathData) {
+                                  setEditingPathData({
+                                    ...editingPathData,
+                                    sizeUnit: unit,
+                                  })
+                                } else {
+                                  setNewPathData({
+                                    ...newPathData,
+                                    sizeUnit: unit,
+                                  })
+                                }
+                              }}
+                            >
+                              <option value="B">B</option>
+                              <option value="KB">KB</option>
+                              <option value="MB">MB</option>
+                              <option value="GB">GB</option>
+                            </select>
+                          </div>
                         </div>
-                        <p className="text-sm text-muted-foreground">
-                          文件大小超过此阈值时，将使用扩展名映射中的目标地址（如果存在）
-                        </p>
+                        <div className="grid gap-2">
+                          <Label htmlFor="maxSize">最大文件大小阈值</Label>
+                          <div className="flex gap-2">
+                            <Input
+                              id="maxSize"
+                              type="number"
+                              value={editingPathData?.maxSize ?? newPathData.maxSize}
+                              onChange={(e) => {
+                                if (editingPathData) {
+                                  setEditingPathData({
+                                    ...editingPathData,
+                                    maxSize: Number(e.target.value),
+                                  })
+                                } else {
+                                  setNewPathData({
+                                    ...newPathData,
+                                    maxSize: Number(e.target.value),
+                                  })
+                                }
+                              }}
+                            />
+                            <select
+                              className="w-24 rounded-md border border-input bg-background px-3"
+                              value={editingPathData?.sizeUnit ?? newPathData.sizeUnit}
+                              onChange={(e) => {
+                                const unit = e.target.value as 'B' | 'KB' | 'MB' | 'GB'
+                                if (editingPathData) {
+                                  setEditingPathData({
+                                    ...editingPathData,
+                                    sizeUnit: unit,
+                                  })
+                                } else {
+                                  setNewPathData({
+                                    ...newPathData,
+                                    sizeUnit: unit,
+                                  })
+                                }
+                              }}
+                            >
+                              <option value="B">B</option>
+                              <option value="KB">KB</option>
+                              <option value="MB">MB</option>
+                              <option value="GB">GB</option>
+                            </select>
+                          </div>
+                        </div>
                       </div>
                       <Button onClick={addOrUpdatePath}>
                         {editingPathData ? "保存" : "添加"}

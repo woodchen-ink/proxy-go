@@ -22,10 +22,19 @@ type fileSizeCache struct {
 	timestamp time.Time
 }
 
+// 可访问性缓存项
+type accessibilityCache struct {
+	accessible bool
+	timestamp  time.Time
+}
+
 var (
 	// 文件大小缓存，过期时间5分钟
-	sizeCache    sync.Map
+	sizeCache sync.Map
+	// 可访问性缓存，过期时间30秒
+	accessCache  sync.Map
 	cacheTTL     = 5 * time.Minute
+	accessTTL    = 30 * time.Second
 	maxCacheSize = 10000 // 最大缓存条目数
 )
 
@@ -35,6 +44,7 @@ func init() {
 		ticker := time.NewTicker(time.Minute)
 		for range ticker.C {
 			now := time.Now()
+			// 清理文件大小缓存
 			var items []struct {
 				key       interface{}
 				timestamp time.Time
@@ -59,6 +69,15 @@ func init() {
 					sizeCache.Delete(items[i].key)
 				}
 			}
+
+			// 清理可访问性缓存
+			accessCache.Range(func(key, value interface{}) bool {
+				cache := value.(accessibilityCache)
+				if now.Sub(cache.timestamp) > accessTTL {
+					accessCache.Delete(key)
+				}
+				return true
+			})
 		}
 	}()
 }
@@ -168,10 +187,16 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 	// 默认使用默认目标
 	targetBase := pathConfig.DefaultTarget
 
-	// 如果没有设置阈值，使用默认值 500KB
-	threshold := pathConfig.SizeThreshold
-	if threshold <= 0 {
-		threshold = 500 * 1024
+	// 如果没有设置最小阈值，使用默认值 500KB
+	minThreshold := pathConfig.SizeThreshold
+	if minThreshold <= 0 {
+		minThreshold = 500 * 1024
+	}
+
+	// 如果没有设置最大阈值，使用默认值 10MB
+	maxThreshold := pathConfig.MaxSize
+	if maxThreshold <= 0 {
+		maxThreshold = 10 * 1024 * 1024
 	}
 
 	// 检查文件扩展名
@@ -181,44 +206,58 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 			ext = ext[1:] // 移除开头的点
 			// 先检查是否在扩展名映射中
 			if altTarget, exists := pathConfig.GetExtensionTarget(ext); exists {
-				// 先检查扩展名映射的目标是否可访问
-				if isTargetAccessible(client, altTarget+path) {
-					// 检查文件大小
-					contentLength := r.ContentLength
-					if contentLength <= 0 {
-						// 如果无法获取 Content-Length，尝试发送 HEAD 请求到备用源
-						if size, err := GetFileSize(client, altTarget+path); err == nil {
-							contentLength = size
-							log.Printf("[FileSize] Path: %s, Size: %s (from alternative source)",
-								path, FormatBytes(contentLength))
-						} else {
-							log.Printf("[FileSize] Failed to get size from alternative source for %s: %v", path, err)
-							// 如果从备用源获取失败，尝试从默认源获取
-							if size, err := GetFileSize(client, targetBase+path); err == nil {
-								contentLength = size
-								log.Printf("[FileSize] Path: %s, Size: %s (from default source)",
-									path, FormatBytes(contentLength))
-							} else {
-								log.Printf("[FileSize] Failed to get size from default source for %s: %v", path, err)
-							}
-						}
-					} else {
-						log.Printf("[FileSize] Path: %s, Size: %s (from Content-Length)",
-							path, FormatBytes(contentLength))
-					}
+				// 使用 channel 来并发获取文件大小和检查可访问性
+				type result struct {
+					size       int64
+					accessible bool
+					err        error
+				}
+				defaultChan := make(chan result, 1)
+				altChan := make(chan result, 1)
 
-					// 只有当文件大于阈值时才使用扩展名映射的目标
-					if contentLength > threshold {
-						log.Printf("[Route] %s -> %s (size: %s > %s)",
-							path, altTarget, FormatBytes(contentLength), FormatBytes(threshold))
-						targetBase = altTarget
+				// 并发检查默认源和备用源
+				go func() {
+					size, err := GetFileSize(client, targetBase+path)
+					defaultChan <- result{size: size, err: err}
+				}()
+				go func() {
+					accessible := isTargetAccessible(client, altTarget+path)
+					altChan <- result{accessible: accessible}
+				}()
+
+				// 获取默认源结果
+				defaultResult := <-defaultChan
+				if defaultResult.err != nil {
+					log.Printf("[FileSize] Failed to get size from default source for %s: %v", path, defaultResult.err)
+					return targetBase
+				}
+				contentLength := defaultResult.size
+				log.Printf("[FileSize] Path: %s, Size: %s (from default source)",
+					path, FormatBytes(contentLength))
+
+				// 检查文件大小是否在阈值范围内
+				if contentLength > minThreshold && contentLength <= maxThreshold {
+					// 获取备用源检查结果
+					altResult := <-altChan
+					if altResult.accessible {
+						log.Printf("[Route] %s -> %s (size: %s > %s and <= %s)",
+							path, altTarget, FormatBytes(contentLength),
+							FormatBytes(minThreshold), FormatBytes(maxThreshold))
+						return altTarget
 					} else {
-						log.Printf("[Route] %s -> %s (size: %s <= %s)",
-							path, targetBase, FormatBytes(contentLength), FormatBytes(threshold))
+						log.Printf("[Route] %s -> %s (fallback: alternative target not accessible)",
+							path, targetBase)
 					}
+				} else if contentLength <= minThreshold {
+					// 如果文件大小不合适，直接丢弃备用源检查结果
+					go func() { <-altChan }()
+					log.Printf("[Route] %s -> %s (size: %s <= %s)",
+						path, targetBase, FormatBytes(contentLength), FormatBytes(minThreshold))
 				} else {
-					log.Printf("[Route] %s -> %s (fallback: alternative target not accessible)",
-						path, targetBase)
+					// 如果文件大小不合适，直接丢弃备用源检查结果
+					go func() { <-altChan }()
+					log.Printf("[Route] %s -> %s (size: %s > %s)",
+						path, targetBase, FormatBytes(contentLength), FormatBytes(maxThreshold))
 				}
 			} else {
 				// 记录没有匹配扩展名映射的情况
@@ -238,6 +277,15 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 
 // isTargetAccessible 检查目标URL是否可访问
 func isTargetAccessible(client *http.Client, url string) bool {
+	// 先查缓存
+	if cache, ok := accessCache.Load(url); ok {
+		cacheItem := cache.(accessibilityCache)
+		if time.Since(cacheItem.timestamp) < accessTTL {
+			return cacheItem.accessible
+		}
+		accessCache.Delete(url)
+	}
+
 	req, err := http.NewRequest("HEAD", url, nil)
 	if err != nil {
 		log.Printf("[Check] Failed to create request for %s: %v", url, err)
@@ -255,8 +303,14 @@ func isTargetAccessible(client *http.Client, url string) bool {
 	}
 	defer resp.Body.Close()
 
-	// 检查状态码是否表示成功
-	return resp.StatusCode >= 200 && resp.StatusCode < 400
+	accessible := resp.StatusCode >= 200 && resp.StatusCode < 400
+	// 缓存结果
+	accessCache.Store(url, accessibilityCache{
+		accessible: accessible,
+		timestamp:  time.Now(),
+	})
+
+	return accessible
 }
 
 // SafeInt64 安全地将 interface{} 转换为 int64
