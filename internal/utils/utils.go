@@ -181,42 +181,44 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 			ext = ext[1:] // 移除开头的点
 			// 先检查是否在扩展名映射中
 			if altTarget, exists := pathConfig.GetExtensionTarget(ext); exists {
-				// 检查文件大小
-				contentLength := r.ContentLength
-				if contentLength <= 0 {
-					// 如果无法获取 Content-Length，尝试发送 HEAD 请求
-					if size, err := GetFileSize(client, pathConfig.DefaultTarget+path); err == nil {
-						contentLength = size
-						log.Printf("[FileSize] Path: %s, Size: %s (from %s)",
-							path, FormatBytes(contentLength),
-							func() string {
-								if isCacheHit(pathConfig.DefaultTarget + path) {
-									return "cache"
-								}
-								return "HEAD request"
-							}())
+				// 先检查扩展名映射的目标是否可访问
+				if isTargetAccessible(client, altTarget+path) {
+					// 检查文件大小
+					contentLength := r.ContentLength
+					if contentLength <= 0 {
+						// 如果无法获取 Content-Length，尝试发送 HEAD 请求到备用源
+						if size, err := GetFileSize(client, altTarget+path); err == nil {
+							contentLength = size
+							log.Printf("[FileSize] Path: %s, Size: %s (from alternative source)",
+								path, FormatBytes(contentLength))
+						} else {
+							log.Printf("[FileSize] Failed to get size from alternative source for %s: %v", path, err)
+							// 如果从备用源获取失败，尝试从默认源获取
+							if size, err := GetFileSize(client, targetBase+path); err == nil {
+								contentLength = size
+								log.Printf("[FileSize] Path: %s, Size: %s (from default source)",
+									path, FormatBytes(contentLength))
+							} else {
+								log.Printf("[FileSize] Failed to get size from default source for %s: %v", path, err)
+							}
+						}
 					} else {
-						log.Printf("[FileSize] Failed to get size for %s: %v", path, err)
+						log.Printf("[FileSize] Path: %s, Size: %s (from Content-Length)",
+							path, FormatBytes(contentLength))
 					}
-				} else {
-					log.Printf("[FileSize] Path: %s, Size: %s (from Content-Length)",
-						path, FormatBytes(contentLength))
-				}
 
-				// 只有当文件大于阈值时才使用扩展名映射的目标
-				if contentLength > threshold {
-					// 检查扩展名映射的目标是否可访问
-					if isTargetAccessible(client, altTarget+path) {
+					// 只有当文件大于阈值时才使用扩展名映射的目标
+					if contentLength > threshold {
 						log.Printf("[Route] %s -> %s (size: %s > %s)",
 							path, altTarget, FormatBytes(contentLength), FormatBytes(threshold))
 						targetBase = altTarget
 					} else {
-						log.Printf("[Route] %s -> %s (fallback: alternative target not accessible)",
-							path, targetBase)
+						log.Printf("[Route] %s -> %s (size: %s <= %s)",
+							path, targetBase, FormatBytes(contentLength), FormatBytes(threshold))
 					}
 				} else {
-					log.Printf("[Route] %s -> %s (size: %s <= %s)",
-						path, targetBase, FormatBytes(contentLength), FormatBytes(threshold))
+					log.Printf("[Route] %s -> %s (fallback: alternative target not accessible)",
+						path, targetBase)
 				}
 			} else {
 				// 记录没有匹配扩展名映射的情况
@@ -255,14 +257,6 @@ func isTargetAccessible(client *http.Client, url string) bool {
 
 	// 检查状态码是否表示成功
 	return resp.StatusCode >= 200 && resp.StatusCode < 400
-}
-
-// 检查是否命中缓存
-func isCacheHit(url string) bool {
-	if cache, ok := sizeCache.Load(url); ok {
-		return time.Since(cache.(fileSizeCache).timestamp) < cacheTTL
-	}
-	return false
 }
 
 // SafeInt64 安全地将 interface{} 转换为 int64
