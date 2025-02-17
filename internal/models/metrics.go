@@ -21,6 +21,15 @@ type PathMetrics struct {
 	AvgLatency       string       `json:"avg_latency"`
 }
 
+// PathMetricsJSON 用于 JSON 序列化的路径统计信息
+type PathMetricsJSON struct {
+	Path             string `json:"path"`
+	RequestCount     int64  `json:"request_count"`
+	ErrorCount       int64  `json:"error_count"`
+	BytesTransferred int64  `json:"bytes_transferred"`
+	AvgLatency       string `json:"avg_latency"`
+}
+
 // GetRequestCount 获取请求数
 func (p *PathMetrics) GetRequestCount() int64 {
 	return p.RequestCount.Load()
@@ -59,6 +68,17 @@ func (p *PathMetrics) AddLatency(latency int64) {
 // AddBytes 增加传输字节数
 func (p *PathMetrics) AddBytes(bytes int64) {
 	p.BytesTransferred.Add(bytes)
+}
+
+// ToJSON 转换为 JSON 友好的结构
+func (p *PathMetrics) ToJSON() PathMetricsJSON {
+	return PathMetricsJSON{
+		Path:             p.Path,
+		RequestCount:     p.RequestCount.Load(),
+		ErrorCount:       p.ErrorCount.Load(),
+		BytesTransferred: p.BytesTransferred.Load(),
+		AvgLatency:       p.AvgLatency,
+	}
 }
 
 type HistoricalMetrics struct {

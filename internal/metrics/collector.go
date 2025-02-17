@@ -265,20 +265,9 @@ func (c *Collector) GetStats() map[string]interface{} {
 	}
 
 	// 转换为值切片
-	pathMetricsValues := make([]models.PathMetrics, len(pathMetrics))
+	pathMetricsValues := make([]models.PathMetricsJSON, len(pathMetrics))
 	for i, metric := range pathMetrics {
-		pathMetricsValues[i] = models.PathMetrics{
-			Path:             metric.Path,
-			AvgLatency:       metric.AvgLatency,
-			RequestCount:     atomic.Int64{},
-			ErrorCount:       atomic.Int64{},
-			TotalLatency:     atomic.Int64{},
-			BytesTransferred: atomic.Int64{},
-		}
-		pathMetricsValues[i].RequestCount.Store(metric.RequestCount.Load())
-		pathMetricsValues[i].ErrorCount.Store(metric.ErrorCount.Load())
-		pathMetricsValues[i].TotalLatency.Store(metric.TotalLatency.Load())
-		pathMetricsValues[i].BytesTransferred.Store(metric.BytesTransferred.Load())
+		pathMetricsValues[i] = metric.ToJSON()
 	}
 
 	// 收集延迟分布

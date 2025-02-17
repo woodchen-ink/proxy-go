@@ -29,12 +29,12 @@ type Metrics struct {
 	RequestsPerSecond   float64 `json:"requests_per_second"`
 
 	// 新增字段
-	TotalBytes      int64                `json:"total_bytes"`
-	BytesPerSecond  float64              `json:"bytes_per_second"`
-	StatusCodeStats map[string]int64     `json:"status_code_stats"`
-	TopPaths        []models.PathMetrics `json:"top_paths"`
-	RecentRequests  []models.RequestLog  `json:"recent_requests"`
-	TopReferers     []models.PathMetrics `json:"top_referers"`
+	TotalBytes      int64                    `json:"total_bytes"`
+	BytesPerSecond  float64                  `json:"bytes_per_second"`
+	StatusCodeStats map[string]int64         `json:"status_code_stats"`
+	TopPaths        []models.PathMetricsJSON `json:"top_paths"`
+	RecentRequests  []models.RequestLog      `json:"recent_requests"`
+	TopReferers     []models.PathMetricsJSON `json:"top_referers"`
 }
 
 // MetricsHandler 处理指标请求
