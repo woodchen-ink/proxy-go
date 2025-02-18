@@ -28,23 +28,20 @@ const (
 )
 
 // 添加 hop-by-hop 头部映射
-var hopHeadersMap = make(map[string]bool)
+var hopHeadersBase = map[string]bool{
+	"Connection":          true,
+	"Keep-Alive":          true,
+	"Proxy-Authenticate":  true,
+	"Proxy-Authorization": true,
+	"Proxy-Connection":    true,
+	"Te":                  true,
+	"Trailer":             true,
+	"Transfer-Encoding":   true,
+	"Upgrade":             true,
+}
 
 func init() {
-	headers := []string{
-		"Connection",
-		"Keep-Alive",
-		"Proxy-Authenticate",
-		"Proxy-Authorization",
-		"Proxy-Connection",
-		"Te",
-		"Trailer",
-		"Transfer-Encoding",
-		"Upgrade",
-	}
-	for _, h := range headers {
-		hopHeadersMap[h] = true
-	}
+	// 移除旧的初始化代码，因为我们直接在 map 字面量中定义了所有值
 }
 
 // ErrorHandler 定义错误处理函数类型
@@ -337,16 +334,22 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func copyHeader(dst, src http.Header) {
+	// 创建一个新的局部 map，复制基础 hop headers
+	hopHeaders := make(map[string]bool, len(hopHeadersBase))
+	for k, v := range hopHeadersBase {
+		hopHeaders[k] = v
+	}
+
 	// 处理 Connection 头部指定的其他 hop-by-hop 头部
 	if connection := src.Get("Connection"); connection != "" {
 		for _, h := range strings.Split(connection, ",") {
-			hopHeadersMap[strings.TrimSpace(h)] = true
+			hopHeaders[strings.TrimSpace(h)] = true
 		}
 	}
 
-	// 使用 map 快速查找，跳过 hop-by-hop 头部
+	// 使用局部 map 快速查找，跳过 hop-by-hop 头部
 	for k, vv := range src {
-		if !hopHeadersMap[k] {
+		if !hopHeaders[k] {
 			for _, v := range vv {
 				dst.Add(k, v)
 			}
