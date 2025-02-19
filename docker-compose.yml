@@ -9,5 +9,4 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - OAUTH_CLIENT_ID=your_client_id
-      - OAUTH_ALLOWED_USERS=user1,user2,user3
     restart: always

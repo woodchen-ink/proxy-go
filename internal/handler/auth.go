@@ -166,17 +166,6 @@ func (h *ProxyHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
 }
 
-// isAllowedUser 检查用户是否在允许列表中
-func isAllowedUser(username string) bool {
-	allowedUsers := strings.Split(os.Getenv("OAUTH_ALLOWED_USERS"), ",")
-	for _, allowed := range allowedUsers {
-		if strings.TrimSpace(allowed) == username {
-			return true
-		}
-	}
-	return false
-}
-
 // OAuthCallbackHandler 处理 OAuth 回调
 func (h *ProxyHandler) OAuthCallbackHandler(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
@@ -222,12 +211,6 @@ func (h *ProxyHandler) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reque
 	var userInfo OAuthUserInfo
 	if err := json.NewDecoder(userResp.Body).Decode(&userInfo); err != nil {
 		http.Error(w, "Failed to parse user info", http.StatusInternalServerError)
-		return
-	}
-
-	// 检查用户是否在允许列表中
-	if !isAllowedUser(userInfo.Username) {
-		http.Error(w, "Unauthorized user", http.StatusUnauthorized)
 		return
 	}
 
