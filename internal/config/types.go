@@ -8,7 +8,6 @@ import (
 type Config struct {
 	MAP         map[string]PathConfig `json:"MAP"` // 改为使用PathConfig
 	Compression CompressionConfig     `json:"Compression"`
-	FixedPaths  []FixedPathConfig     `json:"FixedPaths"`
 }
 
 type PathConfig struct {
@@ -30,19 +29,12 @@ type CompressorConfig struct {
 	Level   int  `json:"Level"`
 }
 
-type FixedPathConfig struct {
-	Path       string `json:"Path"`
-	TargetHost string `json:"TargetHost"`
-	TargetURL  string `json:"TargetURL"`
-}
-
 // 添加一个辅助方法来处理字符串到 PathConfig 的转换
 func (c *Config) UnmarshalJSON(data []byte) error {
 	// 创建一个临时结构来解析原始JSON
 	type TempConfig struct {
 		MAP         map[string]json.RawMessage `json:"MAP"`
 		Compression CompressionConfig          `json:"Compression"`
-		FixedPaths  []FixedPathConfig          `json:"FixedPaths"`
 	}
 
 	var temp TempConfig
@@ -77,7 +69,6 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 
 	// 复制其他字段
 	c.Compression = temp.Compression
-	c.FixedPaths = temp.FixedPaths
 
 	return nil
 }

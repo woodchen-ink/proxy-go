@@ -40,7 +40,6 @@ func main() {
 	// 创建代理处理器
 	mirrorHandler := handler.NewMirrorProxyHandler()
 	proxyHandler := handler.NewProxyHandler(cfg)
-	fixedPathCache := middleware.GetFixedPathCache()
 
 	// 创建处理器链
 	handlers := []struct {
@@ -88,16 +87,16 @@ func main() {
 					case "/admin/api/config/save":
 						proxyHandler.AuthMiddleware(handler.NewConfigHandler(cfg).ServeHTTP)(w, r)
 					case "/admin/api/cache/stats":
-						proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache, fixedPathCache).GetCacheStats)(w, r)
+						proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).GetCacheStats)(w, r)
 					case "/admin/api/cache/enable":
-						proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache, fixedPathCache).SetCacheEnabled)(w, r)
+						proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).SetCacheEnabled)(w, r)
 					case "/admin/api/cache/clear":
-						proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache, fixedPathCache).ClearCache)(w, r)
+						proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).ClearCache)(w, r)
 					case "/admin/api/cache/config":
 						if r.Method == http.MethodGet {
-							proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache, fixedPathCache).GetCacheConfig)(w, r)
+							proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).GetCacheConfig)(w, r)
 						} else if r.Method == http.MethodPost {
-							proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache, fixedPathCache).UpdateCacheConfig)(w, r)
+							proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).UpdateCacheConfig)(w, r)
 						} else {
 							http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 						}
@@ -128,18 +127,6 @@ func main() {
 				return strings.HasPrefix(r.URL.Path, "/mirror/")
 			},
 			handler: mirrorHandler,
-		},
-		// 固定路径处理器
-		{
-			matcher: func(r *http.Request) bool {
-				for _, fp := range cfg.FixedPaths {
-					if strings.HasPrefix(r.URL.Path, fp.Path) {
-						return true
-					}
-				}
-				return false
-			},
-			handler: middleware.FixedPathProxyMiddleware(cfg.FixedPaths)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})),
 		},
 		// 默认代理处理器
 		{

@@ -118,18 +118,5 @@ func (h *ConfigHandler) validateConfig(cfg *config.Config) error {
 		}
 	}
 
-	// 验证FixedPaths配置
-	for _, fp := range cfg.FixedPaths {
-		if fp.Path == "" {
-			return fmt.Errorf("固定路径不能为空")
-		}
-		if fp.TargetURL == "" {
-			return fmt.Errorf("固定路径 %s 的目标URL不能为空", fp.Path)
-		}
-		if _, err := url.Parse(fp.TargetURL); err != nil {
-			return fmt.Errorf("固定路径 %s 的目标URL无效: %v", fp.Path, err)
-		}
-	}
-
 	return nil
 }

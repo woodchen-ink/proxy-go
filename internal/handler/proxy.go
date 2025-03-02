@@ -40,10 +40,6 @@ var hopHeadersBase = map[string]bool{
 	"Upgrade":             true,
 }
 
-func init() {
-	// 移除旧的初始化代码，因为我们直接在 map 字面量中定义了所有值
-}
-
 // ErrorHandler 定义错误处理函数类型
 type ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)
 

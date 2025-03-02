@@ -7,16 +7,14 @@ import (
 )
 
 type CacheAdminHandler struct {
-	proxyCache     *cache.CacheManager
-	mirrorCache    *cache.CacheManager
-	fixedPathCache *cache.CacheManager
+	proxyCache  *cache.CacheManager
+	mirrorCache *cache.CacheManager
 }
 
-func NewCacheAdminHandler(proxyCache, mirrorCache, fixedPathCache *cache.CacheManager) *CacheAdminHandler {
+func NewCacheAdminHandler(proxyCache, mirrorCache *cache.CacheManager) *CacheAdminHandler {
 	return &CacheAdminHandler{
-		proxyCache:     proxyCache,
-		mirrorCache:    mirrorCache,
-		fixedPathCache: fixedPathCache,
+		proxyCache:  proxyCache,
+		mirrorCache: mirrorCache,
 	}
 }
 
@@ -35,9 +33,8 @@ func (h *CacheAdminHandler) GetCacheStats(w http.ResponseWriter, r *http.Request
 	}
 
 	stats := map[string]cache.CacheStats{
-		"proxy":     h.proxyCache.GetStats(),
-		"mirror":    h.mirrorCache.GetStats(),
-		"fixedPath": h.fixedPathCache.GetStats(),
+		"proxy":  h.proxyCache.GetStats(),
+		"mirror": h.mirrorCache.GetStats(),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -52,9 +49,8 @@ func (h *CacheAdminHandler) GetCacheConfig(w http.ResponseWriter, r *http.Reques
 	}
 
 	configs := map[string]cache.CacheConfig{
-		"proxy":     h.proxyCache.GetConfig(),
-		"mirror":    h.mirrorCache.GetConfig(),
-		"fixedPath": h.fixedPathCache.GetConfig(),
+		"proxy":  h.proxyCache.GetConfig(),
+		"mirror": h.mirrorCache.GetConfig(),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -69,7 +65,7 @@ func (h *CacheAdminHandler) UpdateCacheConfig(w http.ResponseWriter, r *http.Req
 	}
 
 	var req struct {
-		Type   string      `json:"type"`   // "proxy", "mirror" 或 "fixedPath"
+		Type   string      `json:"type"`   // "proxy", "mirror"
 		Config CacheConfig `json:"config"` // 新的配置
 	}
 
@@ -84,8 +80,6 @@ func (h *CacheAdminHandler) UpdateCacheConfig(w http.ResponseWriter, r *http.Req
 		targetCache = h.proxyCache
 	case "mirror":
 		targetCache = h.mirrorCache
-	case "fixedPath":
-		targetCache = h.fixedPathCache
 	default:
 		http.Error(w, "Invalid cache type", http.StatusBadRequest)
 		return
@@ -107,7 +101,7 @@ func (h *CacheAdminHandler) SetCacheEnabled(w http.ResponseWriter, r *http.Reque
 	}
 
 	var req struct {
-		Type    string `json:"type"`    // "proxy", "mirror" 或 "fixedPath"
+		Type    string `json:"type"`    // "proxy", "mirror"
 		Enabled bool   `json:"enabled"` // true 或 false
 	}
 
@@ -121,8 +115,6 @@ func (h *CacheAdminHandler) SetCacheEnabled(w http.ResponseWriter, r *http.Reque
 		h.proxyCache.SetEnabled(req.Enabled)
 	case "mirror":
 		h.mirrorCache.SetEnabled(req.Enabled)
-	case "fixedPath":
-		h.fixedPathCache.SetEnabled(req.Enabled)
 	default:
 		http.Error(w, "Invalid cache type", http.StatusBadRequest)
 		return
@@ -139,7 +131,7 @@ func (h *CacheAdminHandler) ClearCache(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Type string `json:"type"` // "proxy", "mirror", "fixedPath" 或 "all"
+		Type string `json:"type"` // "proxy", "mirror" 或 "all"
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -153,15 +145,10 @@ func (h *CacheAdminHandler) ClearCache(w http.ResponseWriter, r *http.Request) {
 		err = h.proxyCache.ClearCache()
 	case "mirror":
 		err = h.mirrorCache.ClearCache()
-	case "fixedPath":
-		err = h.fixedPathCache.ClearCache()
 	case "all":
 		err = h.proxyCache.ClearCache()
 		if err == nil {
 			err = h.mirrorCache.ClearCache()
-		}
-		if err == nil {
-			err = h.fixedPathCache.ClearCache()
 		}
 	default:
 		http.Error(w, "Invalid cache type", http.StatusBadRequest)

@@ -44,12 +44,6 @@ interface PathMapping {
   MaxSize?: number       // 最大文件大小阈值
 }
 
-interface FixedPath {
-  Path: string
-  TargetHost: string
-  TargetURL: string
-}
-
 interface CompressionConfig {
   Enabled: boolean
   Level: number
@@ -61,7 +55,6 @@ interface Config {
     Gzip: CompressionConfig
     Brotli: CompressionConfig
   }
-  FixedPaths: FixedPath[]
 }
 
 export default function ConfigPage() {
@@ -85,13 +78,7 @@ export default function ConfigPage() {
     sizeThresholdUnit: 'MB' as 'B' | 'KB' | 'MB' | 'GB',
     maxSizeUnit: 'MB' as 'B' | 'KB' | 'MB' | 'GB',
   })
-  const [fixedPathDialogOpen, setFixedPathDialogOpen] = useState(false)
-  const [editingFixedPath, setEditingFixedPath] = useState<FixedPath | null>(null)
-  const [newFixedPath, setNewFixedPath] = useState<FixedPath>({
-    Path: "",
-    TargetHost: "",
-    TargetURL: "",
-  })
+
   const [extensionMapDialogOpen, setExtensionMapDialogOpen] = useState(false)
   const [editingPath, setEditingPath] = useState<string | null>(null)
   const [editingExtension, setEditingExtension] = useState<{ext: string, target: string} | null>(null)
@@ -107,7 +94,6 @@ export default function ConfigPage() {
   } | null>(null);
 
   const [deletingPath, setDeletingPath] = useState<string | null>(null)
-  const [deletingFixedPath, setDeletingFixedPath] = useState<FixedPath | null>(null)
   const [deletingExtension, setDeletingExtension] = useState<{path: string, ext: string} | null>(null)
 
   const fetchConfig = useCallback(async () => {
@@ -226,20 +212,6 @@ export default function ConfigPage() {
           maxSize: 0,
           sizeThresholdUnit: 'MB',
           maxSizeUnit: 'MB',
-        })
-      }
-    })
-  }, [handleDialogOpenChange])
-
-  const handleFixedPathDialogOpenChange = useCallback((open: boolean) => {
-    handleDialogOpenChange(open, (isOpen) => {
-      setFixedPathDialogOpen(isOpen)
-      if (!isOpen) {
-        setEditingFixedPath(null)
-        setNewFixedPath({
-          Path: "",
-          TargetHost: "",
-          TargetURL: "",
         })
       }
     })
@@ -453,95 +425,8 @@ export default function ConfigPage() {
     })
   }
 
-  const addFixedPath = () => {
-    if (!config) return
-    const { Path, TargetHost, TargetURL } = newFixedPath
-    
-    // 验证输入
-    if (!Path.trim() || !TargetHost.trim() || !TargetURL.trim()) {
-      toast({
-        title: "错误",
-        description: "所有字段都不能为空",
-        variant: "destructive",
-      })
-      return
-    }
 
-    // 验证路径格式
-    if (!Path.startsWith('/')) {
-      toast({
-        title: "错误",
-        description: "路径必须以/开头",
-        variant: "destructive",
-      })
-      return
-    }
 
-    // 验证URL格式
-    try {
-      new URL(TargetURL)
-    } catch {
-      toast({
-        title: "错误",
-        description: "目标URL格式不正确",
-        variant: "destructive",
-      })
-      return
-    }
-
-    // 验证主机名格式
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9-_.]+[a-zA-Z0-9]$/.test(TargetHost)) {
-      toast({
-        title: "错误",
-        description: "目标主机格式不正确",
-        variant: "destructive",
-      })
-      return
-    }
-
-    const newConfig = { ...config }
-    if (editingFixedPath) {
-      const index = newConfig.FixedPaths.findIndex(p => p.Path === editingFixedPath.Path)
-      if (index !== -1) {
-        newConfig.FixedPaths[index] = newFixedPath
-      }
-    } else {
-      // 检查路径是否已存在
-      if (newConfig.FixedPaths.some(p => p.Path === Path)) {
-        toast({
-          title: "错误",
-          description: "该路径已存在",
-          variant: "destructive",
-        })
-        return
-      }
-      newConfig.FixedPaths.push(newFixedPath)
-    }
-
-    setConfig(newConfig)
-    setFixedPathDialogOpen(false)
-    setEditingFixedPath(null)
-    setNewFixedPath({
-      Path: "",
-      TargetHost: "",
-      TargetURL: "",
-    })
-
-    toast({
-      title: "成功",
-      description: "固定路径已更新",
-    })
-  }
-
-  const editFixedPath = (path: FixedPath) => {
-    setEditingFixedPath(path)
-    setNewFixedPath({
-      Path: path.Path,
-      TargetHost: path.TargetHost,
-      TargetURL: path.TargetURL,
-    })
-    setFixedPathDialogOpen(true)
-  }
 
   const openAddPathDialog = () => {
     setEditingPathData(null)
@@ -555,32 +440,6 @@ export default function ConfigPage() {
       maxSizeUnit: 'MB',
     })
     setPathDialogOpen(true)
-  }
-
-  const openAddFixedPathDialog = () => {
-    setEditingFixedPath(null)
-    setNewFixedPath({
-      Path: "",
-      TargetHost: "",
-      TargetURL: "",
-    })
-    setFixedPathDialogOpen(true)
-  }
-
-  const deleteFixedPath = (path: FixedPath) => {
-    setDeletingFixedPath(path)
-  }
-
-  const confirmDeleteFixedPath = () => {
-    if (!config || !deletingFixedPath) return
-    const newConfig = { ...config }
-    newConfig.FixedPaths = newConfig.FixedPaths.filter(p => p.Path !== deletingFixedPath.Path)
-    setConfig(newConfig)
-    setDeletingFixedPath(null)
-    toast({
-      title: "成功",
-      description: "固定路径已删除",
-    })
   }
 
   const exportConfig = () => {
@@ -616,10 +475,6 @@ export default function ConfigPage() {
             !newConfig.Compression.Gzip ||
             !newConfig.Compression.Brotli) {
           throw new Error('配置文件压缩设置格式不正确')
-        }
-
-        if (!Array.isArray(newConfig.FixedPaths)) {
-          throw new Error('配置文件固定路径格式不正确')
         }
 
         // 验证路径映射
@@ -1059,92 +914,6 @@ export default function ConfigPage() {
                 </CardContent>
               </Card>
             </TabsContent>
-
-            <TabsContent value="fixed-paths">
-              <div className="flex justify-end mb-4">
-                <Button onClick={openAddFixedPathDialog}>
-                  <Plus className="w-4 h-4 mr-2" />
-                  添加固定路径
-                </Button>
-              </div>
-
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>路径</TableHead>
-                    <TableHead>目标主机</TableHead>
-                    <TableHead>目标 URL</TableHead>
-                    <TableHead>操作</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {config?.FixedPaths.map((path, index) => (
-                    <TableRow key={index}>
-                      <TableCell>{path.Path}</TableCell>
-                      <TableCell>{path.TargetHost}</TableCell>
-                      <TableCell>{path.TargetURL}</TableCell>
-                      <TableCell>
-                        <div className="flex space-x-2">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => editFixedPath(path)}
-                          >
-                            <Edit className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => deleteFixedPath(path)}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-
-              <Dialog open={fixedPathDialogOpen} onOpenChange={handleFixedPathDialogOpenChange}>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>
-                      {editingFixedPath ? "编辑固定路径" : "添加固定路径"}
-                    </DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label>路径</Label>
-                      <Input
-                        value={editingFixedPath ? editingFixedPath.Path : newFixedPath.Path}
-                        onChange={(e) => setNewFixedPath({ ...newFixedPath, Path: e.target.value })}
-                        placeholder="/example"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>目标主机</Label>
-                      <Input
-                        value={editingFixedPath ? editingFixedPath.TargetHost : newFixedPath.TargetHost}
-                        onChange={(e) => setNewFixedPath({ ...newFixedPath, TargetHost: e.target.value })}
-                        placeholder="example.com"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>目标 URL</Label>
-                      <Input
-                        value={editingFixedPath ? editingFixedPath.TargetURL : newFixedPath.TargetURL}
-                        onChange={(e) => setNewFixedPath({ ...newFixedPath, TargetURL: e.target.value })}
-                        placeholder="https://example.com"
-                      />
-                    </div>
-                    <Button onClick={addFixedPath}>
-                      {editingFixedPath ? "保存" : "添加"}
-                    </Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
-            </TabsContent>
           </Tabs>
         </CardContent>
       </Card>
@@ -1203,25 +972,7 @@ export default function ConfigPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      <AlertDialog 
-        open={!!deletingFixedPath} 
-        onOpenChange={(open) => handleDeleteDialogOpenChange(open, setDeletingFixedPath)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>确认删除</AlertDialogTitle>
-            <AlertDialogDescription>
-              确定要删除固定路径 &ldquo;{deletingFixedPath?.Path}&rdquo; 吗？此操作无法撤销。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDeleteFixedPath}>删除</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
+      
       <AlertDialog 
         open={!!deletingExtension} 
         onOpenChange={(open) => handleDeleteDialogOpenChange(open, setDeletingExtension)}
