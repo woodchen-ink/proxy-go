@@ -17,7 +17,7 @@ export default function LoginPage() {
         <CardContent>
           <div className="space-y-4">
             <Button onClick={handleLogin} className="w-full">
-              使用 Q58 账号登录
+              使用 CZL Connect 登录
             </Button>
           </div>
         </CardContent>

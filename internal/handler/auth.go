@@ -155,7 +155,7 @@ func (h *ProxyHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	clientID := os.Getenv("OAUTH_CLIENT_ID")
 	redirectURI := getCallbackURL(r)
 
-	authURL := fmt.Sprintf("https://connect.q58.club/oauth/authorize?%s",
+	authURL := fmt.Sprintf("https://connect.czl.net/oauth2/authorize?%s",
 		url.Values{
 			"response_type": {"code"},
 			"client_id":     {clientID},
@@ -180,7 +180,7 @@ func (h *ProxyHandler) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reque
 
 	// 获取访问令牌
 	redirectURI := getCallbackURL(r)
-	resp, err := http.PostForm("https://connect.q58.club/api/oauth/access_token",
+	resp, err := http.PostForm("https://connect.czl.net/api/oauth2/token",
 		url.Values{
 			"code":         {code},
 			"redirect_uri": {redirectURI},
@@ -198,7 +198,7 @@ func (h *ProxyHandler) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	// 获取用户信息
-	req, _ := http.NewRequest("GET", "https://connect.q58.club/api/oauth/user", nil)
+	req, _ := http.NewRequest("GET", "https://connect.czl.net/api/oauth2/userinfo", nil)
 	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	client := &http.Client{}
 	userResp, err := client.Do(req)
