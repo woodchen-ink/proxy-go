@@ -2,9 +2,11 @@
 
 A 'simple' reverse proxy server written in Go.
 
-使用方法: https://q58.club/t/topic/165?u=wood
+使用方法: https://www.q58.club/t/topic/165
 
 ## 图片
+
+![image](https://github.com/user-attachments/assets/99b1767f-9470-4838-a4eb-3ce70bbe2094)
 
 ### 仪表统计盘
 
