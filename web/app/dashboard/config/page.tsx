@@ -601,7 +601,6 @@ export default function ConfigPage() {
             <TabsList>
               <TabsTrigger value="paths">路径映射</TabsTrigger>
               <TabsTrigger value="compression">压缩设置</TabsTrigger>
-              <TabsTrigger value="fixed-paths">固定路径</TabsTrigger>
             </TabsList>
 
             <TabsContent value="paths" className="space-y-4">
