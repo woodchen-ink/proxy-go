@@ -124,6 +124,16 @@ export default function ConfigPage() {
       }
 
       const data = await response.json()
+      
+      // 设置默认值
+      if (data.MetricsSaveInterval === undefined || data.MetricsSaveInterval === 0) {
+        data.MetricsSaveInterval = 15; // 默认15分钟
+      }
+      
+      if (data.MetricsMaxFiles === undefined || data.MetricsMaxFiles === 0) {
+        data.MetricsMaxFiles = 10; // 默认10个文件
+      }
+      
       setConfig(data)
     } catch (error) {
       const message = error instanceof Error ? error.message : "获取配置失败"

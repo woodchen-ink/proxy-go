@@ -35,8 +35,10 @@ type CompressorConfig struct {
 func (c *Config) UnmarshalJSON(data []byte) error {
 	// 创建一个临时结构来解析原始JSON
 	type TempConfig struct {
-		MAP         map[string]json.RawMessage `json:"MAP"`
-		Compression CompressionConfig          `json:"Compression"`
+		MAP                 map[string]json.RawMessage `json:"MAP"`
+		Compression         CompressionConfig          `json:"Compression"`
+		MetricsSaveInterval int                        `json:"MetricsSaveInterval"`
+		MetricsMaxFiles     int                        `json:"MetricsMaxFiles"`
 	}
 
 	var temp TempConfig
@@ -46,6 +48,11 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 
 	// 初始化 MAP
 	c.MAP = make(map[string]PathConfig)
+
+	// 复制其他字段
+	c.Compression = temp.Compression
+	c.MetricsSaveInterval = temp.MetricsSaveInterval
+	c.MetricsMaxFiles = temp.MetricsMaxFiles
 
 	// 处理每个路径配置
 	for key, raw := range temp.MAP {
@@ -68,9 +75,6 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 		pathConfig.ProcessExtensionMap() // 处理扩展名映射
 		c.MAP[key] = pathConfig
 	}
-
-	// 复制其他字段
-	c.Compression = temp.Compression
 
 	return nil
 }
