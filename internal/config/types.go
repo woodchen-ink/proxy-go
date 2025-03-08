@@ -6,8 +6,10 @@ import (
 )
 
 type Config struct {
-	MAP         map[string]PathConfig `json:"MAP"` // 改为使用PathConfig
-	Compression CompressionConfig     `json:"Compression"`
+	MAP                 map[string]PathConfig `json:"MAP"` // 改为使用PathConfig
+	Compression         CompressionConfig     `json:"Compression"`
+	MetricsSaveInterval int                   `json:"MetricsSaveInterval"` // 指标保存间隔（分钟）
+	MetricsMaxFiles     int                   `json:"MetricsMaxFiles"`     // 保留的最大统计文件数量
 }
 
 type PathConfig struct {
