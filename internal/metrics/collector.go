@@ -143,17 +143,12 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 		bucketKey = "gt1s"
 	}
 
-	log.Printf("[Metrics] 更新延迟分布: 路径=%s, 延迟=%dms, 桶=%s", path, latencyMs, bucketKey)
-
 	if counter, ok := c.latencyBuckets.Load(bucketKey); ok {
-		oldValue := atomic.LoadInt64(counter.(*int64))
-		newValue := atomic.AddInt64(counter.(*int64), 1)
-		log.Printf("[Metrics] 延迟分布桶 %s: %d -> %d", bucketKey, oldValue, newValue)
+		atomic.AddInt64(counter.(*int64), 1)
 	} else {
 		counter := new(int64)
 		*counter = 1
 		c.latencyBuckets.Store(bucketKey, counter)
-		log.Printf("[Metrics] 新建延迟分布桶: %s = 1", bucketKey)
 	}
 
 	// 更新路径统计
@@ -359,18 +354,13 @@ func (c *Collector) GetStats() map[string]interface{} {
 			if counter != nil {
 				value := atomic.LoadInt64(counter.(*int64))
 				latencyDistribution[bucket] = value
-				log.Printf("[Metrics] 延迟分布桶 %s = %d", bucket, value)
 			} else {
 				latencyDistribution[bucket] = 0
-				log.Printf("[Metrics] 延迟分布桶 %s = 0 (counter is nil)", bucket)
 			}
 		} else {
 			latencyDistribution[bucket] = 0
-			log.Printf("[Metrics] 延迟分布桶 %s = 0 (bucket not found)", bucket)
 		}
 	}
-
-	log.Printf("[Metrics] 延迟分布: %v", latencyDistribution)
 
 	// 获取最近请求记录（使用读锁）
 	recentRequests := c.recentRequests.GetAll()
