@@ -358,3 +358,13 @@ func MaxFloat64(a, b float64) float64 {
 	}
 	return b
 }
+
+// ParseInt 将字符串解析为整数，如果解析失败则返回默认值
+func ParseInt(s string, defaultValue int) int {
+	var result int
+	_, err := fmt.Sscanf(s, "%d", &result)
+	if err != nil {
+		return defaultValue
+	}
+	return result
+}

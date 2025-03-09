@@ -10,6 +10,7 @@ import (
 	"proxy-go/internal/utils"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,6 +27,7 @@ type Collector struct {
 	pathStats       sync.Map
 	statusCodeStats sync.Map
 	latencyBuckets  sync.Map // 响应时间分布
+	refererStats    sync.Map // 引用来源统计
 	bandwidthStats  struct {
 		sync.RWMutex
 		window     time.Duration
@@ -171,6 +173,36 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 	}
 	c.pathStatsMutex.Unlock()
 
+	// 更新引用来源统计
+	if r != nil {
+		referer := r.Header.Get("Referer")
+		if referer != "" {
+			// 简化引用来源，只保留域名部分
+			referer = simplifyReferer(referer)
+
+			if value, ok := c.refererStats.Load(referer); ok {
+				stat := value.(*models.PathMetrics)
+				stat.AddRequest()
+				if status >= 400 {
+					stat.AddError()
+				}
+				stat.AddLatency(int64(latency))
+				stat.AddBytes(bytes)
+			} else {
+				newStat := &models.PathMetrics{
+					Path: referer,
+				}
+				newStat.RequestCount.Store(1)
+				if status >= 400 {
+					newStat.ErrorCount.Store(1)
+				}
+				newStat.TotalLatency.Store(int64(latency))
+				newStat.BytesTransferred.Store(bytes)
+				c.refererStats.Store(referer, newStat)
+			}
+		}
+	}
+
 	// 更新最近请求记录
 	c.recentRequests.Push(models.RequestLog{
 		Time:      time.Now(),
@@ -275,6 +307,41 @@ func (c *Collector) GetStats() map[string]interface{} {
 		pathMetricsValues[i] = metric.ToJSON()
 	}
 
+	// 收集引用来源统计
+	var refererMetrics []*models.PathMetrics
+	c.refererStats.Range(func(key, value interface{}) bool {
+		stats := value.(*models.PathMetrics)
+		requestCount := stats.GetRequestCount()
+		if requestCount > 0 {
+			totalLatency := stats.GetTotalLatency()
+			avgLatencyMs := float64(totalLatency) / float64(requestCount) / float64(time.Millisecond)
+			stats.AvgLatency = fmt.Sprintf("%.2fms", avgLatencyMs)
+			refererMetrics = append(refererMetrics, stats)
+		}
+		return true
+	})
+
+	// 按请求数降序排序，请求数相同时按引用来源字典序排序
+	sort.Slice(refererMetrics, func(i, j int) bool {
+		countI := refererMetrics[i].GetRequestCount()
+		countJ := refererMetrics[j].GetRequestCount()
+		if countI != countJ {
+			return countI > countJ
+		}
+		return refererMetrics[i].Path < refererMetrics[j].Path
+	})
+
+	// 只保留前10个
+	if len(refererMetrics) > 10 {
+		refererMetrics = refererMetrics[:10]
+	}
+
+	// 转换为值切片
+	refererMetricsValues := make([]models.PathMetricsJSON, len(refererMetrics))
+	for i, metric := range refererMetrics {
+		refererMetricsValues[i] = metric.ToJSON()
+	}
+
 	// 收集延迟分布
 	latencyDistribution := make(map[string]int64)
 	c.latencyBuckets.Range(func(key, value interface{}) bool {
@@ -310,6 +377,7 @@ func (c *Collector) GetStats() map[string]interface{} {
 		"bytes_per_second":    float64(atomic.LoadInt64(&c.totalBytes)) / totalRuntime.Seconds(),
 		"status_code_stats":   statusCodeStats,
 		"top_paths":           pathMetricsValues,
+		"top_referers":        refererMetricsValues,
 		"recent_requests":     recentRequests,
 		"latency_stats": map[string]interface{}{
 			"min":          fmt.Sprintf("%.2fms", float64(minLatency)/float64(time.Millisecond)),
@@ -475,4 +543,19 @@ func (c *Collector) getBandwidthHistory() map[string]string {
 		history[k] = utils.FormatBytes(v) + "/min"
 	}
 	return history
+}
+
+// simplifyReferer 简化引用来源URL，只保留域名部分
+func simplifyReferer(referer string) string {
+	// 移除协议部分
+	if idx := strings.Index(referer, "://"); idx != -1 {
+		referer = referer[idx+3:]
+	}
+
+	// 只保留域名部分
+	if idx := strings.Index(referer, "/"); idx != -1 {
+		referer = referer[:idx]
+	}
+
+	return referer
 }

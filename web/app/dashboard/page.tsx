@@ -15,6 +15,7 @@ interface Metrics {
   avg_response_time: string
   requests_per_second: number
   bytes_per_second: number
+  error_rate: number
   status_code_stats: Record<string, number>
   top_paths: Array<{
     path: string
@@ -44,6 +45,13 @@ interface Metrics {
   bandwidth_history: Record<string, string>
   current_bandwidth: string
   total_bytes: number
+  top_referers: Array<{
+    path: string
+    request_count: number
+    error_count: number
+    avg_latency: string
+    bytes_transferred: number
+  }>
 }
 
 export default function DashboardPage() {
@@ -221,7 +229,7 @@ export default function DashboardPage() {
                     </div>
                     <div className={`text-lg font-semibold ${colorClass}`}>{count}</div>
                     <div className="text-sm text-gray-500 mt-1">
-                      {totalRequests ? 
+                      {totalRequests ?
                         ((count as number / totalRequests) * 100).toFixed(1) : 0}%
                     </div>
                   </div>
@@ -230,6 +238,183 @@ export default function DashboardPage() {
           </div>
         </CardContent>
       </Card>
+
+
+      {/* 新增：延迟统计卡片 */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>延迟统计</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="text-sm font-medium text-gray-500">最小响应时间</div>
+                  <div className="text-lg font-semibold">{metrics.latency_stats?.min || "0ms"}</div>
+                </div>
+                <div>
+                  <div className="text-sm font-medium text-gray-500">最大响应时间</div>
+                  <div className="text-lg font-semibold">{metrics.latency_stats?.max || "0ms"}</div>
+                </div>
+              </div>
+
+              <div>
+                <div className="text-sm font-medium text-gray-500 mb-2">响应时间分布</div>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                  {metrics.latency_stats?.distribution &&
+                    Object.entries(metrics.latency_stats.distribution)
+                      .sort((a, b) => {
+                        // 按照延迟范围排序
+                        const order = ["<10ms", "10-50ms", "50-200ms", "200-1000ms", ">1s"];
+                        return order.indexOf(a[0]) - order.indexOf(b[0]);
+                      })
+                      .map(([range, count]) => (
+                        <div key={range} className="p-3 rounded-lg border bg-card text-card-foreground shadow-sm">
+                          <div className="text-sm font-medium text-gray-500">{range}</div>
+                          <div className="text-lg font-semibold">{count}</div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            {Object.values(metrics.latency_stats?.distribution || {}).reduce((sum, val) => sum + val, 0) > 0
+                              ? ((count / Object.values(metrics.latency_stats?.distribution || {}).reduce((sum, val) => sum + val, 0)) * 100).toFixed(1)
+                              : 0}%
+                          </div>
+                        </div>
+                      ))
+                  }
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>带宽统计</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div>
+                <div className="text-sm font-medium text-gray-500">当前带宽</div>
+                <div className="text-lg font-semibold">{metrics.current_bandwidth || "0 B/s"}</div>
+              </div>
+
+              <div>
+                <div className="text-sm font-medium text-gray-500 mb-2">带宽历史</div>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                  {metrics.bandwidth_history &&
+                    Object.entries(metrics.bandwidth_history)
+                      .sort((a, b) => a[0].localeCompare(b[0]))
+                      .map(([time, bandwidth]) => (
+                        <div key={time} className="p-3 rounded-lg border bg-card text-card-foreground shadow-sm">
+                          <div className="text-sm font-medium text-gray-500">{time}</div>
+                          <div className="text-lg font-semibold">{bandwidth}</div>
+                        </div>
+                      ))
+                  }
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* 错误统计卡片 */}
+      <Card>
+        <CardHeader>
+          <CardTitle>错误统计</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-gray-500">客户端错误 (4xx)</div>
+              <div className="text-2xl font-semibold text-yellow-600">
+                {metrics.error_stats?.client_errors || 0}
+              </div>
+              <div className="text-sm text-gray-500">
+                占总请求的 {metrics.total_requests ? 
+                  ((metrics.error_stats?.client_errors || 0) / metrics.total_requests * 100).toFixed(2) : 0}%
+              </div>
+            </div>
+            
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-gray-500">服务器错误 (5xx)</div>
+              <div className="text-2xl font-semibold text-red-600">
+                {metrics.error_stats?.server_errors || 0}
+              </div>
+              <div className="text-sm text-gray-500">
+                占总请求的 {metrics.total_requests ? 
+                  ((metrics.error_stats?.server_errors || 0) / metrics.total_requests * 100).toFixed(2) : 0}%
+              </div>
+            </div>
+            
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-gray-500">总错误率</div>
+              <div className="text-2xl font-semibold">
+                {(metrics.error_rate * 100).toFixed(2)}%
+              </div>
+              <div className="text-sm text-gray-500">
+                总错误数: {metrics.total_errors || 0}
+              </div>
+            </div>
+          </div>
+          
+          {metrics.error_stats?.types && Object.keys(metrics.error_stats.types).length > 0 && (
+            <div className="mt-6">
+              <div className="text-sm font-medium text-gray-500 mb-2">错误类型分布</div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {Object.entries(metrics.error_stats.types).map(([type, count]) => (
+                  <div key={type} className="p-3 rounded-lg border bg-card text-card-foreground shadow-sm">
+                    <div className="text-sm font-medium text-gray-500">{type}</div>
+                    <div className="text-lg font-semibold">{count}</div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      {metrics.total_errors ? ((count / metrics.total_errors) * 100).toFixed(1) : 0}%
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* 引用来源统计卡片 */}
+      {metrics.top_referers && metrics.top_referers.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>引用来源统计 (Top {metrics.top_referers.length})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b">
+                    <th className="text-left p-2">来源域名</th>
+                    <th className="text-left p-2">请求数</th>
+                    <th className="text-left p-2">错误数</th>
+                    <th className="text-left p-2">平均延迟</th>
+                    <th className="text-left p-2">传输大小</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {metrics.top_referers.map((referer, index) => (
+                    <tr key={index} className="border-b">
+                      <td className="p-2">
+                        <span className="text-blue-600">
+                          {referer.path}
+                        </span>
+                      </td>
+                      <td className="p-2">{referer.request_count}</td>
+                      <td className="p-2">{referer.error_count}</td>
+                      <td className="p-2">{referer.avg_latency}</td>
+                      <td className="p-2">{formatBytes(referer.bytes_transferred)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
@@ -293,37 +478,38 @@ export default function DashboardPage() {
                 {(metrics.recent_requests || [])
                   .slice(0, 20)  // 只显示最近20条记录
                   .map((req, index) => (
-                  <tr key={index} className="border-b hover:bg-gray-50">
-                    <td className="p-2">{formatDate(req.Time)}</td>
-                    <td className="p-2 max-w-xs truncate">
-                      <a
-                        href={req.Path}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-600 hover:text-blue-800 hover:underline"
-                      >
-                        {req.Path}
-                      </a>
-                    </td>
-                    <td className="p-2">
-                      <span
-                        className={`px-2 py-1 rounded-full text-xs ${getStatusColor(
-                          req.Status
-                        )}`}
-                      >
-                        {req.Status}
-                      </span>
-                    </td>
-                    <td className="p-2">{formatLatency(req.Latency)}</td>
-                    <td className="p-2">{formatBytes(req.BytesSent)}</td>
-                    <td className="p-2">{req.ClientIP}</td>
-                  </tr>
-                ))}
+                    <tr key={index} className="border-b hover:bg-gray-50">
+                      <td className="p-2">{formatDate(req.Time)}</td>
+                      <td className="p-2 max-w-xs truncate">
+                        <a
+                          href={req.Path}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:text-blue-800 hover:underline"
+                        >
+                          {req.Path}
+                        </a>
+                      </td>
+                      <td className="p-2">
+                        <span
+                          className={`px-2 py-1 rounded-full text-xs ${getStatusColor(
+                            req.Status
+                          )}`}
+                        >
+                          {req.Status}
+                        </span>
+                      </td>
+                      <td className="p-2">{formatLatency(req.Latency)}</td>
+                      <td className="p-2">{formatBytes(req.BytesSent)}</td>
+                      <td className="p-2">{req.ClientIP}</td>
+                    </tr>
+                  ))}
               </tbody>
             </table>
           </div>
         </CardContent>
       </Card>
+
     </div>
   )
 }
