@@ -165,15 +165,17 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 	// 更新路径统计
 	c.pathStatsMutex.Lock()
 	if value, ok := c.pathStats.Load(path); ok {
-		stat := value.(models.PathStats)
-		stat.Requests.Store(stat.Requests.Load() + 1)
-		stat.Bytes.Store(stat.Bytes.Load() + bytes)
-		stat.LatencySum.Store(stat.LatencySum.Load() + int64(latency))
-		if status >= 400 {
-			stat.Errors.Store(stat.Errors.Load() + 1)
+		stat, ok := value.(*models.PathStats)
+		if ok {
+			stat.Requests.Add(1)
+			stat.Bytes.Add(bytes)
+			stat.LatencySum.Add(int64(latency))
+			if status >= 400 {
+				stat.Errors.Add(1)
+			}
 		}
 	} else {
-		newStat := models.PathStats{
+		newStat := &models.PathStats{
 			Requests:   atomic.Int64{},
 			Bytes:      atomic.Int64{},
 			LatencySum: atomic.Int64{},
@@ -262,7 +264,10 @@ func (c *Collector) GetStats() map[string]interface{} {
 	pathStatsMap := make(map[string]interface{})
 	c.pathStats.Range(func(key, value interface{}) bool {
 		path := key.(string)
-		stats := value.(models.PathStats)
+		stats, ok := value.(*models.PathStats)
+		if !ok {
+			return true
+		}
 		requestCount := stats.Requests.Load()
 		if requestCount > 0 {
 			latencySum := stats.LatencySum.Load()
@@ -289,7 +294,11 @@ func (c *Collector) GetStats() map[string]interface{} {
 		AvgLatency string
 	}
 
+	// 限制路径统计的数量，只保留前N个
+	maxPaths := 20 // 只保留前20个路径
 	var pathStatsList []pathStat
+
+	// 先将pathStatsMap转换为pathStatsList
 	for path, statData := range pathStatsMap {
 		if stat, ok := statData.(map[string]interface{}); ok {
 			pathStatsList = append(pathStatsList, pathStat{
@@ -303,6 +312,9 @@ func (c *Collector) GetStats() map[string]interface{} {
 		}
 	}
 
+	// 释放pathStatsMap内存
+	pathStatsMap = nil
+
 	// 按请求数降序排序，请求数相同时按路径字典序排序
 	sort.Slice(pathStatsList, func(i, j int) bool {
 		if pathStatsList[i].Requests != pathStatsList[j].Requests {
@@ -310,6 +322,11 @@ func (c *Collector) GetStats() map[string]interface{} {
 		}
 		return pathStatsList[i].Path < pathStatsList[j].Path
 	})
+
+	// 只保留前maxPaths个
+	if len(pathStatsList) > maxPaths {
+		pathStatsList = pathStatsList[:maxPaths]
+	}
 
 	// 转换为有序的map
 	orderedPathStats := make([]map[string]interface{}, len(pathStatsList))
@@ -378,7 +395,7 @@ func (c *Collector) SaveMetrics(stats map[string]interface{}) error {
 	}
 
 	// 将统计数据保存到文件
-	data, err := json.MarshalIndent(stats, "", "  ")
+	data, err := json.Marshal(stats) // 使用Marshal而不是MarshalIndent来减少内存使用
 	if err != nil {
 		return fmt.Errorf("failed to marshal metrics data: %v", err)
 	}
@@ -398,6 +415,10 @@ func (c *Collector) SaveMetrics(stats map[string]interface{}) error {
 	if err := c.cleanupOldMetricsFiles(); err != nil {
 		log.Printf("[Metrics] Warning: Failed to cleanup old metrics files: %v", err)
 	}
+
+	// 释放内存
+	data = nil
+	runtime.GC()
 
 	c.lastSaveTime = time.Now()
 	log.Printf("[Metrics] Saved metrics to %s", filename)
@@ -455,6 +476,9 @@ func (c *Collector) cleanupOldMetricsFiles() error {
 		})
 	}
 
+	// 释放statsFiles内存
+	statsFiles = nil
+
 	// 按修改时间排序文件（从新到旧）
 	sort.Slice(filesWithInfo, func(i, j int) bool {
 		return filesWithInfo[i].modTime.After(filesWithInfo[j].modTime)
@@ -467,6 +491,10 @@ func (c *Collector) cleanupOldMetricsFiles() error {
 		}
 		log.Printf("[Metrics] Removed old metrics file: %s", filesWithInfo[i].fullPath)
 	}
+
+	// 释放filesWithInfo内存
+	filesWithInfo = nil
+	runtime.GC()
 
 	return nil
 }
@@ -567,7 +595,10 @@ func (c *Collector) validateLoadedData() error {
 	// 验证路径统计
 	var totalPathRequests int64
 	c.pathStats.Range(func(_, value interface{}) bool {
-		stats := value.(models.PathStats)
+		stats, ok := value.(*models.PathStats)
+		if !ok {
+			return true
+		}
 		requestCount := stats.Requests.Load()
 		errorCount := stats.Errors.Load()
 		if requestCount < 0 || errorCount < 0 {
@@ -688,10 +719,16 @@ func (c *Collector) startMetricsSaver() {
 	ticker := time.NewTicker(saveInterval)
 	go func() {
 		for range ticker.C {
-			stats := c.GetStats()
-			if err := c.SaveMetrics(stats); err != nil {
-				log.Printf("[Metrics] Failed to save metrics: %v", err)
-			}
+			func() {
+				// 使用匿名函数来确保每次迭代后都能释放内存
+				stats := c.GetStats()
+				if err := c.SaveMetrics(stats); err != nil {
+					log.Printf("[Metrics] Failed to save metrics: %v", err)
+				}
+				// 释放内存
+				stats = nil
+				runtime.GC()
+			}()
 		}
 	}()
 
