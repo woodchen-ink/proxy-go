@@ -170,9 +170,14 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 			distribution, ok := latencyStatsMap["distribution"]
 			if ok && distribution != nil {
 				log.Printf("[MetricsHandler] distribution=%v", distribution)
-				distributionMap, ok := distribution.(map[string]interface{})
-				if ok {
-					log.Printf("[MetricsHandler] distributionMap=%v", distributionMap)
+
+				// 尝试直接使用 map[string]int64 类型
+				if distributionMap, ok := distribution.(map[string]int64); ok {
+					log.Printf("[MetricsHandler] 直接使用 map[string]int64: %v", distributionMap)
+					metrics.LatencyStats.Distribution = distributionMap
+				} else if distributionMap, ok := distribution.(map[string]interface{}); ok {
+					// 如果不是 map[string]int64，尝试转换 map[string]interface{}
+					log.Printf("[MetricsHandler] 转换 map[string]interface{}: %v", distributionMap)
 					metrics.LatencyStats.Distribution = make(map[string]int64)
 					for k, v := range distributionMap {
 						log.Printf("[MetricsHandler] 处理延迟分布项: %s=%v (type=%T)", k, v, v)
@@ -182,12 +187,10 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 						} else if intValue, ok := v.(int64); ok {
 							metrics.LatencyStats.Distribution[k] = intValue
 							log.Printf("[MetricsHandler] 已经是int64: %s=%d", k, intValue)
-						} else {
-							log.Printf("[MetricsHandler] 无法转换: %s=%v (type=%T)", k, v, v)
 						}
 					}
 				} else {
-					log.Printf("[MetricsHandler] distribution不是map: %v (type=%T)", distribution, distribution)
+					log.Printf("[MetricsHandler] distribution类型未知: %v (type=%T)", distribution, distribution)
 				}
 			} else {
 				log.Printf("[MetricsHandler] 没有distribution字段或为nil: ok=%v, distribution=%v", ok, distribution)
@@ -215,6 +218,9 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 	metrics.ErrorStats.ClientErrors = clientErrors
 	metrics.ErrorStats.ServerErrors = serverErrors
 	metrics.ErrorStats.Types = errorTypes
+
+	// 打印最终的延迟分布数据
+	log.Printf("[MetricsHandler] 最终的延迟分布数据: %v", metrics.LatencyStats.Distribution)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(metrics); err != nil {
