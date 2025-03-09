@@ -323,6 +323,12 @@ func (c *Collector) GetStats() map[string]interface{} {
 
 func (c *Collector) SaveMetrics(stats map[string]interface{}) error {
 	lastSaveTime = time.Now()
+
+	// 如果指标存储服务已初始化，则调用它来保存指标
+	if metricsStorage != nil {
+		return metricsStorage.SaveMetrics()
+	}
+
 	return nil
 }
 

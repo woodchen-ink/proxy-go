@@ -31,6 +31,12 @@ func main() {
 		log.Fatal("Error initializing metrics collector:", err)
 	}
 
+	// 初始化指标存储服务
+	if err := metrics.InitMetricsStorage(cfg); err != nil {
+		log.Printf("Warning: Failed to initialize metrics storage: %v", err)
+		// 不致命，继续运行
+	}
+
 	// 创建压缩管理器
 	compManager := compression.NewManager(compression.Config{
 		Gzip:   compression.CompressorConfig(cfg.Compression.Gzip),
@@ -169,6 +175,10 @@ func main() {
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
 		log.Println("Shutting down server...")
+
+		// 停止指标存储服务
+		metrics.StopMetricsStorage()
+
 		if err := server.Close(); err != nil {
 			log.Printf("Error during server shutdown: %v\n", err)
 		}
