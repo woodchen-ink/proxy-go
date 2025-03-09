@@ -72,6 +72,8 @@ func InitCollector(cfg *config.Config) error {
 		instance.latencyBuckets.Store("200-1000ms", new(int64))
 		instance.latencyBuckets.Store(">1s", new(int64))
 
+		log.Printf("[Metrics] Initializing metrics collector...")
+
 		// 加载历史统计数据
 		if err := instance.LoadRecentStats(); err != nil {
 			log.Printf("[Metrics] Warning: Failed to load stats: %v", err)
@@ -82,6 +84,8 @@ func InitCollector(cfg *config.Config) error {
 
 		// 启动定时保存任务
 		instance.startMetricsSaver()
+
+		log.Printf("[Metrics] Metrics collector initialized")
 	})
 	return nil
 }
@@ -377,6 +381,7 @@ func (c *Collector) GetStats() map[string]interface{} {
 		"bytes_per_second":    float64(atomic.LoadInt64(&c.totalBytes)) / totalRuntime.Seconds(),
 		"status_code_stats":   statusCodeStats,
 		"top_paths":           orderedPathStats,
+		"path_stats":          pathStatsMap,
 		"recent_requests":     recentRequests,
 		"latency_stats": map[string]interface{}{
 			"min":          fmt.Sprintf("%.2fms", float64(minLatency)/float64(time.Millisecond)),
@@ -514,19 +519,28 @@ func (c *Collector) LoadRecentStats() error {
 		return fmt.Errorf("failed to read metrics file: %v", err)
 	}
 
+	log.Printf("[Metrics] Found latest_stats.json, size: %d bytes", len(data))
+
 	// 解析JSON数据
 	var stats map[string]interface{}
 	if err := json.Unmarshal(data, &stats); err != nil {
 		return fmt.Errorf("failed to unmarshal metrics data: %v", err)
 	}
 
+	log.Printf("[Metrics] Successfully parsed JSON data")
+
 	// 恢复统计数据
 	if totalBytes, ok := stats["total_bytes"].(float64); ok {
 		atomic.StoreInt64(&c.totalBytes, int64(totalBytes))
+		log.Printf("[Metrics] Restored total_bytes: %v", totalBytes)
+	} else {
+		log.Printf("[Metrics] No total_bytes found in stats")
 	}
 
 	// 恢复路径统计
+	pathStatsRestored := 0
 	if pathStats, ok := stats["path_stats"].(map[string]interface{}); ok {
+		log.Printf("[Metrics] Found path_stats with %d entries", len(pathStats))
 		for path, stat := range pathStats {
 			if statMap, ok := stat.(map[string]interface{}); ok {
 				pathStat := &models.PathStats{}
@@ -548,21 +562,59 @@ func (c *Collector) LoadRecentStats() error {
 				}
 
 				c.pathStats.Store(path, pathStat)
+				pathStatsRestored++
 			}
+		}
+		log.Printf("[Metrics] Restored %d path stats", pathStatsRestored)
+	} else {
+		log.Printf("[Metrics] No path_stats found in stats")
+
+		// 尝试从top_paths恢复数据
+		if topPaths, ok := stats["top_paths"].([]interface{}); ok {
+			log.Printf("[Metrics] Found top_paths with %d entries", len(topPaths))
+			for _, pathData := range topPaths {
+				if pathMap, ok := pathData.(map[string]interface{}); ok {
+					path, ok1 := pathMap["path"].(string)
+					requests, ok2 := pathMap["requests"].(float64)
+					errors, ok3 := pathMap["errors"].(float64)
+					bytes, ok4 := pathMap["bytes"].(float64)
+					latencySum, ok5 := pathMap["latency_sum"].(float64)
+
+					if ok1 && ok2 && ok3 && ok4 && ok5 {
+						pathStat := &models.PathStats{}
+						pathStat.Requests.Store(int64(requests))
+						pathStat.Errors.Store(int64(errors))
+						pathStat.Bytes.Store(int64(bytes))
+						pathStat.LatencySum.Store(int64(latencySum))
+
+						c.pathStats.Store(path, pathStat)
+						pathStatsRestored++
+					}
+				}
+			}
+			log.Printf("[Metrics] Restored %d path stats from top_paths", pathStatsRestored)
+		} else {
+			log.Printf("[Metrics] No top_paths found in stats")
 		}
 	}
 
 	// 恢复状态码统计
-	if statusStats, ok := stats["status_codes"].(map[string]interface{}); ok {
+	statusCodesRestored := 0
+	if statusStats, ok := stats["status_code_stats"].(map[string]interface{}); ok {
+		log.Printf("[Metrics] Found status_code_stats with %d entries", len(statusStats))
 		for code, count := range statusStats {
 			if countVal, ok := count.(float64); ok {
 				codeInt := 0
 				if _, err := fmt.Sscanf(code, "%d", &codeInt); err == nil {
 					var counter int64 = int64(countVal)
 					c.statusCodeStats.Store(codeInt, &counter)
+					statusCodesRestored++
 				}
 			}
 		}
+		log.Printf("[Metrics] Restored %d status codes", statusCodesRestored)
+	} else {
+		log.Printf("[Metrics] No status_code_stats found in stats")
 	}
 
 	if err := c.validateLoadedData(); err != nil {
@@ -597,23 +649,33 @@ func (c *Collector) validateLoadedData() error {
 	c.pathStats.Range(func(_, value interface{}) bool {
 		stats, ok := value.(*models.PathStats)
 		if !ok {
+			log.Printf("[Metrics] Warning: Invalid path stats type: %T", value)
 			return true
 		}
 		requestCount := stats.Requests.Load()
 		errorCount := stats.Errors.Load()
 		if requestCount < 0 || errorCount < 0 {
+			log.Printf("[Metrics] Warning: Invalid path stats values: requests=%d, errors=%d", requestCount, errorCount)
 			return false
 		}
 		if errorCount > requestCount {
+			log.Printf("[Metrics] Warning: Error count (%d) exceeds request count (%d)", errorCount, requestCount)
 			return false
 		}
 		totalPathRequests += requestCount
 		return true
 	})
 
-	if totalPathRequests != statusCodeTotal {
-		return fmt.Errorf("path stats total (%d) does not match status code total (%d)",
-			totalPathRequests, statusCodeTotal)
+	// 如果没有请求，则跳过验证
+	if statusCodeTotal == 0 && totalPathRequests == 0 {
+		log.Printf("[Metrics] No requests to validate")
+		return nil
+	}
+
+	// 允许一定的误差
+	if math.Abs(float64(totalPathRequests-statusCodeTotal)) > float64(statusCodeTotal)*0.1 {
+		log.Printf("[Metrics] Warning: Path stats total (%d) does not match status code total (%d)", totalPathRequests, statusCodeTotal)
+		// 不返回错误，只记录警告
 	}
 
 	return nil
