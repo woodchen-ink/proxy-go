@@ -76,8 +76,6 @@ func (c *configImpl) Update(newConfig *Config) {
 	// 更新配置
 	c.MAP = newConfig.MAP
 	c.Compression = newConfig.Compression
-	c.MetricsSaveInterval = newConfig.MetricsSaveInterval
-	c.MetricsMaxFiles = newConfig.MetricsMaxFiles
 
 	// 触发回调
 	for _, callback := range c.onConfigUpdate {

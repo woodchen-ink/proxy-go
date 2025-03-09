@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useToast } from "@/components/ui/use-toast"
 import { useRouter } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -55,8 +55,6 @@ interface Config {
     Gzip: CompressionConfig
     Brotli: CompressionConfig
   }
-  MetricsSaveInterval?: number  // 指标保存间隔（分钟）
-  MetricsMaxFiles?: number      // 保留的最大统计文件数量
 }
 
 export default function ConfigPage() {
@@ -124,16 +122,6 @@ export default function ConfigPage() {
       }
 
       const data = await response.json()
-      
-      // 设置默认值
-      if (data.MetricsSaveInterval === undefined || data.MetricsSaveInterval === 0) {
-        data.MetricsSaveInterval = 15; // 默认15分钟
-      }
-      
-      if (data.MetricsMaxFiles === undefined || data.MetricsMaxFiles === 0) {
-        data.MetricsMaxFiles = 10; // 默认10个文件
-      }
-      
       setConfig(data)
     } catch (error) {
       const message = error instanceof Error ? error.message : "获取配置失败"
@@ -335,13 +323,6 @@ export default function ConfigPage() {
     setConfig(newConfig)
   }
 
-  const updateMetricsSettings = (field: 'MetricsSaveInterval' | 'MetricsMaxFiles', value: number) => {
-    if (!config) return
-    const newConfig = { ...config }
-    newConfig[field] = value
-    setConfig(newConfig)
-  }
-
   const handleExtensionMapEdit = (path: string, ext?: string, target?: string) => {
     setEditingPath(path)
     if (ext && target) {
@@ -443,6 +424,9 @@ export default function ConfigPage() {
       description: "扩展名映射已删除",
     })
   }
+
+
+
 
   const openAddPathDialog = () => {
     setEditingPathData(null)
@@ -617,7 +601,6 @@ export default function ConfigPage() {
             <TabsList>
               <TabsTrigger value="paths">路径映射</TabsTrigger>
               <TabsTrigger value="compression">压缩设置</TabsTrigger>
-              <TabsTrigger value="metrics">指标设置</TabsTrigger>
             </TabsList>
 
             <TabsContent value="paths" className="space-y-4">
@@ -926,64 +909,6 @@ export default function ConfigPage() {
                       value={[config?.Compression.Brotli.Level || 4]}
                       onValueChange={(value: number[]) => updateCompression('Brotli', 'Level', value[0])}
                     />
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="metrics" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>指标设置</CardTitle>
-                  <CardDescription>
-                    配置指标收集和保存的相关设置
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="space-y-4">
-                    <div className="grid gap-4">
-                      <div className="grid gap-2">
-                        <Label htmlFor="metricsSaveInterval">指标保存间隔（分钟）</Label>
-                        <div className="flex items-center gap-2">
-                          <Input
-                            id="metricsSaveInterval"
-                            type="number"
-                            min="1"
-                            max="1440"
-                            value={config?.MetricsSaveInterval || 15}
-                            onChange={(e) => updateMetricsSettings('MetricsSaveInterval', parseInt(e.target.value) || 15)}
-                            className="w-24"
-                          />
-                          <span className="text-sm text-muted-foreground">
-                            分钟（默认：15分钟）
-                          </span>
-                        </div>
-                        <p className="text-sm text-muted-foreground">
-                          系统将按此间隔定期保存统计数据到文件
-                        </p>
-                      </div>
-
-                      <div className="grid gap-2">
-                        <Label htmlFor="metricsMaxFiles">保留的最大统计文件数量</Label>
-                        <div className="flex items-center gap-2">
-                          <Input
-                            id="metricsMaxFiles"
-                            type="number"
-                            min="1"
-                            max="100"
-                            value={config?.MetricsMaxFiles || 10}
-                            onChange={(e) => updateMetricsSettings('MetricsMaxFiles', parseInt(e.target.value) || 10)}
-                            className="w-24"
-                          />
-                          <span className="text-sm text-muted-foreground">
-                            个文件（默认：10个）
-                          </span>
-                        </div>
-                        <p className="text-sm text-muted-foreground">
-                          超过此数量的旧统计文件将被自动清理
-                        </p>
-                      </div>
-                    </div>
                   </div>
                 </CardContent>
               </Card>
