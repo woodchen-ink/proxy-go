@@ -4,6 +4,12 @@ A 'simple' reverse proxy server written in Go.
 
 使用方法: https://www.q58.club/t/topic/165
 
+## 新版统计仪表盘
+
+![image](https://github.com/user-attachments/assets/0b87863e-5566-4ee6-a3b7-94a994cdd572)
+
+
+
 ## 图片
 
 ![image](https://github.com/user-attachments/assets/99b1767f-9470-4838-a4eb-3ce70bbe2094)
