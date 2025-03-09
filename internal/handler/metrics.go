@@ -161,13 +161,30 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 	metrics.LatencyStats.Max = utils.SafeString(latencyStats["max"], "0ms")
 
 	// 处理分布数据
-	if distribution, ok := latencyStats["distribution"].(map[string]interface{}); ok {
-		metrics.LatencyStats.Distribution = make(map[string]int64)
-		for k, v := range distribution {
-			if intValue, ok := v.(float64); ok {
-				metrics.LatencyStats.Distribution[k] = int64(intValue)
+	if stats["latency_stats"] != nil {
+		if distribution, ok := stats["latency_stats"].(map[string]interface{})["distribution"]; ok && distribution != nil {
+			if distributionMap, ok := distribution.(map[string]interface{}); ok {
+				metrics.LatencyStats.Distribution = make(map[string]int64)
+				for k, v := range distributionMap {
+					if intValue, ok := v.(float64); ok {
+						metrics.LatencyStats.Distribution[k] = int64(intValue)
+					} else if intValue, ok := v.(int64); ok {
+						metrics.LatencyStats.Distribution[k] = intValue
+					}
+				}
 			}
 		}
+	}
+
+	// 如果分布数据为空，初始化一个空的分布
+	if metrics.LatencyStats.Distribution == nil {
+		metrics.LatencyStats.Distribution = make(map[string]int64)
+		// 添加默认的延迟桶
+		metrics.LatencyStats.Distribution["<10ms"] = 0
+		metrics.LatencyStats.Distribution["10-50ms"] = 0
+		metrics.LatencyStats.Distribution["50-200ms"] = 0
+		metrics.LatencyStats.Distribution["200-1000ms"] = 0
+		metrics.LatencyStats.Distribution[">1s"] = 0
 	}
 
 	// 填充错误统计数据

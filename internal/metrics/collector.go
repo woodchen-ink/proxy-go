@@ -61,11 +61,12 @@ func InitCollector(cfg *config.Config) error {
 		instance.bandwidthStats.history = make(map[string]int64)
 
 		// 初始化延迟分布桶
-		instance.latencyBuckets.Store("<10ms", new(int64))
-		instance.latencyBuckets.Store("10-50ms", new(int64))
-		instance.latencyBuckets.Store("50-200ms", new(int64))
-		instance.latencyBuckets.Store("200-1000ms", new(int64))
-		instance.latencyBuckets.Store(">1s", new(int64))
+		buckets := []string{"<10ms", "10-50ms", "50-200ms", "200-1000ms", ">1s"}
+		for _, bucket := range buckets {
+			counter := new(int64)
+			*counter = 0
+			instance.latencyBuckets.Store(bucket, counter)
+		}
 
 		// 启动数据一致性检查器
 		instance.startConsistencyChecker()
@@ -344,14 +345,20 @@ func (c *Collector) GetStats() map[string]interface{} {
 
 	// 收集延迟分布
 	latencyDistribution := make(map[string]int64)
-	c.latencyBuckets.Range(func(key, value interface{}) bool {
-		if counter, ok := value.(*int64); ok {
-			latencyDistribution[key.(string)] = atomic.LoadInt64(counter)
+
+	// 确保所有桶都存在，即使计数为0
+	buckets := []string{"<10ms", "10-50ms", "50-200ms", "200-1000ms", ">1s"}
+	for _, bucket := range buckets {
+		if counter, ok := c.latencyBuckets.Load(bucket); ok {
+			if counter != nil {
+				latencyDistribution[bucket] = atomic.LoadInt64(counter.(*int64))
+			} else {
+				latencyDistribution[bucket] = 0
+			}
 		} else {
-			latencyDistribution[key.(string)] = value.(int64)
+			latencyDistribution[bucket] = 0
 		}
-		return true
-	})
+	}
 
 	// 获取最近请求记录（使用读锁）
 	recentRequests := c.recentRequests.GetAll()
