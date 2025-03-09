@@ -266,21 +266,27 @@ export default function DashboardPage() {
                     Object.entries(metrics.latency_stats.distribution)
                       .sort((a, b) => {
                         // 按照延迟范围排序
-                        const order = ["<10ms", "10-50ms", "50-200ms", "200-1000ms", ">1s"];
+                        const order = ["lt10ms", "10-50ms", "50-200ms", "200-1000ms", "gt1s"];
                         return order.indexOf(a[0]) - order.indexOf(b[0]);
                       })
-                      .map(([range, count]) => (
-                        <div key={range} className="p-3 rounded-lg border bg-card text-card-foreground shadow-sm">
-                          <div className="text-sm font-medium text-gray-500">{range}</div>
-                          <div className="text-lg font-semibold">{count}</div>
-                          <div className="text-xs text-gray-500 mt-1">
-                            {Object.values(metrics.latency_stats?.distribution || {}).reduce((sum, val) => sum + val, 0) > 0
-                              ? ((count / Object.values(metrics.latency_stats?.distribution || {}).reduce((sum, val) => sum + val, 0)) * 100).toFixed(1)
-                              : 0}%
+                      .map(([range, count]) => {
+                        // 转换桶键为更友好的显示
+                        let displayRange = range;
+                        if (range === "lt10ms") displayRange = "<10ms";
+                        if (range === "gt1s") displayRange = ">1s";
+                        
+                        return (
+                          <div key={range} className="p-3 rounded-lg border bg-card text-card-foreground shadow-sm">
+                            <div className="text-sm font-medium text-gray-500">{displayRange}</div>
+                            <div className="text-lg font-semibold">{count}</div>
+                            <div className="text-xs text-gray-500 mt-1">
+                              {Object.values(metrics.latency_stats?.distribution || {}).reduce((sum, val) => sum + val, 0) > 0
+                                ? ((count / Object.values(metrics.latency_stats?.distribution || {}).reduce((sum, val) => sum + val, 0)) * 100).toFixed(1)
+                                : 0}%
+                            </div>
                           </div>
-                        </div>
-                      ))
-                  }
+                        );
+                      })}
                 </div>
               </div>
             </div>

@@ -161,30 +161,54 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 	metrics.LatencyStats.Max = utils.SafeString(latencyStats["max"], "0ms")
 
 	// 处理分布数据
+	log.Printf("[MetricsHandler] 处理延迟分布数据: stats[latency_stats]=%v", stats["latency_stats"])
+
 	if stats["latency_stats"] != nil {
-		if distribution, ok := stats["latency_stats"].(map[string]interface{})["distribution"]; ok && distribution != nil {
-			if distributionMap, ok := distribution.(map[string]interface{}); ok {
-				metrics.LatencyStats.Distribution = make(map[string]int64)
-				for k, v := range distributionMap {
-					if intValue, ok := v.(float64); ok {
-						metrics.LatencyStats.Distribution[k] = int64(intValue)
-					} else if intValue, ok := v.(int64); ok {
-						metrics.LatencyStats.Distribution[k] = intValue
+		latencyStatsMap, ok := stats["latency_stats"].(map[string]interface{})
+		if ok {
+			log.Printf("[MetricsHandler] latencyStatsMap=%v", latencyStatsMap)
+			distribution, ok := latencyStatsMap["distribution"]
+			if ok && distribution != nil {
+				log.Printf("[MetricsHandler] distribution=%v", distribution)
+				distributionMap, ok := distribution.(map[string]interface{})
+				if ok {
+					log.Printf("[MetricsHandler] distributionMap=%v", distributionMap)
+					metrics.LatencyStats.Distribution = make(map[string]int64)
+					for k, v := range distributionMap {
+						log.Printf("[MetricsHandler] 处理延迟分布项: %s=%v (type=%T)", k, v, v)
+						if intValue, ok := v.(float64); ok {
+							metrics.LatencyStats.Distribution[k] = int64(intValue)
+							log.Printf("[MetricsHandler] 转换为int64: %s=%d", k, int64(intValue))
+						} else if intValue, ok := v.(int64); ok {
+							metrics.LatencyStats.Distribution[k] = intValue
+							log.Printf("[MetricsHandler] 已经是int64: %s=%d", k, intValue)
+						} else {
+							log.Printf("[MetricsHandler] 无法转换: %s=%v (type=%T)", k, v, v)
+						}
 					}
+				} else {
+					log.Printf("[MetricsHandler] distribution不是map: %v (type=%T)", distribution, distribution)
 				}
+			} else {
+				log.Printf("[MetricsHandler] 没有distribution字段或为nil: ok=%v, distribution=%v", ok, distribution)
 			}
+		} else {
+			log.Printf("[MetricsHandler] latency_stats不是map: %v (type=%T)", stats["latency_stats"], stats["latency_stats"])
 		}
+	} else {
+		log.Printf("[MetricsHandler] latency_stats为nil")
 	}
 
 	// 如果分布数据为空，初始化一个空的分布
 	if metrics.LatencyStats.Distribution == nil {
+		log.Printf("[MetricsHandler] 初始化空的延迟分布")
 		metrics.LatencyStats.Distribution = make(map[string]int64)
 		// 添加默认的延迟桶
-		metrics.LatencyStats.Distribution["<10ms"] = 0
+		metrics.LatencyStats.Distribution["lt10ms"] = 0
 		metrics.LatencyStats.Distribution["10-50ms"] = 0
 		metrics.LatencyStats.Distribution["50-200ms"] = 0
 		metrics.LatencyStats.Distribution["200-1000ms"] = 0
-		metrics.LatencyStats.Distribution[">1s"] = 0
+		metrics.LatencyStats.Distribution["gt1s"] = 0
 	}
 
 	// 填充错误统计数据

@@ -61,7 +61,7 @@ func InitCollector(cfg *config.Config) error {
 		instance.bandwidthStats.history = make(map[string]int64)
 
 		// 初始化延迟分布桶
-		buckets := []string{"<10ms", "10-50ms", "50-200ms", "200-1000ms", ">1s"}
+		buckets := []string{"lt10ms", "10-50ms", "50-200ms", "200-1000ms", "gt1s"}
 		for _, bucket := range buckets {
 			counter := new(int64)
 			*counter = 0
@@ -132,7 +132,7 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 	var bucketKey string
 	switch {
 	case latencyMs < 10:
-		bucketKey = "<10ms"
+		bucketKey = "lt10ms"
 	case latencyMs < 50:
 		bucketKey = "10-50ms"
 	case latencyMs < 200:
@@ -140,14 +140,20 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 	case latencyMs < 1000:
 		bucketKey = "200-1000ms"
 	default:
-		bucketKey = ">1s"
+		bucketKey = "gt1s"
 	}
+
+	log.Printf("[Metrics] 更新延迟分布: 路径=%s, 延迟=%dms, 桶=%s", path, latencyMs, bucketKey)
+
 	if counter, ok := c.latencyBuckets.Load(bucketKey); ok {
-		atomic.AddInt64(counter.(*int64), 1)
+		oldValue := atomic.LoadInt64(counter.(*int64))
+		newValue := atomic.AddInt64(counter.(*int64), 1)
+		log.Printf("[Metrics] 延迟分布桶 %s: %d -> %d", bucketKey, oldValue, newValue)
 	} else {
 		counter := new(int64)
 		*counter = 1
 		c.latencyBuckets.Store(bucketKey, counter)
+		log.Printf("[Metrics] 新建延迟分布桶: %s = 1", bucketKey)
 	}
 
 	// 更新路径统计
@@ -347,18 +353,24 @@ func (c *Collector) GetStats() map[string]interface{} {
 	latencyDistribution := make(map[string]int64)
 
 	// 确保所有桶都存在，即使计数为0
-	buckets := []string{"<10ms", "10-50ms", "50-200ms", "200-1000ms", ">1s"}
+	buckets := []string{"lt10ms", "10-50ms", "50-200ms", "200-1000ms", "gt1s"}
 	for _, bucket := range buckets {
 		if counter, ok := c.latencyBuckets.Load(bucket); ok {
 			if counter != nil {
-				latencyDistribution[bucket] = atomic.LoadInt64(counter.(*int64))
+				value := atomic.LoadInt64(counter.(*int64))
+				latencyDistribution[bucket] = value
+				log.Printf("[Metrics] 延迟分布桶 %s = %d", bucket, value)
 			} else {
 				latencyDistribution[bucket] = 0
+				log.Printf("[Metrics] 延迟分布桶 %s = 0 (counter is nil)", bucket)
 			}
 		} else {
 			latencyDistribution[bucket] = 0
+			log.Printf("[Metrics] 延迟分布桶 %s = 0 (bucket not found)", bucket)
 		}
 	}
+
+	log.Printf("[Metrics] 延迟分布: %v", latencyDistribution)
 
 	// 获取最近请求记录（使用读锁）
 	recentRequests := c.recentRequests.GetAll()
