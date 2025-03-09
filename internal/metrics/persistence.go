@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"proxy-go/internal/models"
+	"proxy-go/internal/utils"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -106,12 +108,10 @@ func (ms *MetricsStorage) SaveMetrics() error {
 
 	// 保存基本指标 - 只保存必要的字段
 	basicMetrics := map[string]interface{}{
-		"uptime":              stats["uptime"],
-		"total_bytes":         stats["total_bytes"],
-		"avg_response_time":   stats["avg_response_time"],
-		"requests_per_second": stats["requests_per_second"],
-		"bytes_per_second":    stats["bytes_per_second"],
-		"save_time":           time.Now().Format(time.RFC3339),
+		"uptime":            stats["uptime"],
+		"total_bytes":       stats["total_bytes"],
+		"avg_response_time": stats["avg_response_time"],
+		"save_time":         time.Now().Format(time.RFC3339),
 	}
 
 	// 单独保存延迟统计，避免嵌套结构导致的内存占用
@@ -154,7 +154,15 @@ func (ms *MetricsStorage) SaveMetrics() error {
 	ms.lastSaveTime = time.Now()
 	ms.mutex.Unlock()
 
-	log.Printf("[MetricsStorage] 指标数据保存完成，耗时: %v", time.Since(start))
+	// 强制进行一次GC
+	runtime.GC()
+
+	// 打印内存使用情况
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+
+	log.Printf("[MetricsStorage] 指标数据保存完成，耗时: %v, 内存使用: %s",
+		time.Since(start), utils.FormatBytes(int64(mem.Alloc)))
 	return nil
 }
 
@@ -314,7 +322,15 @@ func (ms *MetricsStorage) LoadMetrics() error {
 	}
 	ms.mutex.Unlock()
 
-	log.Printf("[MetricsStorage] 指标数据加载完成，耗时: %v", time.Since(start))
+	// 强制进行一次GC
+	runtime.GC()
+
+	// 打印内存使用情况
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+
+	log.Printf("[MetricsStorage] 指标数据加载完成，耗时: %v, 内存使用: %s",
+		time.Since(start), utils.FormatBytes(int64(mem.Alloc)))
 	return nil
 }
 

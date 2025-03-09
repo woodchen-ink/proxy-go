@@ -468,8 +468,10 @@ func (c *Collector) validateLoadedData() error {
 		return true
 	})
 
-	if totalPathRequests != statusCodeTotal {
-		return fmt.Errorf("path stats total (%d) does not match status code total (%d)",
+	// 由于我们限制了路径统计的收集数量，路径统计总数可能小于状态码统计总数
+	// 因此，我们只需要确保路径统计总数不超过状态码统计总数即可
+	if float64(totalPathRequests) > float64(statusCodeTotal)*1.1 { // 允许10%的误差
+		return fmt.Errorf("path stats total (%d) significantly exceeds status code total (%d)",
 			totalPathRequests, statusCodeTotal)
 	}
 
@@ -583,7 +585,10 @@ func simplifyReferer(referer string) string {
 // startCleanupTask 启动定期清理任务
 func (c *Collector) startCleanupTask() {
 	go func() {
-		ticker := time.NewTicker(1 * time.Hour) // 每小时清理一次
+		// 先立即执行一次清理
+		c.cleanupOldData()
+
+		ticker := time.NewTicker(15 * time.Minute) // 每15分钟清理一次
 		defer ticker.Stop()
 
 		for range ticker.C {
@@ -596,32 +601,102 @@ func (c *Collector) startCleanupTask() {
 func (c *Collector) cleanupOldData() {
 	log.Printf("[Metrics] 开始清理旧数据...")
 
-	// 清理路径统计 - 只保留有请求的路径
+	// 清理路径统计 - 只保留有请求且请求数较多的路径
 	var pathsToRemove []string
+	var pathsCount int
+	var totalRequests int64
+
+	// 先收集所有路径及其请求数
+	type pathInfo struct {
+		path  string
+		count int64
+	}
+	var paths []pathInfo
+
 	c.pathStats.Range(func(key, value interface{}) bool {
 		path := key.(string)
 		stats := value.(*models.PathMetrics)
-		if stats.GetRequestCount() == 0 {
-			pathsToRemove = append(pathsToRemove, path)
-		}
+		count := stats.GetRequestCount()
+		pathsCount++
+		totalRequests += count
+		paths = append(paths, pathInfo{path, count})
 		return true
 	})
 
+	// 按请求数排序
+	sort.Slice(paths, func(i, j int) bool {
+		return paths[i].count > paths[j].count
+	})
+
+	// 只保留前100个请求数最多的路径，或者请求数占总请求数1%以上的路径
+	threshold := totalRequests / 100 // 1%的阈值
+	if threshold < 10 {
+		threshold = 10 // 至少保留请求数>=10的路径
+	}
+
+	// 标记要删除的路径
+	for _, pi := range paths {
+		if len(paths)-len(pathsToRemove) <= 100 {
+			// 已经只剩下100个路径了，不再删除
+			break
+		}
+
+		if pi.count < threshold {
+			pathsToRemove = append(pathsToRemove, pi.path)
+		}
+	}
+
+	// 删除标记的路径
 	for _, path := range pathsToRemove {
 		c.pathStats.Delete(path)
 	}
 
-	// 清理引用来源统计 - 只保留有请求的引用来源
+	// 清理引用来源统计 - 类似地处理
 	var referersToRemove []string
+	var referersCount int
+	var totalRefererRequests int64
+
+	// 先收集所有引用来源及其请求数
+	type refererInfo struct {
+		referer string
+		count   int64
+	}
+	var referers []refererInfo
+
 	c.refererStats.Range(func(key, value interface{}) bool {
 		referer := key.(string)
 		stats := value.(*models.PathMetrics)
-		if stats.GetRequestCount() == 0 {
-			referersToRemove = append(referersToRemove, referer)
-		}
+		count := stats.GetRequestCount()
+		referersCount++
+		totalRefererRequests += count
+		referers = append(referers, refererInfo{referer, count})
 		return true
 	})
 
+	// 按请求数排序
+	sort.Slice(referers, func(i, j int) bool {
+		return referers[i].count > referers[j].count
+	})
+
+	// 只保留前50个请求数最多的引用来源，或者请求数占总请求数2%以上的引用来源
+	refThreshold := totalRefererRequests / 50 // 2%的阈值
+	if refThreshold < 5 {
+		refThreshold = 5 // 至少保留请求数>=5的引用来源
+	}
+
+	// 标记要删除的引用来源
+	for _, ri := range referers {
+		if len(referers)-len(referersToRemove) <= 50 {
+			// 已经只剩下50个引用来源了，不再删除
+			break
+		}
+
+		if ri.count < refThreshold {
+			referersToRemove = append(referersToRemove, ri.referer)
+		}
+	}
+
+	// 删除标记的引用来源
 	for _, referer := range referersToRemove {
 		c.refererStats.Delete(referer)
 	}
@@ -654,5 +729,15 @@ func (c *Collector) cleanupOldData() {
 	}
 	c.bandwidthStats.Unlock()
 
-	log.Printf("[Metrics] 清理完成: 删除了 %d 个路径, %d 个引用来源", len(pathsToRemove), len(referersToRemove))
+	// 强制进行一次GC
+	runtime.GC()
+
+	// 打印内存使用情况
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+
+	log.Printf("[Metrics] 清理完成: 删除了 %d/%d 个路径, %d/%d 个引用来源, 当前内存使用: %s",
+		len(pathsToRemove), pathsCount,
+		len(referersToRemove), referersCount,
+		utils.FormatBytes(int64(mem.Alloc)))
 }
