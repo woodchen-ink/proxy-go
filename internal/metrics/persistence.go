@@ -14,16 +14,17 @@ import (
 
 // MetricsStorage 指标存储结构
 type MetricsStorage struct {
-	collector      *Collector
-	saveInterval   time.Duration
-	dataDir        string
-	stopChan       chan struct{}
-	wg             sync.WaitGroup
-	lastSaveTime   time.Time
-	mutex          sync.RWMutex
-	metricsFile    string
-	pathStatsFile  string
-	statusCodeFile string
+	collector        *Collector
+	saveInterval     time.Duration
+	dataDir          string
+	stopChan         chan struct{}
+	wg               sync.WaitGroup
+	lastSaveTime     time.Time
+	mutex            sync.RWMutex
+	metricsFile      string
+	pathStatsFile    string
+	statusCodeFile   string
+	refererStatsFile string
 }
 
 // NewMetricsStorage 创建新的指标存储
@@ -33,13 +34,14 @@ func NewMetricsStorage(collector *Collector, dataDir string, saveInterval time.D
 	}
 
 	return &MetricsStorage{
-		collector:      collector,
-		saveInterval:   saveInterval,
-		dataDir:        dataDir,
-		stopChan:       make(chan struct{}),
-		metricsFile:    filepath.Join(dataDir, "metrics.json"),
-		pathStatsFile:  filepath.Join(dataDir, "path_stats.json"),
-		statusCodeFile: filepath.Join(dataDir, "status_codes.json"),
+		collector:        collector,
+		saveInterval:     saveInterval,
+		dataDir:          dataDir,
+		stopChan:         make(chan struct{}),
+		metricsFile:      filepath.Join(dataDir, "metrics.json"),
+		pathStatsFile:    filepath.Join(dataDir, "path_stats.json"),
+		statusCodeFile:   filepath.Join(dataDir, "status_codes.json"),
+		refererStatsFile: filepath.Join(dataDir, "referer_stats.json"),
 	}
 }
 
@@ -129,6 +131,11 @@ func (ms *MetricsStorage) SaveMetrics() error {
 		return fmt.Errorf("保存状态码统计失败: %v", err)
 	}
 
+	// 保存引用来源统计
+	if err := saveJSONToFile(ms.refererStatsFile, stats["top_referers"]); err != nil {
+		return fmt.Errorf("保存引用来源统计失败: %v", err)
+	}
+
 	ms.mutex.Lock()
 	ms.lastSaveTime = time.Now()
 	ms.mutex.Unlock()
@@ -163,6 +170,17 @@ func (ms *MetricsStorage) LoadMetrics() error {
 	var statusCodeStats map[string]interface{}
 	if err := loadJSONFromFile(ms.statusCodeFile, &statusCodeStats); err != nil {
 		return fmt.Errorf("加载状态码统计失败: %v", err)
+	}
+
+	// 加载引用来源统计（如果文件存在）
+	var refererStats []map[string]interface{}
+	if fileExists(ms.refererStatsFile) {
+		if err := loadJSONFromFile(ms.refererStatsFile, &refererStats); err != nil {
+			log.Printf("[MetricsStorage] 加载引用来源统计失败: %v", err)
+			// 不中断加载过程
+		} else {
+			log.Printf("[MetricsStorage] 成功加载引用来源统计: %d 条记录", len(refererStats))
+		}
 	}
 
 	// 将加载的数据应用到收集器
@@ -212,6 +230,35 @@ func (ms *MetricsStorage) LoadMetrics() error {
 			*counter = int64(countValue)
 			ms.collector.statusCodeStats.Store(statusCode, counter)
 		}
+	}
+
+	// 4. 应用引用来源统计
+	if len(refererStats) > 0 {
+		for _, refererStat := range refererStats {
+			referer, ok := refererStat["path"].(string)
+			if !ok {
+				continue
+			}
+
+			requestCount, _ := refererStat["request_count"].(float64)
+			errorCount, _ := refererStat["error_count"].(float64)
+			bytesTransferred, _ := refererStat["bytes_transferred"].(float64)
+
+			// 创建或更新引用来源统计
+			var refererMetrics *models.PathMetrics
+			if existingMetrics, ok := ms.collector.refererStats.Load(referer); ok {
+				refererMetrics = existingMetrics.(*models.PathMetrics)
+			} else {
+				refererMetrics = &models.PathMetrics{Path: referer}
+				ms.collector.refererStats.Store(referer, refererMetrics)
+			}
+
+			// 设置统计值
+			refererMetrics.RequestCount.Store(int64(requestCount))
+			refererMetrics.ErrorCount.Store(int64(errorCount))
+			refererMetrics.BytesTransferred.Store(int64(bytesTransferred))
+		}
+		log.Printf("[MetricsStorage] 应用了 %d 条引用来源统计记录", len(refererStats))
 	}
 
 	// 4. 应用延迟分布桶（如果有）

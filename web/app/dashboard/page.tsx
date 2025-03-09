@@ -274,6 +274,7 @@ export default function DashboardPage() {
                         let displayRange = range;
                         if (range === "lt10ms") displayRange = "<10ms";
                         if (range === "gt1s") displayRange = ">1s";
+                        if (range === "200-1000ms") displayRange = "0.2-1s";
                         
                         return (
                           <div key={range} className="p-3 rounded-lg border bg-card text-card-foreground shadow-sm">
@@ -404,7 +405,7 @@ export default function DashboardPage() {
                 <tbody>
                   {metrics.top_referers.map((referer, index) => (
                     <tr key={index} className="border-b">
-                      <td className="p-2">
+                      <td className="p-2 max-w-xs truncate">
                         <span className="text-blue-600">
                           {referer.path}
                         </span>
@@ -441,7 +442,7 @@ export default function DashboardPage() {
               <tbody>
                 {(metrics.top_paths || []).map((path, index) => (
                   <tr key={index} className="border-b">
-                    <td className="p-2">
+                    <td className="p-2 max-w-xs truncate">
                       <a
                         href={path.path}
                         target="_blank"
