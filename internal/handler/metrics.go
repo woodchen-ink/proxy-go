@@ -161,50 +161,33 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 	metrics.LatencyStats.Max = utils.SafeString(latencyStats["max"], "0ms")
 
 	// 处理分布数据
-	log.Printf("[MetricsHandler] 处理延迟分布数据: stats[latency_stats]=%v", stats["latency_stats"])
-
 	if stats["latency_stats"] != nil {
 		latencyStatsMap, ok := stats["latency_stats"].(map[string]interface{})
 		if ok {
-			log.Printf("[MetricsHandler] latencyStatsMap=%v", latencyStatsMap)
 			distribution, ok := latencyStatsMap["distribution"]
 			if ok && distribution != nil {
-				log.Printf("[MetricsHandler] distribution=%v", distribution)
-
 				// 尝试直接使用 map[string]int64 类型
 				if distributionMap, ok := distribution.(map[string]int64); ok {
-					log.Printf("[MetricsHandler] 直接使用 map[string]int64: %v", distributionMap)
 					metrics.LatencyStats.Distribution = distributionMap
 				} else if distributionMap, ok := distribution.(map[string]interface{}); ok {
 					// 如果不是 map[string]int64，尝试转换 map[string]interface{}
-					log.Printf("[MetricsHandler] 转换 map[string]interface{}: %v", distributionMap)
 					metrics.LatencyStats.Distribution = make(map[string]int64)
 					for k, v := range distributionMap {
-						log.Printf("[MetricsHandler] 处理延迟分布项: %s=%v (type=%T)", k, v, v)
 						if intValue, ok := v.(float64); ok {
 							metrics.LatencyStats.Distribution[k] = int64(intValue)
-							log.Printf("[MetricsHandler] 转换为int64: %s=%d", k, int64(intValue))
 						} else if intValue, ok := v.(int64); ok {
 							metrics.LatencyStats.Distribution[k] = intValue
-							log.Printf("[MetricsHandler] 已经是int64: %s=%d", k, intValue)
 						}
 					}
 				} else {
-					log.Printf("[MetricsHandler] distribution类型未知: %v (type=%T)", distribution, distribution)
+					log.Printf("[MetricsHandler] distribution类型未知: %T", distribution)
 				}
-			} else {
-				log.Printf("[MetricsHandler] 没有distribution字段或为nil: ok=%v, distribution=%v", ok, distribution)
 			}
-		} else {
-			log.Printf("[MetricsHandler] latency_stats不是map: %v (type=%T)", stats["latency_stats"], stats["latency_stats"])
 		}
-	} else {
-		log.Printf("[MetricsHandler] latency_stats为nil")
 	}
 
 	// 如果分布数据为空，初始化一个空的分布
 	if metrics.LatencyStats.Distribution == nil {
-		log.Printf("[MetricsHandler] 初始化空的延迟分布")
 		metrics.LatencyStats.Distribution = make(map[string]int64)
 		// 添加默认的延迟桶
 		metrics.LatencyStats.Distribution["lt10ms"] = 0
@@ -218,9 +201,6 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 	metrics.ErrorStats.ClientErrors = clientErrors
 	metrics.ErrorStats.ServerErrors = serverErrors
 	metrics.ErrorStats.Types = errorTypes
-
-	// 打印最终的延迟分布数据
-	log.Printf("[MetricsHandler] 最终的延迟分布数据: %v", metrics.LatencyStats.Distribution)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(metrics); err != nil {

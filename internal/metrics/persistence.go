@@ -104,25 +104,29 @@ func (ms *MetricsStorage) SaveMetrics() error {
 	// 获取当前指标数据
 	stats := ms.collector.GetStats()
 
-	// 保存基本指标
+	// 保存基本指标 - 只保存必要的字段
 	basicMetrics := map[string]interface{}{
 		"uptime":              stats["uptime"],
 		"total_bytes":         stats["total_bytes"],
 		"avg_response_time":   stats["avg_response_time"],
 		"requests_per_second": stats["requests_per_second"],
 		"bytes_per_second":    stats["bytes_per_second"],
-		"latency_stats":       stats["latency_stats"],
-		"bandwidth_history":   stats["bandwidth_history"],
-		"current_bandwidth":   stats["current_bandwidth"],
 		"save_time":           time.Now().Format(time.RFC3339),
+	}
+
+	// 单独保存延迟统计，避免嵌套结构导致的内存占用
+	if latencyStats, ok := stats["latency_stats"].(map[string]interface{}); ok {
+		basicMetrics["latency_min"] = latencyStats["min"]
+		basicMetrics["latency_max"] = latencyStats["max"]
 	}
 
 	if err := saveJSONToFile(ms.metricsFile, basicMetrics); err != nil {
 		return fmt.Errorf("保存基本指标失败: %v", err)
 	}
 
-	// 保存路径统计
-	if err := saveJSONToFile(ms.pathStatsFile, stats["top_paths"]); err != nil {
+	// 保存路径统计 - 限制数量
+	topPaths := stats["top_paths"]
+	if err := saveJSONToFile(ms.pathStatsFile, topPaths); err != nil {
 		return fmt.Errorf("保存路径统计失败: %v", err)
 	}
 
@@ -131,9 +135,19 @@ func (ms *MetricsStorage) SaveMetrics() error {
 		return fmt.Errorf("保存状态码统计失败: %v", err)
 	}
 
-	// 保存引用来源统计
-	if err := saveJSONToFile(ms.refererStatsFile, stats["top_referers"]); err != nil {
+	// 保存引用来源统计 - 限制数量
+	topReferers := stats["top_referers"]
+	if err := saveJSONToFile(ms.refererStatsFile, topReferers); err != nil {
 		return fmt.Errorf("保存引用来源统计失败: %v", err)
+	}
+
+	// 单独保存延迟分布
+	if latencyStats, ok := stats["latency_stats"].(map[string]interface{}); ok {
+		if distribution, ok := latencyStats["distribution"]; ok {
+			if err := saveJSONToFile(filepath.Join(ms.dataDir, "latency_distribution.json"), distribution); err != nil {
+				log.Printf("[MetricsStorage] 保存延迟分布失败: %v", err)
+			}
+		}
 	}
 
 	ms.mutex.Lock()
@@ -150,7 +164,7 @@ func (ms *MetricsStorage) LoadMetrics() error {
 	log.Printf("[MetricsStorage] 开始加载指标数据...")
 
 	// 检查文件是否存在
-	if !fileExists(ms.metricsFile) || !fileExists(ms.pathStatsFile) || !fileExists(ms.statusCodeFile) {
+	if !fileExists(ms.metricsFile) {
 		return fmt.Errorf("指标数据文件不存在")
 	}
 
@@ -160,139 +174,136 @@ func (ms *MetricsStorage) LoadMetrics() error {
 		return fmt.Errorf("加载基本指标失败: %v", err)
 	}
 
-	// 加载路径统计
-	var pathStats []map[string]interface{}
-	if err := loadJSONFromFile(ms.pathStatsFile, &pathStats); err != nil {
-		return fmt.Errorf("加载路径统计失败: %v", err)
-	}
-
-	// 加载状态码统计
-	var statusCodeStats map[string]interface{}
-	if err := loadJSONFromFile(ms.statusCodeFile, &statusCodeStats); err != nil {
-		return fmt.Errorf("加载状态码统计失败: %v", err)
-	}
-
-	// 加载引用来源统计（如果文件存在）
-	var refererStats []map[string]interface{}
-	if fileExists(ms.refererStatsFile) {
-		if err := loadJSONFromFile(ms.refererStatsFile, &refererStats); err != nil {
-			log.Printf("[MetricsStorage] 加载引用来源统计失败: %v", err)
-			// 不中断加载过程
-		} else {
-			log.Printf("[MetricsStorage] 成功加载引用来源统计: %d 条记录", len(refererStats))
-		}
-	}
-
 	// 将加载的数据应用到收集器
 	// 1. 应用总字节数
 	if totalBytes, ok := basicMetrics["total_bytes"].(float64); ok {
 		atomic.StoreInt64(&ms.collector.totalBytes, int64(totalBytes))
 	}
 
-	// 2. 应用路径统计
-	for _, pathStat := range pathStats {
-		path, ok := pathStat["path"].(string)
-		if !ok {
-			continue
-		}
-
-		requestCount, _ := pathStat["request_count"].(float64)
-		errorCount, _ := pathStat["error_count"].(float64)
-		bytesTransferred, _ := pathStat["bytes_transferred"].(float64)
-
-		// 创建或更新路径统计
-		var pathMetrics *models.PathMetrics
-		if existingMetrics, ok := ms.collector.pathStats.Load(path); ok {
-			pathMetrics = existingMetrics.(*models.PathMetrics)
+	// 2. 加载路径统计（如果文件存在）
+	if fileExists(ms.pathStatsFile) {
+		var pathStats []map[string]interface{}
+		if err := loadJSONFromFile(ms.pathStatsFile, &pathStats); err != nil {
+			log.Printf("[MetricsStorage] 加载路径统计失败: %v", err)
 		} else {
-			pathMetrics = &models.PathMetrics{Path: path}
-			ms.collector.pathStats.Store(path, pathMetrics)
-		}
-
-		// 设置统计值
-		pathMetrics.RequestCount.Store(int64(requestCount))
-		pathMetrics.ErrorCount.Store(int64(errorCount))
-		pathMetrics.BytesTransferred.Store(int64(bytesTransferred))
-	}
-
-	// 3. 应用状态码统计
-	for statusCode, count := range statusCodeStats {
-		countValue, ok := count.(float64)
-		if !ok {
-			continue
-		}
-
-		// 创建或更新状态码统计
-		if counter, ok := ms.collector.statusCodeStats.Load(statusCode); ok {
-			atomic.StoreInt64(counter.(*int64), int64(countValue))
-		} else {
-			counter := new(int64)
-			*counter = int64(countValue)
-			ms.collector.statusCodeStats.Store(statusCode, counter)
-		}
-	}
-
-	// 4. 应用引用来源统计
-	if len(refererStats) > 0 {
-		for _, refererStat := range refererStats {
-			referer, ok := refererStat["path"].(string)
-			if !ok {
-				continue
+			// 只加载前10个路径统计
+			maxPaths := 10
+			if len(pathStats) > maxPaths {
+				pathStats = pathStats[:maxPaths]
 			}
 
-			requestCount, _ := refererStat["request_count"].(float64)
-			errorCount, _ := refererStat["error_count"].(float64)
-			bytesTransferred, _ := refererStat["bytes_transferred"].(float64)
+			for _, pathStat := range pathStats {
+				path, ok := pathStat["path"].(string)
+				if !ok {
+					continue
+				}
 
-			// 创建或更新引用来源统计
-			var refererMetrics *models.PathMetrics
-			if existingMetrics, ok := ms.collector.refererStats.Load(referer); ok {
-				refererMetrics = existingMetrics.(*models.PathMetrics)
-			} else {
-				refererMetrics = &models.PathMetrics{Path: referer}
-				ms.collector.refererStats.Store(referer, refererMetrics)
+				requestCount, _ := pathStat["request_count"].(float64)
+				errorCount, _ := pathStat["error_count"].(float64)
+				bytesTransferred, _ := pathStat["bytes_transferred"].(float64)
+
+				// 创建或更新路径统计
+				var pathMetrics *models.PathMetrics
+				if existingMetrics, ok := ms.collector.pathStats.Load(path); ok {
+					pathMetrics = existingMetrics.(*models.PathMetrics)
+				} else {
+					pathMetrics = &models.PathMetrics{Path: path}
+					ms.collector.pathStats.Store(path, pathMetrics)
+				}
+
+				// 设置统计值
+				pathMetrics.RequestCount.Store(int64(requestCount))
+				pathMetrics.ErrorCount.Store(int64(errorCount))
+				pathMetrics.BytesTransferred.Store(int64(bytesTransferred))
 			}
-
-			// 设置统计值
-			refererMetrics.RequestCount.Store(int64(requestCount))
-			refererMetrics.ErrorCount.Store(int64(errorCount))
-			refererMetrics.BytesTransferred.Store(int64(bytesTransferred))
+			log.Printf("[MetricsStorage] 加载了 %d 条路径统计", len(pathStats))
 		}
-		log.Printf("[MetricsStorage] 应用了 %d 条引用来源统计记录", len(refererStats))
 	}
 
-	// 4. 应用延迟分布桶（如果有）
-	if latencyStats, ok := basicMetrics["latency_stats"].(map[string]interface{}); ok {
-		if distribution, ok := latencyStats["distribution"].(map[string]interface{}); ok {
+	// 3. 加载状态码统计（如果文件存在）
+	if fileExists(ms.statusCodeFile) {
+		var statusCodeStats map[string]interface{}
+		if err := loadJSONFromFile(ms.statusCodeFile, &statusCodeStats); err != nil {
+			log.Printf("[MetricsStorage] 加载状态码统计失败: %v", err)
+		} else {
+			for statusCode, count := range statusCodeStats {
+				countValue, ok := count.(float64)
+				if !ok {
+					continue
+				}
+
+				// 创建或更新状态码统计
+				if counter, ok := ms.collector.statusCodeStats.Load(statusCode); ok {
+					atomic.StoreInt64(counter.(*int64), int64(countValue))
+				} else {
+					counter := new(int64)
+					*counter = int64(countValue)
+					ms.collector.statusCodeStats.Store(statusCode, counter)
+				}
+			}
+			log.Printf("[MetricsStorage] 加载了 %d 条状态码统计", len(statusCodeStats))
+		}
+	}
+
+	// 4. 加载引用来源统计（如果文件存在）
+	if fileExists(ms.refererStatsFile) {
+		var refererStats []map[string]interface{}
+		if err := loadJSONFromFile(ms.refererStatsFile, &refererStats); err != nil {
+			log.Printf("[MetricsStorage] 加载引用来源统计失败: %v", err)
+		} else {
+			// 只加载前10个引用来源统计
+			maxReferers := 10
+			if len(refererStats) > maxReferers {
+				refererStats = refererStats[:maxReferers]
+			}
+
+			for _, refererStat := range refererStats {
+				referer, ok := refererStat["path"].(string)
+				if !ok {
+					continue
+				}
+
+				requestCount, _ := refererStat["request_count"].(float64)
+				errorCount, _ := refererStat["error_count"].(float64)
+				bytesTransferred, _ := refererStat["bytes_transferred"].(float64)
+
+				// 创建或更新引用来源统计
+				var refererMetrics *models.PathMetrics
+				if existingMetrics, ok := ms.collector.refererStats.Load(referer); ok {
+					refererMetrics = existingMetrics.(*models.PathMetrics)
+				} else {
+					refererMetrics = &models.PathMetrics{Path: referer}
+					ms.collector.refererStats.Store(referer, refererMetrics)
+				}
+
+				// 设置统计值
+				refererMetrics.RequestCount.Store(int64(requestCount))
+				refererMetrics.ErrorCount.Store(int64(errorCount))
+				refererMetrics.BytesTransferred.Store(int64(bytesTransferred))
+			}
+			log.Printf("[MetricsStorage] 加载了 %d 条引用来源统计", len(refererStats))
+		}
+	}
+
+	// 5. 加载延迟分布（如果文件存在）
+	latencyDistributionFile := filepath.Join(ms.dataDir, "latency_distribution.json")
+	if fileExists(latencyDistributionFile) {
+		var distribution map[string]interface{}
+		if err := loadJSONFromFile(latencyDistributionFile, &distribution); err != nil {
+			log.Printf("[MetricsStorage] 加载延迟分布失败: %v", err)
+		} else {
 			for bucket, count := range distribution {
 				countValue, ok := count.(float64)
 				if !ok {
 					continue
 				}
 
-				if bucketCounter, ok := ms.collector.latencyBuckets.Load(bucket); ok {
-					atomic.StoreInt64(bucketCounter.(*int64), int64(countValue))
+				if counter, ok := ms.collector.latencyBuckets.Load(bucket); ok {
+					atomic.StoreInt64(counter.(*int64), int64(countValue))
 				}
 			}
+			log.Printf("[MetricsStorage] 加载了延迟分布数据")
 		}
-	}
-
-	// 5. 应用带宽历史（如果有）
-	if bandwidthHistory, ok := basicMetrics["bandwidth_history"].(map[string]interface{}); ok {
-		ms.collector.bandwidthStats.Lock()
-		ms.collector.bandwidthStats.history = make(map[string]int64)
-		for timeKey, bandwidth := range bandwidthHistory {
-			bandwidthValue, ok := bandwidth.(string)
-			if !ok {
-				continue
-			}
-
-			// 解析带宽值（假设格式为 "X.XX MB/s"）
-			var bytesValue float64
-			fmt.Sscanf(bandwidthValue, "%f", &bytesValue)
-			ms.collector.bandwidthStats.history[timeKey] = int64(bytesValue)
-		}
-		ms.collector.bandwidthStats.Unlock()
 	}
 
 	ms.mutex.Lock()
