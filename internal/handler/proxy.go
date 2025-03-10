@@ -157,18 +157,25 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 查找匹配的代理路径
 	var matchedPrefix string
 	var pathConfig config.PathConfig
+
+	// 首先尝试完全匹配路径段
 	for prefix, cfg := range h.pathMap {
+		// 检查是否是完整的路径段匹配
 		if strings.HasPrefix(r.URL.Path, prefix) {
-			matchedPrefix = prefix
-			pathConfig = cfg
-			break
+			// 确保匹配的是完整的路径段
+			restPath := r.URL.Path[len(prefix):]
+			if restPath == "" || restPath[0] == '/' {
+				matchedPrefix = prefix
+				pathConfig = cfg
+				break
+			}
 		}
 	}
 
-	// 如果没有匹配的路径，返回 404
+	// 如果没有找到完全匹配，返回404
 	if matchedPrefix == "" {
+		// 返回 404
 		http.NotFound(w, r)
-		log.Printf("[Proxy] %s %s -> 404 (%s) from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 		return
 	}
 
@@ -179,7 +186,6 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	decodedPath, err := url.QueryUnescape(targetPath)
 	if err != nil {
 		h.errorHandler(w, r, fmt.Errorf("error decoding path: %v", err))
-		log.Printf("[Proxy] ERR %s %s -> 500 (%s) decode error from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 		return
 	}
 
@@ -198,7 +204,6 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	parsedURL, err := url.Parse(targetURL)
 	if err != nil {
 		h.errorHandler(w, r, fmt.Errorf("error parsing URL: %v", err))
-		log.Printf("[Proxy] ERR %s %s -> 500 (%s) parse error from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 		return
 	}
 
@@ -206,7 +211,6 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxyReq, err := http.NewRequestWithContext(ctx, r.Method, targetURL, r.Body)
 	if err != nil {
 		h.errorHandler(w, r, fmt.Errorf("error creating request: %v", err))
-		log.Printf("[Proxy] ERR %s %s -> 500 (%s) create request error from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 		return
 	}
 
