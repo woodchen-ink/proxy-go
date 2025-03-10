@@ -16,6 +16,14 @@ import (
 	"syscall"
 )
 
+// Route 定义路由结构
+type Route struct {
+	Method      string
+	Pattern     string
+	Handler     http.HandlerFunc
+	RequireAuth bool
+}
+
 func main() {
 	// 加载配置
 	cfg, err := config.Load("data/config.json")
@@ -47,7 +55,26 @@ func main() {
 	mirrorHandler := handler.NewMirrorProxyHandler()
 	proxyHandler := handler.NewProxyHandler(cfg)
 
-	// 创建处理器链
+	// 定义API路由
+	apiRoutes := []Route{
+		{http.MethodGet, "/admin/api/auth", proxyHandler.LoginHandler, false},
+		{http.MethodGet, "/admin/api/oauth/callback", proxyHandler.OAuthCallbackHandler, false},
+		{http.MethodGet, "/admin/api/check-auth", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]bool{"authenticated": true})
+		}, true},
+		{http.MethodPost, "/admin/api/logout", proxyHandler.LogoutHandler, false},
+		{http.MethodGet, "/admin/api/metrics", proxyHandler.MetricsHandler, true},
+		{http.MethodGet, "/admin/api/config/get", handler.NewConfigHandler(cfg).ServeHTTP, true},
+		{http.MethodPost, "/admin/api/config/save", handler.NewConfigHandler(cfg).ServeHTTP, true},
+		{http.MethodGet, "/admin/api/cache/stats", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).GetCacheStats, true},
+		{http.MethodPost, "/admin/api/cache/enable", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).SetCacheEnabled, true},
+		{http.MethodPost, "/admin/api/cache/clear", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).ClearCache, true},
+		{http.MethodGet, "/admin/api/cache/config", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).GetCacheConfig, true},
+		{http.MethodPost, "/admin/api/cache/config", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).UpdateCacheConfig, true},
+	}
+
+	// 创建路由处理器
 	handlers := []struct {
 		matcher func(*http.Request) bool
 		handler http.Handler
@@ -60,54 +87,19 @@ func main() {
 			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				// API请求处理
 				if strings.HasPrefix(r.URL.Path, "/admin/api/") {
-					switch r.URL.Path {
-					case "/admin/api/auth":
-						if r.Method == http.MethodGet {
-							proxyHandler.LoginHandler(w, r)
-						} else {
-							http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+					for _, route := range apiRoutes {
+						if r.URL.Path == route.Pattern && r.Method == route.Method {
+							if route.RequireAuth {
+								proxyHandler.AuthMiddleware(route.Handler)(w, r)
+							} else {
+								route.Handler(w, r)
+							}
+							return
 						}
-					case "/admin/api/oauth/callback":
-						if r.Method == http.MethodGet {
-							proxyHandler.OAuthCallbackHandler(w, r)
-						} else {
-							http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-						}
-					case "/admin/api/check-auth":
-						proxyHandler.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-							w.WriteHeader(http.StatusOK)
-							json.NewEncoder(w).Encode(map[string]bool{"authenticated": true})
-						}))(w, r)
-					case "/admin/api/logout":
-						if r.Method == http.MethodPost {
-							proxyHandler.LogoutHandler(w, r)
-						} else {
-							http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-						}
-					case "/admin/api/metrics":
-						proxyHandler.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-							proxyHandler.MetricsHandler(w, r)
-						}))(w, r)
-					case "/admin/api/config/get":
-						proxyHandler.AuthMiddleware(handler.NewConfigHandler(cfg).ServeHTTP)(w, r)
-					case "/admin/api/config/save":
-						proxyHandler.AuthMiddleware(handler.NewConfigHandler(cfg).ServeHTTP)(w, r)
-					case "/admin/api/cache/stats":
-						proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).GetCacheStats)(w, r)
-					case "/admin/api/cache/enable":
-						proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).SetCacheEnabled)(w, r)
-					case "/admin/api/cache/clear":
-						proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).ClearCache)(w, r)
-					case "/admin/api/cache/config":
-						if r.Method == http.MethodGet {
-							proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).GetCacheConfig)(w, r)
-						} else if r.Method == http.MethodPost {
-							proxyHandler.AuthMiddleware(handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).UpdateCacheConfig)(w, r)
-						} else {
-							http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-						}
-					default:
-						http.NotFound(w, r)
+					}
+
+					if r.URL.Path != "/admin/api/404" {
+						http.Error(w, "Not found", http.StatusNotFound)
 					}
 					return
 				}
@@ -118,10 +110,8 @@ func main() {
 					path = "/admin/index.html"
 				}
 
-				// 从web/out目录提供静态文件
 				filePath := "web/out" + strings.TrimPrefix(path, "/admin")
 				if _, err := os.Stat(filePath); os.IsNotExist(err) {
-					// 如果文件不存在，返回index.html（用于客户端路由）
 					filePath = "web/out/index.html"
 				}
 				http.ServeFile(w, r, filePath)
@@ -137,7 +127,7 @@ func main() {
 		// 默认代理处理器
 		{
 			matcher: func(r *http.Request) bool {
-				return true // 总是匹配，作为默认处理器
+				return true
 			},
 			handler: proxyHandler,
 		},
