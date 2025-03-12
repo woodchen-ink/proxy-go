@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/dialog"
 import { Switch } from "@/components/ui/switch"
 import { Slider } from "@/components/ui/slider"
-import { Plus, Trash2, Edit, Save, Download, Upload, Info } from "lucide-react"
+import { Plus, Trash2, Edit, Save, Download, Upload } from "lucide-react"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,7 +35,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 
 interface PathMapping {
@@ -572,38 +571,34 @@ export default function ConfigPage() {
   return (
     <div className="space-y-6">
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Proxy Go配置</CardTitle>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="outline">
-                <Info className="w-4 h-4 mr-2" />
-                提示
+        <CardHeader>
+          <div className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle>Proxy Go配置</CardTitle>
+              <p className="text-sm text-muted-foreground mt-1">编辑后需要点击右上角保存配置按钮</p>
+            </div>
+            <div className="flex space-x-2">
+              <Button onClick={exportConfig} variant="outline">
+                <Download className="w-4 h-4 mr-2" />
+                导出配置
               </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>编辑后需要点击右上角保存配置按钮</AlertDialogContent>
-          </AlertDialog>
-          <div className="flex space-x-2">
-            <Button onClick={exportConfig} variant="outline">
-              <Download className="w-4 h-4 mr-2" />
-              导出配置
-            </Button>
-            <label>
-              <Button variant="outline" className="cursor-pointer">
-                <Upload className="w-4 h-4 mr-2" />
-                导入配置
+              <label>
+                <Button variant="outline" className="cursor-pointer">
+                  <Upload className="w-4 h-4 mr-2" />
+                  导入配置
+                </Button>
+                <input
+                  type="file"
+                  className="hidden"
+                  accept=".json"
+                  onChange={importConfig}
+                />
+              </label>
+              <Button onClick={handleSave} disabled={saving}>
+                <Save className="w-4 h-4 mr-2" />
+                {saving ? "保存中..." : "保存配置"}
               </Button>
-              <input
-                type="file"
-                className="hidden"
-                accept=".json"
-                onChange={importConfig}
-              />
-            </label>
-            <Button onClick={handleSave} disabled={saving}>
-              <Save className="w-4 h-4 mr-2" />
-              {saving ? "保存中..." : "保存配置"}
-            </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
