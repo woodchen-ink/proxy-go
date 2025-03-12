@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/dialog"
 import { Switch } from "@/components/ui/switch"
 import { Slider } from "@/components/ui/slider"
-import { Plus, Trash2, Edit, Save, Download, Upload } from "lucide-react"
+import { Plus, Trash2, Edit, Save, Download, Upload, Info } from "lucide-react"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,6 +35,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
+  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 
 interface PathMapping {
@@ -573,6 +574,15 @@ export default function ConfigPage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Proxy Go配置</CardTitle>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline">
+                <Info className="w-4 h-4 mr-2" />
+                提示
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>编辑后需要点击右上角保存配置按钮</AlertDialogContent>
+          </AlertDialog>
           <div className="flex space-x-2">
             <Button onClick={exportConfig} variant="outline">
               <Download className="w-4 h-4 mr-2" />
