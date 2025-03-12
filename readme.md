@@ -4,6 +4,13 @@ A 'simple' reverse proxy server written in Go.
 
 使用方法: https://www.q58.club/t/topic/165
 
+```
+最新镜像地址: woodchen/proxy-go:latest
+
+稳定版镜像地址: woodchen/proxy-go:v1.0.4
+持续稳定版镜像地址: woodchen/proxy-go:stable
+```
+
 ## 新版统计仪表盘
 
 ![image](https://github.com/user-attachments/assets/0b87863e-5566-4ee6-a3b7-94a994cdd572)
