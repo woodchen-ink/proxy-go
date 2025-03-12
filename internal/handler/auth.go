@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -20,14 +21,23 @@ const (
 )
 
 type OAuthUserInfo struct {
-	ID        string   `json:"id"`
-	Email     string   `json:"email"`
-	Username  string   `json:"username"`
-	Name      string   `json:"name"`
-	AvatarURL string   `json:"avatar_url"`
-	Admin     bool     `json:"admin"`
-	Moderator bool     `json:"moderator"`
-	Groups    []string `json:"groups"`
+	ID        interface{} `json:"id,omitempty"` // 使用interface{}以接受数字或字符串
+	Email     string      `json:"email,omitempty"`
+	Username  string      `json:"username,omitempty"`
+	Name      string      `json:"name,omitempty"`
+	AvatarURL string      `json:"avatar_url,omitempty"`
+	Avatar    string      `json:"avatar,omitempty"` // 添加avatar字段
+	Admin     bool        `json:"admin,omitempty"`
+	Moderator bool        `json:"moderator,omitempty"`
+	Groups    []string    `json:"groups,omitempty"`
+	Upstreams interface{} `json:"upstreams,omitempty"` // 添加upstreams字段
+
+	// 添加可能的替代字段名
+	Sub           string `json:"sub,omitempty"`
+	PreferredName string `json:"preferred_username,omitempty"`
+	GivenName     string `json:"given_name,omitempty"`
+	FamilyName    string `json:"family_name,omitempty"`
+	Picture       string `json:"picture,omitempty"`
 }
 
 type OAuthToken struct {
@@ -255,17 +265,59 @@ func (h *ProxyHandler) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var userInfo OAuthUserInfo
-	if err := json.NewDecoder(userResp.Body).Decode(&userInfo); err != nil {
-		log.Printf("[Auth] ERR %s %s -> 500 (%s) failed to parse user info: %v from %s", r.Method, r.URL.Path, utils.GetClientIP(r), err, utils.GetRequestSource(r))
+	// 读取响应体内容并记录
+	bodyBytes, err := io.ReadAll(userResp.Body)
+	if err != nil {
+		log.Printf("[Auth] ERR %s %s -> 500 (%s) failed to read user info response body: %v from %s",
+			r.Method, r.URL.Path, utils.GetClientIP(r), err, utils.GetRequestSource(r))
+		http.Error(w, "Failed to read user info response", http.StatusInternalServerError)
+		return
+	}
+
+	// 记录响应内容（小心敏感信息）
+	log.Printf("[Auth] DEBUG %s %s -> user info response: %s", r.Method, r.URL.Path, string(bodyBytes))
+
+	// 使用更灵活的方式解析JSON
+	var rawUserInfo map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &rawUserInfo); err != nil {
+		log.Printf("[Auth] ERR %s %s -> 500 (%s) failed to parse raw user info: %v from %s",
+			r.Method, r.URL.Path, utils.GetClientIP(r), err, utils.GetRequestSource(r))
 		http.Error(w, "Failed to parse user info", http.StatusInternalServerError)
 		return
 	}
 
+	// 创建用户信息对象
+	userInfo := OAuthUserInfo{}
+
+	// 填充用户名（优先级：username > preferred_username > sub > email）
+	if username, ok := rawUserInfo["username"].(string); ok && username != "" {
+		userInfo.Username = username
+	} else if preferred, ok := rawUserInfo["preferred_username"].(string); ok && preferred != "" {
+		userInfo.Username = preferred
+	} else if sub, ok := rawUserInfo["sub"].(string); ok && sub != "" {
+		userInfo.Username = sub
+	} else if email, ok := rawUserInfo["email"].(string); ok && email != "" {
+		// 从邮箱中提取用户名
+		parts := strings.Split(email, "@")
+		if len(parts) > 0 {
+			userInfo.Username = parts[0]
+		}
+	}
+
+	// 填充头像URL
+	if avatar, ok := rawUserInfo["avatar"].(string); ok && avatar != "" {
+		userInfo.Avatar = avatar
+	} else if avatarURL, ok := rawUserInfo["avatar_url"].(string); ok && avatarURL != "" {
+		userInfo.AvatarURL = avatarURL
+	} else if picture, ok := rawUserInfo["picture"].(string); ok && picture != "" {
+		userInfo.Picture = picture
+	}
+
 	// 验证用户信息
 	if userInfo.Username == "" {
-		log.Printf("[Auth] ERR %s %s -> 500 (%s) received invalid user info (missing username) from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
-		http.Error(w, "Invalid user information", http.StatusInternalServerError)
+		log.Printf("[Auth] ERR %s %s -> 500 (%s) could not extract username from user info from %s",
+			r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
+		http.Error(w, "Invalid user information: missing username", http.StatusInternalServerError)
 		return
 	}
 
