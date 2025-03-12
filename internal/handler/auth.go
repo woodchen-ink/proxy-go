@@ -150,11 +150,15 @@ func (h *ProxyHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 // getCallbackURL 从请求中获取回调地址
 func getCallbackURL(r *http.Request) string {
-	scheme := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-		scheme = "https"
+	if os.Getenv("OAUTH_REDIRECT_URI") != "" {
+		return os.Getenv("OAUTH_REDIRECT_URI")
+	} else {
+		scheme := "http"
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+			scheme = "https"
+		}
+		return fmt.Sprintf("%s://%s/admin/api/oauth/callback", scheme, r.Host)
 	}
-	return fmt.Sprintf("%s://%s/admin/api/oauth/callback", scheme, r.Host)
 }
 
 // LoginHandler 处理登录请求，重定向到 OAuth 授权页面

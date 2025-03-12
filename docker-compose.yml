@@ -10,4 +10,7 @@ services:
       - TZ=Asia/Shanghai
       - OAUTH_CLIENT_ID=your_client_id
       - OAUTH_CLIENT_SECRET=your_client_secret
+      #填写公网访问的地址, 需要跟CZL Connect保持一致. 
+      #选填, 不填为自动获取
+      - OAUTH_REDIRECT_URI=https://localhost:3336/admin/api/oauth/callback 
     restart: always
