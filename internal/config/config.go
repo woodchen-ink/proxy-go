@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -48,8 +49,53 @@ func Load(path string) (*Config, error) {
 	once.Do(func() {
 		instance = &configImpl{}
 		err = instance.reload(path)
+		// 如果文件不存在，创建默认配置并重新加载
+		if err != nil && os.IsNotExist(err) {
+			if createErr := createDefaultConfig(path); createErr == nil {
+				err = instance.reload(path)
+			} else {
+				err = createErr
+			}
+		}
 	})
 	return &instance.Config, err
+}
+
+// createDefaultConfig 创建默认配置文件
+func createDefaultConfig(path string) error {
+	// 创建目录（如果不存在）
+	dir := path[:strings.LastIndex(path, "/")]
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	// 创建默认配置
+	defaultConfig := Config{
+		MAP: map[string]PathConfig{
+			"/": {
+				DefaultTarget: "http://localhost:8080",
+			},
+		},
+		Compression: CompressionConfig{
+			Gzip: CompressorConfig{
+				Enabled: true,
+				Level:   6,
+			},
+			Brotli: CompressorConfig{
+				Enabled: true,
+				Level:   6,
+			},
+		},
+	}
+
+	// 序列化为JSON
+	data, err := json.MarshalIndent(defaultConfig, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	// 写入文件
+	return os.WriteFile(path, data, 0644)
 }
 
 // RegisterUpdateCallback 注册配置更新回调函数
