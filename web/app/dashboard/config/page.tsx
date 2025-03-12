@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/dialog"
 import { Switch } from "@/components/ui/switch"
 import { Slider } from "@/components/ui/slider"
-import { Plus, Trash2, Edit, Save, Download, Upload } from "lucide-react"
+import { Plus, Trash2, Edit, Download, Upload } from "lucide-react"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -66,6 +66,10 @@ export default function ConfigPage() {
 
   // 使用 ref 来保存滚动位置
   const scrollPositionRef = useRef(0)
+  // 添加一个ref来跟踪是否是初始加载
+  const isInitialLoadRef = useRef(true)
+  // 添加一个防抖定时器ref
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   // 对话框状态
   const [pathDialogOpen, setPathDialogOpen] = useState(false)
@@ -139,7 +143,8 @@ export default function ConfigPage() {
     fetchConfig()
   }, [fetchConfig])
 
-  const handleSave = async () => {
+
+  const handleSave = useCallback(async () => {
     if (!config) return
 
     setSaving(true)
@@ -172,7 +177,7 @@ export default function ConfigPage() {
 
       toast({
         title: "成功",
-        description: "配置已保存",
+        description: "配置已自动保存",
       })
     } catch (error) {
       toast({
@@ -183,7 +188,35 @@ export default function ConfigPage() {
     } finally {
       setSaving(false)
     }
-  }
+  }, [config, router, toast])
+  
+  // 添加自动保存的useEffect
+  useEffect(() => {
+    // 如果是初始加载或者配置为空，不触发保存
+    if (isInitialLoadRef.current || !config) {
+      isInitialLoadRef.current = false
+      return
+    }
+
+    // 清除之前的定时器
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current)
+    }
+
+    // 设置新的定时器，延迟1秒后保存
+    saveTimeoutRef.current = setTimeout(() => {
+      handleSave()
+    }, 1000)
+
+    // 组件卸载时清除定时器
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current)
+      }
+    }
+  }, [config, handleSave]) // 监听config变化
+
+ 
 
   // 处理对话框打开和关闭时的滚动位置
   const handleDialogOpenChange = useCallback((open: boolean, handler: (open: boolean) => void) => {
@@ -289,11 +322,6 @@ export default function ConfigPage() {
     }
     
     setPathDialogOpen(false)
-    
-    toast({
-      title: "成功",
-      description: `${editingPathData ? '更新' : '添加'}路径配置成功`,
-    })
   }
 
   const deletePath = (path: string) => {
@@ -306,10 +334,6 @@ export default function ConfigPage() {
     delete newConfig.MAP[deletingPath]
     setConfig(newConfig)
     setDeletingPath(null)
-    toast({
-      title: "成功",
-      description: "路径映射已删除",
-    })
   }
 
   const updateCompression = (type: 'Gzip' | 'Brotli', field: 'Enabled' | 'Level', value: boolean | number) => {
@@ -397,11 +421,6 @@ export default function ConfigPage() {
     setExtensionMapDialogOpen(false)
     setEditingExtension(null)
     setNewExtension({ ext: "", target: "" })
-    
-    toast({
-      title: "成功",
-      description: "扩展名映射已更新",
-    })
   }
 
   const deleteExtensionMap = (path: string, ext: string) => {
@@ -419,14 +438,7 @@ export default function ConfigPage() {
     }
     setConfig(newConfig)
     setDeletingExtension(null)
-    toast({
-      title: "成功",
-      description: "扩展名映射已删除",
-    })
   }
-
-
-
 
   const openAddPathDialog = () => {
     setEditingPathData(null)
@@ -571,34 +583,31 @@ export default function ConfigPage() {
   return (
     <div className="space-y-6">
       <Card>
-        <CardHeader>
-          <div className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle>Proxy Go配置</CardTitle>
-              <p className="text-sm text-muted-foreground mt-1">编辑后需要点击右上角保存配置按钮</p>
-            </div>
-            <div className="flex space-x-2">
-              <Button onClick={exportConfig} variant="outline">
-                <Download className="w-4 h-4 mr-2" />
-                导出配置
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle>Proxy Go配置</CardTitle>
+          <div className="flex space-x-2">
+            <Button onClick={exportConfig} variant="outline">
+              <Download className="w-4 h-4 mr-2" />
+              导出配置
+            </Button>
+            <label>
+              <Button variant="outline" className="cursor-pointer">
+                <Upload className="w-4 h-4 mr-2" />
+                导入配置
               </Button>
-              <label>
-                <Button variant="outline" className="cursor-pointer">
-                  <Upload className="w-4 h-4 mr-2" />
-                  导入配置
-                </Button>
-                <input
-                  type="file"
-                  className="hidden"
-                  accept=".json"
-                  onChange={importConfig}
-                />
-              </label>
-              <Button onClick={handleSave} disabled={saving}>
-                <Save className="w-4 h-4 mr-2" />
-                {saving ? "保存中..." : "保存配置"}
-              </Button>
-            </div>
+              <input
+                type="file"
+                className="hidden"
+                accept=".json"
+                onChange={importConfig}
+              />
+            </label>
+            {saving && (
+              <div className="flex items-center text-sm text-muted-foreground">
+                <span className="animate-pulse mr-2">●</span>
+                正在自动保存...
+              </div>
+            )}
           </div>
         </CardHeader>
         <CardContent>

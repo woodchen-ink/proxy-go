@@ -51,13 +51,6 @@ type Metrics struct {
 		Distribution map[string]int64 `json:"distribution"`
 	} `json:"latency_stats"`
 
-	// 错误统计
-	ErrorStats struct {
-		ClientErrors int64            `json:"client_errors"`
-		ServerErrors int64            `json:"server_errors"`
-		Types        map[string]int64 `json:"types"`
-	} `json:"error_stats"`
-
 	// 带宽统计
 	BandwidthHistory map[string]string `json:"bandwidth_history"`
 	CurrentBandwidth string            `json:"current_bandwidth"`
@@ -115,26 +108,8 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 计算客户端错误和服务器错误数量
-	var clientErrors, serverErrors int64
+	// 处理状态码统计数据
 	statusCodeStats := models.SafeStatusCodeStats(stats["status_code_stats"])
-	for code, count := range statusCodeStats {
-		codeInt := utils.ParseInt(code, 0)
-		if codeInt >= 400 && codeInt < 500 {
-			clientErrors += count
-		} else if codeInt >= 500 {
-			serverErrors += count
-		}
-	}
-
-	// 创建错误类型统计
-	errorTypes := make(map[string]int64)
-	if clientErrors > 0 {
-		errorTypes["客户端错误"] = clientErrors
-	}
-	if serverErrors > 0 {
-		errorTypes["服务器错误"] = serverErrors
-	}
 
 	metrics := Metrics{
 		Uptime:              metrics.FormatUptime(uptime),
@@ -196,11 +171,6 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 		metrics.LatencyStats.Distribution["200-1000ms"] = 0
 		metrics.LatencyStats.Distribution["gt1s"] = 0
 	}
-
-	// 填充错误统计数据
-	metrics.ErrorStats.ClientErrors = clientErrors
-	metrics.ErrorStats.ServerErrors = serverErrors
-	metrics.ErrorStats.Types = errorTypes
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(metrics); err != nil {

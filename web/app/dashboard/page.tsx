@@ -37,11 +37,6 @@ interface Metrics {
     max: string
     distribution: Record<string, number>
   }
-  error_stats: {
-    client_errors: number
-    server_errors: number
-    types: Record<string, number>
-  }
   bandwidth_history: Record<string, string>
   current_bandwidth: string
   total_bytes: number
@@ -324,65 +319,6 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
-
-      {/* 错误统计卡片 */}
-      <Card>
-        <CardHeader>
-          <CardTitle>错误统计</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="space-y-2">
-              <div className="text-sm font-medium text-gray-500">客户端错误 (4xx)</div>
-              <div className="text-2xl font-semibold text-yellow-600">
-                {metrics.error_stats?.client_errors || 0}
-              </div>
-              <div className="text-sm text-gray-500">
-                占总请求的 {metrics.total_requests ? 
-                  ((metrics.error_stats?.client_errors || 0) / metrics.total_requests * 100).toFixed(2) : 0}%
-              </div>
-            </div>
-            
-            <div className="space-y-2">
-              <div className="text-sm font-medium text-gray-500">服务器错误 (5xx)</div>
-              <div className="text-2xl font-semibold text-red-600">
-                {metrics.error_stats?.server_errors || 0}
-              </div>
-              <div className="text-sm text-gray-500">
-                占总请求的 {metrics.total_requests ? 
-                  ((metrics.error_stats?.server_errors || 0) / metrics.total_requests * 100).toFixed(2) : 0}%
-              </div>
-            </div>
-            
-            <div className="space-y-2">
-              <div className="text-sm font-medium text-gray-500">总错误率</div>
-              <div className="text-2xl font-semibold">
-                {(metrics.error_rate * 100).toFixed(2)}%
-              </div>
-              <div className="text-sm text-gray-500">
-                总错误数: {metrics.total_errors || 0}
-              </div>
-            </div>
-          </div>
-          
-          {metrics.error_stats?.types && Object.keys(metrics.error_stats.types).length > 0 && (
-            <div className="mt-6">
-              <div className="text-sm font-medium text-gray-500 mb-2">错误类型分布</div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {Object.entries(metrics.error_stats.types).map(([type, count]) => (
-                  <div key={type} className="p-3 rounded-lg border bg-card text-card-foreground shadow-sm">
-                    <div className="text-sm font-medium text-gray-500">{type}</div>
-                    <div className="text-lg font-semibold">{count}</div>
-                    <div className="text-xs text-gray-500 mt-1">
-                      {metrics.total_errors ? ((count / metrics.total_errors) * 100).toFixed(1) : 0}%
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
 
       {/* 引用来源统计卡片 */}
       {metrics.top_referers && metrics.top_referers.length > 0 && (
