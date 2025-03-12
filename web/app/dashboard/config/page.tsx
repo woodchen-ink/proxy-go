@@ -68,6 +68,8 @@ export default function ConfigPage() {
   const scrollPositionRef = useRef(0)
   // 添加一个ref来跟踪是否是初始加载
   const isInitialLoadRef = useRef(true)
+  // 添加一个标志来跟踪配置是否是从API加载的
+  const isConfigFromApiRef = useRef(true)
   // 添加一个防抖定时器ref
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -126,6 +128,7 @@ export default function ConfigPage() {
       }
 
       const data = await response.json()
+      isConfigFromApiRef.current = true // 标记配置来自API
       setConfig(data)
     } catch (error) {
       const message = error instanceof Error ? error.message : "获取配置失败"
@@ -138,6 +141,12 @@ export default function ConfigPage() {
       setLoading(false)
     }
   }, [router, toast])
+
+  // 创建一个包装的setConfig函数，用于用户修改配置时
+  const updateConfig = useCallback((newConfig: Config) => {
+    isConfigFromApiRef.current = false // 标记配置来自用户修改
+    setConfig(newConfig)
+  }, [])
 
   useEffect(() => {
     fetchConfig()
@@ -193,8 +202,9 @@ export default function ConfigPage() {
   // 添加自动保存的useEffect
   useEffect(() => {
     // 如果是初始加载或者配置为空，不触发保存
-    if (isInitialLoadRef.current || !config) {
+    if (isInitialLoadRef.current || !config || isConfigFromApiRef.current) {
       isInitialLoadRef.current = false
+      isConfigFromApiRef.current = false // 重置标志
       return
     }
 
@@ -203,9 +213,15 @@ export default function ConfigPage() {
       clearTimeout(saveTimeoutRef.current)
     }
 
+    // 保存当前滚动位置
+    const currentScrollPosition = window.scrollY
+
     // 设置新的定时器，延迟1秒后保存
     saveTimeoutRef.current = setTimeout(() => {
-      handleSave()
+      handleSave().then(() => {
+        // 保存完成后恢复滚动位置
+        window.scrollTo(0, currentScrollPosition)
+      })
     }, 1000)
 
     // 组件卸载时清除定时器
@@ -305,7 +321,7 @@ export default function ConfigPage() {
     }
 
     newConfig.MAP[path] = pathConfig
-    setConfig(newConfig)
+    updateConfig(newConfig)
     
     if (editingPathData) {
       setEditingPathData(null)
@@ -332,7 +348,7 @@ export default function ConfigPage() {
     if (!config || !deletingPath) return
     const newConfig = { ...config }
     delete newConfig.MAP[deletingPath]
-    setConfig(newConfig)
+    updateConfig(newConfig)
     setDeletingPath(null)
   }
 
@@ -344,7 +360,7 @@ export default function ConfigPage() {
     } else {
       newConfig.Compression[type].Level = value as number
     }
-    setConfig(newConfig)
+    updateConfig(newConfig)
   }
 
   const handleExtensionMapEdit = (path: string, ext?: string, target?: string) => {
@@ -417,7 +433,7 @@ export default function ConfigPage() {
       }
     }
 
-    setConfig(newConfig)
+    updateConfig(newConfig)
     setExtensionMapDialogOpen(false)
     setEditingExtension(null)
     setNewExtension({ ext: "", target: "" })
@@ -436,7 +452,7 @@ export default function ConfigPage() {
       delete newExtensionMap[deletingExtension.ext]
       mapping.ExtensionMap = newExtensionMap
     }
-    setConfig(newConfig)
+    updateConfig(newConfig)
     setDeletingExtension(null)
   }
 
@@ -516,6 +532,8 @@ export default function ConfigPage() {
           }
         }
 
+        // 使用setConfig而不是updateConfig，因为导入的配置不应触发自动保存
+        isConfigFromApiRef.current = true
         setConfig(newConfig)
         toast({
           title: "成功",
