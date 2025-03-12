@@ -173,50 +173,107 @@ func (h *ProxyHandler) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reque
 
 	// 验证 state
 	if _, ok := h.auth.states.Load(state); !ok {
+		log.Printf("[Auth] ERR %s %s -> 400 (%s) invalid state from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 		http.Error(w, "Invalid state", http.StatusBadRequest)
 		return
 	}
 	h.auth.states.Delete(state)
 
+	// 验证code参数
+	if code == "" {
+		log.Printf("[Auth] ERR %s %s -> 400 (%s) missing code parameter from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
+		http.Error(w, "Missing code parameter", http.StatusBadRequest)
+		return
+	}
+
 	// 获取访问令牌
 	redirectURI := getCallbackURL(r)
+	clientID := os.Getenv("OAUTH_CLIENT_ID")
+	clientSecret := os.Getenv("OAUTH_CLIENT_SECRET")
+
+	// 验证OAuth配置
+	if clientID == "" || clientSecret == "" {
+		log.Printf("[Auth] ERR %s %s -> 500 (%s) missing OAuth credentials from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
+		http.Error(w, "Server configuration error", http.StatusInternalServerError)
+		return
+	}
+
 	resp, err := http.PostForm("https://connect.czl.net/api/oauth2/token",
 		url.Values{
-			"code":         {code},
-			"redirect_uri": {redirectURI},
+			"grant_type":    {"authorization_code"},
+			"code":          {code},
+			"redirect_uri":  {redirectURI},
+			"client_id":     {clientID},
+			"client_secret": {clientSecret},
 		})
 	if err != nil {
+		log.Printf("[Auth] ERR %s %s -> 500 (%s) failed to get access token: %v from %s", r.Method, r.URL.Path, utils.GetClientIP(r), err, utils.GetRequestSource(r))
 		http.Error(w, "Failed to get access token", http.StatusInternalServerError)
 		return
 	}
 	defer resp.Body.Close()
 
+	// 检查响应状态码
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("[Auth] ERR %s %s -> %d (%s) OAuth server returned error status: %s from %s",
+			r.Method, r.URL.Path, resp.StatusCode, utils.GetClientIP(r), resp.Status, utils.GetRequestSource(r))
+		http.Error(w, "OAuth server error: "+resp.Status, http.StatusInternalServerError)
+		return
+	}
+
 	var token OAuthToken
 	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {
+		log.Printf("[Auth] ERR %s %s -> 500 (%s) failed to parse token response: %v from %s", r.Method, r.URL.Path, utils.GetClientIP(r), err, utils.GetRequestSource(r))
 		http.Error(w, "Failed to parse token response", http.StatusInternalServerError)
+		return
+	}
+
+	// 验证访问令牌
+	if token.AccessToken == "" {
+		log.Printf("[Auth] ERR %s %s -> 500 (%s) received empty access token from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
+		http.Error(w, "Received invalid token", http.StatusInternalServerError)
 		return
 	}
 
 	// 获取用户信息
 	req, _ := http.NewRequest("GET", "https://connect.czl.net/api/oauth2/userinfo", nil)
 	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
-	client := &http.Client{}
+	client := &http.Client{Timeout: 10 * time.Second}
 	userResp, err := client.Do(req)
 	if err != nil {
+		log.Printf("[Auth] ERR %s %s -> 500 (%s) failed to get user info: %v from %s", r.Method, r.URL.Path, utils.GetClientIP(r), err, utils.GetRequestSource(r))
 		http.Error(w, "Failed to get user info", http.StatusInternalServerError)
 		return
 	}
 	defer userResp.Body.Close()
 
+	// 检查用户信息响应状态码
+	if userResp.StatusCode != http.StatusOK {
+		log.Printf("[Auth] ERR %s %s -> %d (%s) userinfo endpoint returned error status: %s from %s",
+			r.Method, r.URL.Path, userResp.StatusCode, utils.GetClientIP(r), userResp.Status, utils.GetRequestSource(r))
+		http.Error(w, "Failed to get user info: "+userResp.Status, http.StatusInternalServerError)
+		return
+	}
+
 	var userInfo OAuthUserInfo
 	if err := json.NewDecoder(userResp.Body).Decode(&userInfo); err != nil {
+		log.Printf("[Auth] ERR %s %s -> 500 (%s) failed to parse user info: %v from %s", r.Method, r.URL.Path, utils.GetClientIP(r), err, utils.GetRequestSource(r))
 		http.Error(w, "Failed to parse user info", http.StatusInternalServerError)
+		return
+	}
+
+	// 验证用户信息
+	if userInfo.Username == "" {
+		log.Printf("[Auth] ERR %s %s -> 500 (%s) received invalid user info (missing username) from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
+		http.Error(w, "Invalid user information", http.StatusInternalServerError)
 		return
 	}
 
 	// 生成内部访问令牌
 	internalToken := h.auth.generateToken()
 	h.auth.addToken(internalToken, userInfo.Username, tokenExpiry)
+
+	log.Printf("[Auth] %s %s -> 200 (%s) login success for user %s from %s", r.Method, r.URL.Path, utils.GetClientIP(r), userInfo.Username, utils.GetRequestSource(r))
 
 	// 返回登录成功页面
 	w.Header().Set("Content-Type", "text/html")
