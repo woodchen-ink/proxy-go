@@ -76,10 +76,13 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 // 添加处理扩展名映射的方法
 func (p *PathConfig) ProcessExtensionMap() {
 	if p.ExtensionMap == nil {
+		p.processedExtMap = nil
 		return
 	}
 
+	// 重新创建processedExtMap，确保它是最新的
 	p.processedExtMap = make(map[string]string)
+
 	for exts, target := range p.ExtensionMap {
 		// 分割扩展名
 		for _, ext := range strings.Split(exts, ",") {

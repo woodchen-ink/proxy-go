@@ -118,9 +118,14 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 
 	// 注册配置更新回调
 	config.RegisterUpdateCallback(func(newCfg *config.Config) {
+		// 确保所有路径配置的processedExtMap都已更新
+		for _, pathConfig := range newCfg.MAP {
+			pathConfig.ProcessExtensionMap()
+		}
+
 		handler.pathMap = newCfg.MAP
 		handler.config = newCfg
-		log.Printf("[Config] 配置已更新并生效")
+		log.Printf("[Config] 代理处理器配置已更新: %d 个路径映射", len(newCfg.MAP))
 	})
 
 	return handler

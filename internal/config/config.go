@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -107,17 +108,30 @@ func RegisterUpdateCallback(callback func(*Config)) {
 
 // TriggerCallbacks 触发所有回调
 func TriggerCallbacks(cfg *Config) {
+	// 确保所有路径配置的processedExtMap都已更新
+	for _, pathConfig := range cfg.MAP {
+		pathConfig.ProcessExtensionMap()
+	}
+
 	callbackMutex.RLock()
 	defer callbackMutex.RUnlock()
 	for _, callback := range configCallbacks {
 		callback(cfg)
 	}
+
+	// 添加日志
+	log.Printf("[Config] 触发了 %d 个配置更新回调", len(configCallbacks))
 }
 
 // Update 更新配置并触发回调
 func (c *configImpl) Update(newConfig *Config) {
 	c.Lock()
 	defer c.Unlock()
+
+	// 确保所有路径配置的processedExtMap都已更新
+	for _, pathConfig := range newConfig.MAP {
+		pathConfig.ProcessExtensionMap()
+	}
 
 	// 更新配置
 	c.MAP = newConfig.MAP
@@ -127,6 +141,9 @@ func (c *configImpl) Update(newConfig *Config) {
 	for _, callback := range c.onConfigUpdate {
 		callback(newConfig)
 	}
+
+	// 添加日志
+	log.Printf("[Config] 配置已更新: %d 个路径映射", len(newConfig.MAP))
 }
 
 // reload 重新加载配置文件
@@ -150,7 +167,14 @@ func (cm *ConfigManager) loadConfig() error {
 	if err != nil {
 		return err
 	}
+
+	// 确保所有路径配置的processedExtMap都已更新
+	for _, pathConfig := range config.MAP {
+		pathConfig.ProcessExtensionMap()
+	}
+
 	cm.config.Store(config)
+	log.Printf("[ConfigManager] 配置已加载: %d 个路径映射", len(config.MAP))
 	return nil
 }
 

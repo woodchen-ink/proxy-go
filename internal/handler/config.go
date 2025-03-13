@@ -67,6 +67,11 @@ func (h *ConfigHandler) handleSaveConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// 确保对每个路径配置调用ProcessExtensionMap方法
+	for _, pathConfig := range newConfig.MAP {
+		pathConfig.ProcessExtensionMap()
+	}
+
 	// 将新配置格式化为JSON
 	configData, err := json.MarshalIndent(newConfig, "", "  ")
 	if err != nil {
@@ -89,7 +94,17 @@ func (h *ConfigHandler) handleSaveConfig(w http.ResponseWriter, r *http.Request)
 
 	// 更新运行时配置
 	*h.config = newConfig
+
+	// 确保在触发回调之前，所有路径配置的processedExtMap都已更新
+	for _, pathConfig := range h.config.MAP {
+		pathConfig.ProcessExtensionMap()
+	}
+
+	// 触发配置更新回调
 	config.TriggerCallbacks(h.config)
+
+	// 添加日志
+	fmt.Printf("[Config] 配置已更新: %d 个路径映射\n", len(newConfig.MAP))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"message": "配置已更新并生效"}`))
