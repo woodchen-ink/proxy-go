@@ -15,8 +15,6 @@ import (
 	"proxy-go/internal/middleware"
 	"strings"
 	"syscall"
-
-	"github.com/joho/godotenv"
 )
 
 // Route 定义路由结构
@@ -28,10 +26,6 @@ type Route struct {
 }
 
 func main() {
-	// 加载.env文件
-	if err := godotenv.Load(); err != nil {
-		log.Printf("警告: 无法加载.env文件: %v", err)
-	}
 
 	// 初始化应用程序（包括配置迁移）
 	configPath := "data/config.json"
