@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	neturl "net/url"
@@ -219,11 +220,12 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 	ext = strings.ToLower(ext)
 	for _, rule := range pathConfig.ExtRules {
 		// 处理阈值默认值
-		if rule.SizeThreshold <= 0 {
-			rule.SizeThreshold = 500 * 1024 // 默认最小阈值 500KB
+		if rule.SizeThreshold < 0 {
+			rule.SizeThreshold = 0 // 默认不限制
 		}
+
 		if rule.MaxSize <= 0 {
-			rule.MaxSize = 10 * 1024 * 1024 // 默认最大阈值 10MB
+			rule.MaxSize = math.MaxInt64 // 设置为最大值表示不限制
 		}
 
 		// 检查是否包含通配符
@@ -241,10 +243,9 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 	// 如果没有找到匹配的具体扩展名规则，使用通配符规则
 	if len(matchingRules) == 0 {
 		if len(wildcardRules) > 0 {
-			log.Printf("[Route] %s -> 使用通配符规则 (扩展名: %s)", path, ext)
+			log.Printf("[Route] %s -> 使用通配符规则", path)
 			matchingRules = wildcardRules
 		} else {
-			log.Printf("[Route] %s -> %s (没有找到扩展名 %s 的规则)", path, targetBase, ext)
 			return targetBase, false
 		}
 	}
@@ -265,8 +266,11 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 		rule := &matchingRules[i]
 
 		// 检查文件大小是否在阈值范围内
-		if contentLength > rule.SizeThreshold && contentLength <= rule.MaxSize {
+		if contentLength >= rule.SizeThreshold && contentLength <= rule.MaxSize {
 			// 找到匹配的规则
+			log.Printf("[Route] %s -> %s (文件大小: %s, 在区间 %s 到 %s 之间)",
+				path, rule.Target, FormatBytes(contentLength),
+				FormatBytes(rule.SizeThreshold), FormatBytes(rule.MaxSize))
 			bestRule = rule
 			break
 		}

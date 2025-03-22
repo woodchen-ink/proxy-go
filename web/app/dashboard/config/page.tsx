@@ -32,8 +32,8 @@ import {
 interface ExtRuleConfig {
   Extensions: string;    // 逗号分隔的扩展名
   Target: string;        // 目标服务器
-  SizeThreshold: number; // 最小文件大小阈值（字节）
-  MaxSize: number;       // 最大文件大小阈值（字节）
+  SizeThreshold: number; // 最小阈值（字节）
+  MaxSize: number;       // 最大阈值（字节）
 }
 
 interface PathMapping {
@@ -610,7 +610,7 @@ export default function ConfigPage() {
     if (maxSizeBytes > 0 && sizeThresholdBytes >= maxSizeBytes) {
       toast({
         title: "错误",
-        description: "最大文件大小阈值必须大于最小文件大小阈值",
+        description: "最大阈值必须大于最小阈值",
         variant: "destructive",
       });
       return;
@@ -981,7 +981,7 @@ export default function ConfigPage() {
             </div>
             <div className="grid gap-4">
               <div className="grid gap-2">
-                <Label htmlFor="ruleSizeThreshold">最小文件大小阈值</Label>
+                <Label htmlFor="ruleSizeThreshold">最小阈值</Label>
                 <div className="flex gap-2">
                   <Input
                     id="ruleSizeThreshold"
@@ -1012,7 +1012,7 @@ export default function ConfigPage() {
                 </div>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="ruleMaxSize">最大文件大小阈值</Label>
+                <Label htmlFor="ruleMaxSize">最大阈值</Label>
                 <div className="flex gap-2">
                   <Input
                     id="ruleMaxSize"

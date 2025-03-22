@@ -19,8 +19,8 @@ type PathConfig struct {
 type ExtensionRule struct {
 	Extensions    []string // 支持的扩展名列表
 	Target        string   // 目标服务器
-	SizeThreshold int64    // 最小文件大小阈值
-	MaxSize       int64    // 最大文件大小阈值
+	SizeThreshold int64    // 最小阈值
+	MaxSize       int64    // 最大阈值
 }
 
 type CompressionConfig struct {
@@ -37,8 +37,8 @@ type CompressorConfig struct {
 type ExtRuleConfig struct {
 	Extensions    string `json:"Extensions"`    // 逗号分隔的扩展名
 	Target        string `json:"Target"`        // 目标服务器
-	SizeThreshold int64  `json:"SizeThreshold"` // 最小文件大小阈值
-	MaxSize       int64  `json:"MaxSize"`       // 最大文件大小阈值
+	SizeThreshold int64  `json:"SizeThreshold"` // 最小阈值
+	MaxSize       int64  `json:"MaxSize"`       // 最大阈值
 }
 
 // 处理扩展名映射的方法
