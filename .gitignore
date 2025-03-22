@@ -24,6 +24,15 @@ vendor/
 web/node_modules/
 web/dist/
 data/config.json
-data/config.json
 kaifa.md
 .cursor
+data/cache/config.json
+data/mirror_cache/config.json
+data/metrics/latency_distribution.json
+data/metrics/metrics.json
+data/metrics/path_stats.json
+data/metrics/referer_stats.json
+data/metrics/status_codes.json
+data/config.example.json
+data/config.json
+.env

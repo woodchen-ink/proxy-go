@@ -10,10 +10,13 @@ import (
 	"proxy-go/internal/config"
 	"proxy-go/internal/constants"
 	"proxy-go/internal/handler"
+	"proxy-go/internal/initapp"
 	"proxy-go/internal/metrics"
 	"proxy-go/internal/middleware"
 	"strings"
 	"syscall"
+
+	"github.com/joho/godotenv"
 )
 
 // Route 定义路由结构
@@ -25,25 +28,29 @@ type Route struct {
 }
 
 func main() {
-	// 加载配置
-	cfg, err := config.Load("data/config.json")
-	if err != nil {
-		log.Fatal("Error loading config:", err)
+	// 加载.env文件
+	if err := godotenv.Load(); err != nil {
+		log.Printf("警告: 无法加载.env文件: %v", err)
 	}
+
+	// 初始化应用程序（包括配置迁移）
+	configPath := "data/config.json"
+	initapp.Init(configPath)
+
+	// 初始化配置管理器
+	configManager, err := config.Init(configPath)
+	if err != nil {
+		log.Fatal("Error initializing config manager:", err)
+	}
+
+	// 获取配置
+	cfg := configManager.GetConfig()
 
 	// 更新常量配置
 	constants.UpdateFromConfig(cfg)
 
-	// 初始化指标收集器
-	if err := metrics.InitCollector(cfg); err != nil {
-		log.Fatal("Error initializing metrics collector:", err)
-	}
-
-	// 初始化指标存储服务
-	if err := metrics.InitMetricsStorage(cfg); err != nil {
-		log.Printf("Warning: Failed to initialize metrics storage: %v", err)
-		// 不致命，继续运行
-	}
+	// 初始化统计服务
+	metrics.Init(cfg)
 
 	// 创建压缩管理器
 	compManager := compression.NewManager(compression.Config{

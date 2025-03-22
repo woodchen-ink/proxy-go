@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback, useRef } from "react"
+import React, { useEffect, useState, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useToast } from "@/components/ui/use-toast"
@@ -8,14 +8,6 @@ import { useRouter } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import {
   Dialog,
   DialogContent,
@@ -37,11 +29,18 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 
+interface ExtRuleConfig {
+  Extensions: string;    // 逗号分隔的扩展名
+  Target: string;        // 目标服务器
+  SizeThreshold: number; // 最小文件大小阈值（字节）
+  MaxSize: number;       // 最大文件大小阈值（字节）
+}
+
 interface PathMapping {
   DefaultTarget: string
-  ExtensionMap?: Record<string, string>
-  SizeThreshold?: number  // 最小文件大小阈值
-  MaxSize?: number       // 最大文件大小阈值
+  ExtensionMap?: ExtRuleConfig[]  // 只支持新格式
+  SizeThreshold?: number  // 保留全局阈值字段（向后兼容）
+  MaxSize?: number       // 保留全局阈值字段（向后兼容）
 }
 
 interface CompressionConfig {
@@ -85,10 +84,7 @@ export default function ConfigPage() {
     maxSizeUnit: 'MB' as 'B' | 'KB' | 'MB' | 'GB',
   })
 
-  const [extensionMapDialogOpen, setExtensionMapDialogOpen] = useState(false)
   const [editingPath, setEditingPath] = useState<string | null>(null)
-  const [editingExtension, setEditingExtension] = useState<{ext: string, target: string} | null>(null)
-  const [newExtension, setNewExtension] = useState({ ext: "", target: "" })
 
   const [editingPathData, setEditingPathData] = useState<{
     path: string;
@@ -100,7 +96,36 @@ export default function ConfigPage() {
   } | null>(null);
 
   const [deletingPath, setDeletingPath] = useState<string | null>(null)
-  const [deletingExtension, setDeletingExtension] = useState<{path: string, ext: string} | null>(null)
+
+  // 添加扩展名规则状态
+  const [newExtensionRule, setNewExtensionRule] = useState<{
+    extensions: string;
+    target: string;
+    sizeThreshold: number;
+    maxSize: number;
+    sizeThresholdUnit: 'B' | 'KB' | 'MB' | 'GB';
+    maxSizeUnit: 'B' | 'KB' | 'MB' | 'GB';
+  }>({
+    extensions: "",
+    target: "",
+    sizeThreshold: 0,
+    maxSize: 0,
+    sizeThresholdUnit: 'MB',
+    maxSizeUnit: 'MB',
+  });
+
+  const [editingExtensionRule, setEditingExtensionRule] = useState<{
+    index: number,
+    extensions: string;
+    target: string;
+    sizeThreshold: number;
+    maxSize: number;
+    sizeThresholdUnit: 'B' | 'KB' | 'MB' | 'GB';
+    maxSizeUnit: 'B' | 'KB' | 'MB' | 'GB';
+  } | null>(null);
+
+  // 添加扩展名规则对话框状态
+  const [extensionRuleDialogOpen, setExtensionRuleDialogOpen] = useState(false);
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -266,22 +291,11 @@ export default function ConfigPage() {
     })
   }, [handleDialogOpenChange])
 
-  const handleExtensionMapDialogOpenChange = useCallback((open: boolean) => {
-    handleDialogOpenChange(open, (isOpen) => {
-      setExtensionMapDialogOpen(isOpen)
-      if (!isOpen) {
-        setEditingPath(null)
-        setEditingExtension(null)
-        setNewExtension({ ext: "", target: "" })
-      }
-    })
-  }, [handleDialogOpenChange])
-
   const addOrUpdatePath = () => {
     if (!config) return
     
     const data = editingPathData || newPathData
-    const { path, defaultTarget, sizeThreshold, maxSize, sizeThresholdUnit, maxSizeUnit } = data
+    const { path, defaultTarget } = data
     
     if (!path || !defaultTarget) {
       toast({
@@ -292,26 +306,10 @@ export default function ConfigPage() {
       return
     }
 
-    // 转换大小为字节
-    const sizeThresholdBytes = convertToBytes(sizeThreshold, sizeThresholdUnit)
-    const maxSizeBytes = convertToBytes(maxSize, maxSizeUnit)
-
-    // 验证阈值
-    if (maxSizeBytes > 0 && sizeThresholdBytes >= maxSizeBytes) {
-      toast({
-        title: "错误",
-        description: "最大文件大小阈值必须大于最小文件大小阈值",
-        variant: "destructive",
-      })
-      return
-    }
-
     const newConfig = { ...config }
     const pathConfig: PathMapping = {
       DefaultTarget: defaultTarget,
-      ExtensionMap: {},
-      SizeThreshold: sizeThresholdBytes,
-      MaxSize: maxSizeBytes
+      ExtensionMap: []
     }
 
     // 如果是编辑现有路径，保留原有的扩展名映射
@@ -363,98 +361,14 @@ export default function ConfigPage() {
     updateConfig(newConfig)
   }
 
-  const handleExtensionMapEdit = (path: string, ext?: string, target?: string) => {
-    setEditingPath(path)
-    if (ext && target) {
-      setEditingExtension({ ext, target })
-      setNewExtension({ ext, target })
-    } else {
-      setEditingExtension(null)
-      setNewExtension({ ext: "", target: "" })
-    }
-    setExtensionMapDialogOpen(true)
-  }
+  const handleExtensionMapEdit = (path: string) => {
+    // 将添加规则的操作重定向到handleExtensionRuleEdit
+    handleExtensionRuleEdit(path);
+  };
 
-  const addOrUpdateExtensionMap = () => {
-    if (!config || !editingPath) return
-    const { ext, target } = newExtension
-    
-    // 验证输入
-    if (!ext.trim() || !target.trim()) {
-      toast({
-        title: "错误",
-        description: "扩展名和目标不能为空",
-        variant: "destructive",
-      })
-      return
-    }
-
-    // 验证扩展名格式
-    const extensions = ext.split(',').map(e => e.trim())
-    if (extensions.some(e => !e || e.includes('.'))) {
-      toast({
-        title: "错误",
-        description: "扩展名格式不正确，不需要包含点号",
-        variant: "destructive",
-      })
-      return
-    }
-
-    // 验证URL格式
-    try {
-      new URL(target)
-    } catch {
-      toast({
-        title: "错误",
-        description: "目标URL格式不正确",
-        variant: "destructive",
-      })
-      return
-    }
-
-    const newConfig = { ...config }
-    const mapping = newConfig.MAP[editingPath]
-    if (typeof mapping === "string") {
-      newConfig.MAP[editingPath] = {
-        DefaultTarget: mapping,
-        ExtensionMap: { [ext]: target }
-      }
-    } else {
-      // 如果是编辑现有的扩展名映射，先删除旧的
-      if (editingExtension) {
-        const newExtMap = { ...mapping.ExtensionMap }
-        delete newExtMap[editingExtension.ext]
-        mapping.ExtensionMap = newExtMap
-      }
-      // 添加新的映射
-      mapping.ExtensionMap = {
-        ...mapping.ExtensionMap,
-        [ext]: target
-      }
-    }
-
-    updateConfig(newConfig)
-    setExtensionMapDialogOpen(false)
-    setEditingExtension(null)
-    setNewExtension({ ext: "", target: "" })
-  }
-
-  const deleteExtensionMap = (path: string, ext: string) => {
-    setDeletingExtension({ path, ext })
-  }
-
-  const confirmDeleteExtensionMap = () => {
-    if (!config || !deletingExtension) return
-    const newConfig = { ...config }
-    const mapping = newConfig.MAP[deletingExtension.path]
-    if (typeof mapping !== "string" && mapping.ExtensionMap) {
-      const newExtensionMap = { ...mapping.ExtensionMap }
-      delete newExtensionMap[deletingExtension.ext]
-      mapping.ExtensionMap = newExtensionMap
-    }
-    updateConfig(newConfig)
-    setDeletingExtension(null)
-  }
+  const deleteExtensionRule = (path: string, index: number) => {
+    setDeletingExtensionRule({ path, index });
+  };
 
   const openAddPathDialog = () => {
     setEditingPathData(null)
@@ -587,6 +501,196 @@ export default function ConfigPage() {
     }
   }, [])
 
+  // 为扩展名规则对话框添加处理函数
+  const handleExtensionRuleDialogOpenChange = useCallback((open: boolean) => {
+    handleDialogOpenChange(open, (isOpen) => {
+      setExtensionRuleDialogOpen(isOpen);
+      if (!isOpen) {
+        setEditingExtensionRule(null);
+        setNewExtensionRule({
+          extensions: "",
+          target: "",
+          sizeThreshold: 0,
+          maxSize: 0,
+          sizeThresholdUnit: 'MB',
+          maxSizeUnit: 'MB',
+        });
+      }
+    });
+  }, [handleDialogOpenChange]);
+
+  // 处理扩展名规则的编辑
+  const handleExtensionRuleEdit = (path: string, index?: number, rule?: { Extensions: string; Target: string; SizeThreshold?: number; MaxSize?: number }) => {
+    setEditingPath(path);
+    
+    if (index !== undefined && rule) {
+      // 转换规则的阈值到合适的单位显示
+      const { value: thresholdValue, unit: thresholdUnit } = convertBytesToUnit(rule.SizeThreshold || 0);
+      const { value: maxValue, unit: maxUnit } = convertBytesToUnit(rule.MaxSize || 0);
+      
+      setEditingExtensionRule({
+        index,
+        extensions: rule.Extensions, 
+        target: rule.Target,
+        sizeThreshold: thresholdValue,
+        maxSize: maxValue,
+        sizeThresholdUnit: thresholdUnit,
+        maxSizeUnit: maxUnit,
+      });
+      
+      // 同时更新表单显示数据
+      setNewExtensionRule({
+        extensions: rule.Extensions,
+        target: rule.Target,
+        sizeThreshold: thresholdValue,
+        maxSize: maxValue,
+        sizeThresholdUnit: thresholdUnit,
+        maxSizeUnit: maxUnit,
+      });
+    } else {
+      setEditingExtensionRule(null);
+      // 重置表单
+      setNewExtensionRule({
+        extensions: "",
+        target: "",
+        sizeThreshold: 0,
+        maxSize: 0,
+        sizeThresholdUnit: 'MB',
+        maxSizeUnit: 'MB',
+      });
+    }
+    
+    setExtensionRuleDialogOpen(true);
+  };
+
+  // 添加或更新扩展名规则
+  const addOrUpdateExtensionRule = () => {
+    if (!config || !editingPath) return;
+    
+    const { extensions, target, sizeThreshold, maxSize, sizeThresholdUnit, maxSizeUnit } = newExtensionRule;
+    
+    // 验证输入
+    if (!extensions.trim() || !target.trim()) {
+      toast({
+        title: "错误",
+        description: "扩展名和目标不能为空",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // 验证扩展名格式
+    const extensionList = extensions.split(',').map(e => e.trim());
+    if (extensionList.some(e => !e || (e !== "*" && e.includes('.')))) {
+      toast({
+        title: "错误",
+        description: "扩展名格式不正确，不需要包含点号",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // 验证URL格式
+    try {
+      new URL(target);
+    } catch {
+      toast({
+        title: "错误",
+        description: "目标URL格式不正确",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // 转换大小为字节
+    const sizeThresholdBytes = convertToBytes(sizeThreshold, sizeThresholdUnit);
+    const maxSizeBytes = convertToBytes(maxSize, maxSizeUnit);
+
+    // 验证阈值
+    if (maxSizeBytes > 0 && sizeThresholdBytes >= maxSizeBytes) {
+      toast({
+        title: "错误",
+        description: "最大文件大小阈值必须大于最小文件大小阈值",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const newConfig = { ...config };
+    const mapping = newConfig.MAP[editingPath];
+    
+    if (typeof mapping === "string") {
+      // 如果映射是字符串，创建新的PathConfig对象
+      newConfig.MAP[editingPath] = {
+        DefaultTarget: mapping,
+        ExtensionMap: [{
+          Extensions: extensions,
+          Target: target,
+          SizeThreshold: sizeThresholdBytes,
+          MaxSize: maxSizeBytes
+        }]
+      };
+    } else {
+      // 确保ExtensionMap是数组
+      if (!Array.isArray(mapping.ExtensionMap)) {
+        mapping.ExtensionMap = [];
+      }
+      
+      if (editingExtensionRule) {
+        // 更新现有规则
+        const rules = mapping.ExtensionMap as ExtRuleConfig[];
+        rules[editingExtensionRule.index] = {
+          Extensions: extensions,
+          Target: target,
+          SizeThreshold: sizeThresholdBytes,
+          MaxSize: maxSizeBytes
+        };
+      } else {
+        // 添加新规则
+        mapping.ExtensionMap.push({
+          Extensions: extensions,
+          Target: target,
+          SizeThreshold: sizeThresholdBytes,
+          MaxSize: maxSizeBytes
+        });
+      }
+    }
+
+    updateConfig(newConfig);
+    setExtensionRuleDialogOpen(false);
+    setEditingExtensionRule(null);
+    setNewExtensionRule({
+      extensions: "",
+      target: "",
+      sizeThreshold: 0,
+      maxSize: 0,
+      sizeThresholdUnit: 'MB',
+      maxSizeUnit: 'MB',
+    });
+  };
+
+  // 删除扩展名规则
+  const [deletingExtensionRule, setDeletingExtensionRule] = useState<{path: string, index: number} | null>(null);
+
+  const confirmDeleteExtensionRule = () => {
+    if (!config || !deletingExtensionRule) return;
+    
+    const newConfig = { ...config };
+    const mapping = newConfig.MAP[deletingExtensionRule.path];
+    
+    if (typeof mapping !== "string" && Array.isArray(mapping.ExtensionMap)) {
+      // 移除指定索引的规则
+      const rules = mapping.ExtensionMap as ExtRuleConfig[];
+      mapping.ExtensionMap = [
+        ...rules.slice(0, deletingExtensionRule.index),
+        ...rules.slice(deletingExtensionRule.index + 1)
+      ];
+    }
+    
+    updateConfig(newConfig);
+    setDeletingExtensionRule(null);
+  };
+
   if (loading) {
     return (
       <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
@@ -677,100 +781,6 @@ export default function ConfigPage() {
                           默认的回源地址，所有请求都会转发到这个地址
                         </p>
                       </div>
-                      <div className="grid gap-4">
-                        <div className="grid gap-2">
-                          <Label htmlFor="sizeThreshold">最小文件大小阈值</Label>
-                          <div className="flex gap-2">
-                            <Input
-                              id="sizeThreshold"
-                              type="number"
-                              value={editingPathData?.sizeThreshold ?? newPathData.sizeThreshold}
-                              onChange={(e) => {
-                                if (editingPathData) {
-                                  setEditingPathData({
-                                    ...editingPathData,
-                                    sizeThreshold: Number(e.target.value),
-                                  })
-                                } else {
-                                  setNewPathData({
-                                    ...newPathData,
-                                    sizeThreshold: Number(e.target.value),
-                                  })
-                                }
-                              }}
-                            />
-                            <select
-                              className="w-24 rounded-md border border-input bg-background px-3"
-                              value={editingPathData?.sizeThresholdUnit ?? newPathData.sizeThresholdUnit}
-                              onChange={(e) => {
-                                const unit = e.target.value as 'B' | 'KB' | 'MB' | 'GB'
-                                if (editingPathData) {
-                                  setEditingPathData({
-                                    ...editingPathData,
-                                    sizeThresholdUnit: unit,
-                                  })
-                                } else {
-                                  setNewPathData({
-                                    ...newPathData,
-                                    sizeThresholdUnit: unit,
-                                  })
-                                }
-                              }}
-                            >
-                              <option value="B">B</option>
-                              <option value="KB">KB</option>
-                              <option value="MB">MB</option>
-                              <option value="GB">GB</option>
-                            </select>
-                          </div>
-                        </div>
-                        <div className="grid gap-2">
-                          <Label htmlFor="maxSize">最大文件大小阈值</Label>
-                          <div className="flex gap-2">
-                            <Input
-                              id="maxSize"
-                              type="number"
-                              value={editingPathData?.maxSize ?? newPathData.maxSize}
-                              onChange={(e) => {
-                                if (editingPathData) {
-                                  setEditingPathData({
-                                    ...editingPathData,
-                                    maxSize: Number(e.target.value),
-                                  })
-                                } else {
-                                  setNewPathData({
-                                    ...newPathData,
-                                    maxSize: Number(e.target.value),
-                                  })
-                                }
-                              }}
-                            />
-                            <select
-                              className="w-24 rounded-md border border-input bg-background px-3"
-                              value={editingPathData?.maxSizeUnit ?? newPathData.maxSizeUnit}
-                              onChange={(e) => {
-                                const unit = e.target.value as 'B' | 'KB' | 'MB' | 'GB'
-                                if (editingPathData) {
-                                  setEditingPathData({
-                                    ...editingPathData,
-                                    maxSizeUnit: unit,
-                                  })
-                                } else {
-                                  setNewPathData({
-                                    ...newPathData,
-                                    maxSizeUnit: unit,
-                                  })
-                                }
-                              }}
-                            >
-                              <option value="B">B</option>
-                              <option value="KB">KB</option>
-                              <option value="MB">MB</option>
-                              <option value="GB">GB</option>
-                            </select>
-                          </div>
-                        </div>
-                      </div>
                       <Button onClick={addOrUpdatePath}>
                         {editingPathData ? "保存" : "添加"}
                       </Button>
@@ -779,119 +789,94 @@ export default function ConfigPage() {
                 </Dialog>
               </div>
 
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[10%]">路径</TableHead>
-                    <TableHead className="w-[40%]">默认目标</TableHead>
-                    <TableHead className="w-[10%]">最小阈值</TableHead>
-                    <TableHead className="w-[10%]">最大阈值</TableHead>
-                    <TableHead className="w-[15%]">扩展名映射</TableHead>
-                    <TableHead className="w-[15%]">操作</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {config && Object.entries(config.MAP).map(([path, target]) => (
-                    <>
-                      <TableRow key={`${path}-main`}>
-                        <TableCell>{path}</TableCell>
-                        <TableCell>
-                          {typeof target === 'string' ? target : target.DefaultTarget}
-                        </TableCell>
-                        <TableCell>
-                          {typeof target === 'object' && target.SizeThreshold ? (
-                            <span title={`${target.SizeThreshold} 字节`}>
-                              {formatBytes(target.SizeThreshold)}
-                            </span>
-                          ) : '-'}
-                        </TableCell>
-                        <TableCell>
-                          {typeof target === 'object' && target.MaxSize ? (
-                            <span title={`${target.MaxSize} 字节`}>
-                              {formatBytes(target.MaxSize)}
-                            </span>
-                          ) : '-'}
-                        </TableCell>
-                        <TableCell>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {config && Object.entries(config.MAP).map(([path, target]) => (
+                  <Card key={`${path}-card`} className="overflow-hidden">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-lg flex justify-between items-center">
+                        <span className="font-medium truncate" title={path}>{path}</span>
+                        <div className="flex space-x-1">
                           <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleExtensionMapEdit(path)}
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => handleEditPath(path, target)}
                           >
-                            <Plus className="w-3 h-3 mr-2" />
-                            添加扩展名映射
+                            <Edit className="h-4 w-4" />
                           </Button>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex space-x-2">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handleEditPath(path, target)}
-                            >
-                              <Edit className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => deletePath(path)}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => deletePath(path)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="pb-3">
+                      <div className="text-sm text-muted-foreground mb-3">
+                        <span className="font-medium text-primary">默认目标: </span>
+                        <span className="break-all">{typeof target === 'string' ? target : target.DefaultTarget}</span>
+                      </div>
+                      
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full"
+                        onClick={() => handleExtensionMapEdit(path)}
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        添加规则
+                      </Button>
+                      
+                      {typeof target === 'object' && target.ExtensionMap && Array.isArray(target.ExtensionMap) && target.ExtensionMap.length > 0 && (
+                        <div className="mt-4">
+                          <div className="text-sm font-semibold mb-2">扩展名映射规则</div>
+                          <div className="space-y-2 max-h-[250px] overflow-y-auto pr-1">
+                            {target.ExtensionMap.map((rule, index) => (
+                              <div 
+                                key={`${path}-rule-${index}`} 
+                                className="bg-muted/30 rounded-md p-2 text-xs"
+                              >
+                                <div className="flex justify-between mb-1">
+                                  <span className="font-semibold">{rule.Extensions}</span>
+                                  <div className="flex space-x-1">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-5 w-5"
+                                      onClick={() => handleExtensionRuleEdit(path, index, rule)}
+                                    >
+                                      <Edit className="h-3 w-3" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-5 w-5"
+                                      onClick={() => deleteExtensionRule(path, index)}
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </Button>
+                                  </div>
+                                </div>
+                                <div className="text-muted-foreground truncate" title={rule.Target}>
+                                  目标: {truncateUrl(rule.Target)}
+                                </div>
+                                <div className="flex justify-between mt-1 text-muted-foreground">
+                                  <div>阈值: {formatBytes(rule.SizeThreshold || 0)}</div>
+                                  <div>最大: {formatBytes(rule.MaxSize || 0)}</div>
+                                </div>
+                              </div>
+                            ))}
                           </div>
-                        </TableCell>
-                      </TableRow>
-                      {typeof target === 'object' && target.ExtensionMap && Object.keys(target.ExtensionMap).length > 0 && (
-                        <TableRow key={`${path}-extensions`}>
-                          <TableCell colSpan={6} className="p-0 border-t-0">
-                            <div className="bg-muted/30 px-2 py-1 mx-4">
-                              <Table>
-                                <TableHeader>
-                                  <TableRow className="border-0">
-                                    <TableHead className="w-[30%] h-8 text-xs">扩展名</TableHead>
-                                    <TableHead className="w-[50%] h-8 text-xs">目标地址</TableHead>
-                                    <TableHead className="w-[20%] h-8 text-xs">操作</TableHead>
-                                  </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                  {Object.entries(target.ExtensionMap).map(([ext, url]) => (
-                                    <TableRow key={ext} className="border-0">
-                                      <TableCell className="py-1 text-sm">{ext}</TableCell>
-                                      <TableCell className="py-1 text-sm">
-                                        <span title={url}>{truncateUrl(url)}</span>
-                                      </TableCell>
-                                      <TableCell className="py-1">
-                                        <div className="flex space-x-1">
-                                          <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className="h-6 w-6"
-                                            onClick={() => handleExtensionMapEdit(path, ext, url)}
-                                          >
-                                            <Edit className="h-3 w-3" />
-                                          </Button>
-                                          <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className="h-6 w-6"
-                                            onClick={() => deleteExtensionMap(path, ext)}
-                                          >
-                                            <Trash2 className="h-3 w-3" />
-                                          </Button>
-                                        </div>
-                                      </TableCell>
-                                    </TableRow>
-                                  ))}
-                                </TableBody>
-                              </Table>
-                            </div>
-                          </TableCell>
-                        </TableRow>
+                        </div>
                       )}
-                    </>
-                  ))}
-                </TableBody>
-              </Table>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
             </TabsContent>
 
             <TabsContent value="compression" className="space-y-6">
@@ -949,43 +934,6 @@ export default function ConfigPage() {
         </CardContent>
       </Card>
 
-      <Dialog open={extensionMapDialogOpen} onOpenChange={handleExtensionMapDialogOpenChange}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {editingExtension ? "编辑扩展名映射" : "添加扩展名映射"}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>扩展名</Label>
-              <Input
-                value={newExtension.ext}
-                onChange={(e) => setNewExtension({ ...newExtension, ext: e.target.value })}
-                placeholder="jpg,png,webp"
-              />
-              <p className="text-sm text-muted-foreground">
-                多个扩展名用逗号分隔，不需要包含点号
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label>目标 URL</Label>
-              <Input
-                value={newExtension.target}
-                onChange={(e) => setNewExtension({ ...newExtension, target: e.target.value })}
-                placeholder="https://example.com"
-              />
-              <p className="text-sm text-muted-foreground">
-                当文件大小超过阈值且扩展名匹配时，将使用此地址
-              </p>
-            </div>
-            <Button onClick={addOrUpdateExtensionMap}>
-              {editingExtension ? "保存" : "添加"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
       <AlertDialog 
         open={!!deletingPath} 
         onOpenChange={(open) => handleDeleteDialogOpenChange(open, setDeletingPath)}
@@ -1004,20 +952,118 @@ export default function ConfigPage() {
         </AlertDialogContent>
       </AlertDialog>
       
+      <Dialog open={extensionRuleDialogOpen} onOpenChange={handleExtensionRuleDialogOpenChange}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {editingExtensionRule ? "编辑扩展名规则" : "添加扩展名规则"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>扩展名</Label>
+              <Input
+                value={newExtensionRule.extensions}
+                onChange={(e) => setNewExtensionRule({ ...newExtensionRule, extensions: e.target.value })}
+                placeholder="jpg,png,webp"
+              />
+              <p className="text-sm text-muted-foreground">
+                多个扩展名用逗号分隔，不需要包含点号。使用星号 * 表示匹配所有未指定的扩展名。
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>目标 URL</Label>
+              <Input
+                value={newExtensionRule.target}
+                onChange={(e) => setNewExtensionRule({ ...newExtensionRule, target: e.target.value })}
+                placeholder="https://example.com"
+              />
+            </div>
+            <div className="grid gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="ruleSizeThreshold">最小文件大小阈值</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="ruleSizeThreshold"
+                    type="number"
+                    value={newExtensionRule.sizeThreshold}
+                    onChange={(e) => {
+                      setNewExtensionRule({
+                        ...newExtensionRule,
+                        sizeThreshold: Number(e.target.value),
+                      });
+                    }}
+                  />
+                  <select
+                    className="w-24 rounded-md border border-input bg-background px-3"
+                    value={newExtensionRule.sizeThresholdUnit}
+                    onChange={(e) => {
+                      setNewExtensionRule({
+                        ...newExtensionRule,
+                        sizeThresholdUnit: e.target.value as 'B' | 'KB' | 'MB' | 'GB',
+                      });
+                    }}
+                  >
+                    <option value="B">B</option>
+                    <option value="KB">KB</option>
+                    <option value="MB">MB</option>
+                    <option value="GB">GB</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="ruleMaxSize">最大文件大小阈值</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="ruleMaxSize"
+                    type="number"
+                    value={newExtensionRule.maxSize}
+                    onChange={(e) => {
+                      setNewExtensionRule({
+                        ...newExtensionRule,
+                        maxSize: Number(e.target.value),
+                      });
+                    }}
+                  />
+                  <select
+                    className="w-24 rounded-md border border-input bg-background px-3"
+                    value={newExtensionRule.maxSizeUnit}
+                    onChange={(e) => {
+                      setNewExtensionRule({
+                        ...newExtensionRule,
+                        maxSizeUnit: e.target.value as 'B' | 'KB' | 'MB' | 'GB',
+                      });
+                    }}
+                  >
+                    <option value="B">B</option>
+                    <option value="KB">KB</option>
+                    <option value="MB">MB</option>
+                    <option value="GB">GB</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <Button onClick={addOrUpdateExtensionRule}>
+              {editingExtensionRule ? "保存" : "添加"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <AlertDialog 
-        open={!!deletingExtension} 
-        onOpenChange={(open) => handleDeleteDialogOpenChange(open, setDeletingExtension)}
+        open={!!deletingExtensionRule} 
+        onOpenChange={(open) => handleDeleteDialogOpenChange(open, () => setDeletingExtensionRule(null))}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>确认删除</AlertDialogTitle>
             <AlertDialogDescription>
-              确定要删除扩展名 &ldquo;{deletingExtension?.ext}&rdquo; 的映射吗？此操作无法撤销。
+              确定要删除这个扩展名规则吗？此操作无法撤销。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDeleteExtensionMap}>删除</AlertDialogAction>
+            <AlertDialogAction onClick={confirmDeleteExtensionRule}>删除</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

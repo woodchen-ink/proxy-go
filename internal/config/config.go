@@ -7,7 +7,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 // Config 配置结构体
@@ -30,18 +29,26 @@ type ConfigManager struct {
 	configPath string
 }
 
-func NewConfigManager(path string) *ConfigManager {
-	cm := &ConfigManager{configPath: path}
-	cm.loadConfig()
-	go cm.watchConfig()
-	return cm
-}
-
-func (cm *ConfigManager) watchConfig() {
-	ticker := time.NewTicker(30 * time.Second)
-	for range ticker.C {
-		cm.loadConfig()
+func NewConfigManager(configPath string) (*ConfigManager, error) {
+	cm := &ConfigManager{
+		configPath: configPath,
 	}
+
+	// 加载配置
+	config, err := Load(configPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// 确保所有路径配置的扩展名规则都已更新
+	for _, pathConfig := range config.MAP {
+		pathConfig.ProcessExtensionMap()
+	}
+
+	cm.config.Store(config)
+	log.Printf("[ConfigManager] 配置已加载: %d 个路径映射", len(config.MAP))
+
+	return cm, nil
 }
 
 // Load 加载配置
@@ -75,6 +82,21 @@ func createDefaultConfig(path string) error {
 		MAP: map[string]PathConfig{
 			"/": {
 				DefaultTarget: "http://localhost:8080",
+				// 添加新式扩展名规则映射示例
+				ExtensionMap: []ExtRuleConfig{
+					{
+						Extensions:    "jpg,png,webp",
+						Target:        "https://img1.example.com",
+						SizeThreshold: 500 * 1024,      // 500KB
+						MaxSize:       2 * 1024 * 1024, // 2MB
+					},
+					{
+						Extensions:    "jpg,png,webp",
+						Target:        "https://img2.example.com",
+						SizeThreshold: 2 * 1024 * 1024, // 2MB
+						MaxSize:       5 * 1024 * 1024, // 5MB
+					},
+				},
 			},
 		},
 		Compression: CompressionConfig{
@@ -108,7 +130,7 @@ func RegisterUpdateCallback(callback func(*Config)) {
 
 // TriggerCallbacks 触发所有回调
 func TriggerCallbacks(cfg *Config) {
-	// 确保所有路径配置的processedExtMap都已更新
+	// 确保所有路径配置的扩展名规则都已更新
 	for _, pathConfig := range cfg.MAP {
 		pathConfig.ProcessExtensionMap()
 	}
@@ -128,7 +150,7 @@ func (c *configImpl) Update(newConfig *Config) {
 	c.Lock()
 	defer c.Unlock()
 
-	// 确保所有路径配置的processedExtMap都已更新
+	// 确保所有路径配置的扩展名规则都已更新
 	for _, pathConfig := range newConfig.MAP {
 		pathConfig.ProcessExtensionMap()
 	}
@@ -168,7 +190,7 @@ func (cm *ConfigManager) loadConfig() error {
 		return err
 	}
 
-	// 确保所有路径配置的processedExtMap都已更新
+	// 确保所有路径配置的扩展名规则都已更新
 	for _, pathConfig := range config.MAP {
 		pathConfig.ProcessExtensionMap()
 	}
