@@ -222,6 +222,12 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 复制并处理请求头
 	copyHeader(proxyReq.Header, r.Header)
 
+	// 添加常见浏览器User-Agent
+	proxyReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+	// 设置Referer为源站的host
+	proxyReq.Header.Set("Referer", fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host))
+
 	// 特别处理图片请求
 	if utils.IsImageRequest(r.URL.Path) {
 		// 获取 Accept 头

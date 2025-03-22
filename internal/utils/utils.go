@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"path/filepath"
 	"proxy-go/internal/config"
 	"slices"
@@ -337,20 +338,28 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 }
 
 // isTargetAccessible 检查目标URL是否可访问
-func isTargetAccessible(client *http.Client, url string) bool {
+func isTargetAccessible(client *http.Client, targetURL string) bool {
 	// 先查缓存
-	if cache, ok := accessCache.Load(url); ok {
+	if cache, ok := accessCache.Load(targetURL); ok {
 		cacheItem := cache.(accessibilityCache)
 		if time.Since(cacheItem.timestamp) < accessTTL {
 			return cacheItem.accessible
 		}
-		accessCache.Delete(url)
+		accessCache.Delete(targetURL)
 	}
 
-	req, err := http.NewRequest("HEAD", url, nil)
+	req, err := http.NewRequest("HEAD", targetURL, nil)
 	if err != nil {
-		log.Printf("[Check] Failed to create request for %s: %v", url, err)
+		log.Printf("[Check] Failed to create request for %s: %v", targetURL, err)
 		return false
+	}
+
+	// 添加浏览器User-Agent
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+	// 设置Referer为目标域名
+	if parsedURL, parseErr := neturl.Parse(targetURL); parseErr == nil {
+		req.Header.Set("Referer", fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host))
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -359,14 +368,14 @@ func isTargetAccessible(client *http.Client, url string) bool {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("[Check] Failed to access %s: %v", url, err)
+		log.Printf("[Check] Failed to access %s: %v", targetURL, err)
 		return false
 	}
 	defer resp.Body.Close()
 
 	accessible := resp.StatusCode >= 200 && resp.StatusCode < 400
 	// 缓存结果
-	accessCache.Store(url, accessibilityCache{
+	accessCache.Store(targetURL, accessibilityCache{
 		accessible: accessible,
 		timestamp:  time.Now(),
 	})
