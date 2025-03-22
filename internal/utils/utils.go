@@ -183,9 +183,10 @@ func GetFileSize(client *http.Client, url string) (int64, error) {
 }
 
 // GetTargetURL 根据路径和配置决定目标URL
-func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathConfig, path string) string {
+func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathConfig, path string) (string, bool) {
 	// 默认使用默认目标
 	targetBase := pathConfig.DefaultTarget
+	usedAltTarget := false
 
 	// 如果配置了扩展名映射
 	if pathConfig.ExtensionMap != nil {
@@ -198,7 +199,7 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 				contentLength, err := GetFileSize(client, targetBase+path)
 				if err != nil {
 					log.Printf("[Route] %s -> %s (error getting size: %v)", path, targetBase, err)
-					return targetBase
+					return targetBase, false
 				}
 
 				// 如果没有设置最小阈值，使用默认值 500KB
@@ -244,7 +245,7 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 							log.Printf("[Route] %s -> %s (size: %s > %s and <= %s)",
 								path, altTarget, FormatBytes(contentLength),
 								FormatBytes(minThreshold), FormatBytes(maxThreshold))
-							return altTarget
+							return altTarget, true
 						}
 						log.Printf("[Route] %s -> %s (fallback: alternative target not accessible)",
 							path, targetBase)
@@ -269,7 +270,7 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 		log.Printf("[Route] %s -> %s (no extension map)", path, targetBase)
 	}
 
-	return targetBase
+	return targetBase, usedAltTarget
 }
 
 // isTargetAccessible 检查目标URL是否可访问

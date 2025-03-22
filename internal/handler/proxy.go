@@ -195,7 +195,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 使用统一的路由选择逻辑
-	targetBase := utils.GetTargetURL(h.client, r, pathConfig, decodedPath)
+	targetBase, usedAltTarget := utils.GetTargetURL(h.client, r, pathConfig, decodedPath)
 
 	// 重新编码路径，保留 '/'
 	parts := strings.Split(decodedPath, "/")
@@ -277,6 +277,12 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Encoding", item.ContentEncoding)
 			}
 			w.Header().Set("Proxy-Go-Cache", "HIT")
+
+			// 如果使用了扩展名映射的备用目标，添加标记响应头
+			if usedAltTarget {
+				w.Header().Set("Proxy-Go-AltTarget", "true")
+			}
+
 			if notModified {
 				w.WriteHeader(http.StatusNotModified)
 				return
@@ -304,6 +310,11 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 复制响应头
 	copyHeader(w.Header(), resp.Header)
 	w.Header().Set("Proxy-Go-Cache", "MISS")
+
+	// 如果使用了扩展名映射的备用目标，添加标记响应头
+	if usedAltTarget {
+		w.Header().Set("Proxy-Go-AltTarget", "true")
+	}
 
 	// 设置响应状态码
 	w.WriteHeader(resp.StatusCode)
