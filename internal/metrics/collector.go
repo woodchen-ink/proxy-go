@@ -24,7 +24,6 @@ type Collector struct {
 	latencySum      int64
 	maxLatency      int64 // 最大响应时间
 	minLatency      int64 // 最小响应时间
-	pathStats       sync.Map
 	statusCodeStats sync.Map
 	latencyBuckets  sync.Map // 响应时间分布
 	refererStats    sync.Map // 引用来源统计
@@ -36,7 +35,6 @@ type Collector struct {
 		history    map[string]int64
 	}
 	recentRequests *models.RequestQueue
-	pathStatsMutex sync.RWMutex
 	config         *config.Config
 }
 
@@ -154,30 +152,6 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 		c.latencyBuckets.Store(bucketKey, counter)
 	}
 
-	// 更新路径统计
-	c.pathStatsMutex.Lock()
-	if value, ok := c.pathStats.Load(path); ok {
-		stat := value.(*models.PathMetrics)
-		stat.AddRequest()
-		if status >= 400 {
-			stat.AddError()
-		}
-		stat.AddLatency(int64(latency))
-		stat.AddBytes(bytes)
-	} else {
-		newStat := &models.PathMetrics{
-			Path: path,
-		}
-		newStat.RequestCount.Store(1)
-		if status >= 400 {
-			newStat.ErrorCount.Store(1)
-		}
-		newStat.TotalLatency.Store(int64(latency))
-		newStat.BytesTransferred.Store(bytes)
-		c.pathStats.Store(path, newStat)
-	}
-	c.pathStatsMutex.Unlock()
-
 	// 更新引用来源统计
 	if r != nil {
 		referer := r.Header.Get("Referer")
@@ -277,45 +251,6 @@ func (c *Collector) GetStats() map[string]interface{} {
 		return true
 	})
 
-	// 收集路径统计
-	var pathMetrics []*models.PathMetrics
-	pathCount := 0
-	c.pathStats.Range(func(key, value interface{}) bool {
-		stats := value.(*models.PathMetrics)
-		requestCount := stats.GetRequestCount()
-		if requestCount > 0 {
-			totalLatency := stats.GetTotalLatency()
-			avgLatencyMs := float64(totalLatency) / float64(requestCount) / float64(time.Millisecond)
-			stats.AvgLatency = fmt.Sprintf("%.2fms", avgLatencyMs)
-			pathMetrics = append(pathMetrics, stats)
-		}
-
-		// 限制遍历的数量，避免过多数据导致内存占用过高
-		pathCount++
-		return pathCount < 100 // 最多遍历100个路径
-	})
-
-	// 按请求数降序排序，请求数相同时按路径字典序排序
-	sort.Slice(pathMetrics, func(i, j int) bool {
-		countI := pathMetrics[i].GetRequestCount()
-		countJ := pathMetrics[j].GetRequestCount()
-		if countI != countJ {
-			return countI > countJ
-		}
-		return pathMetrics[i].Path < pathMetrics[j].Path
-	})
-
-	// 只保留前10个
-	if len(pathMetrics) > 10 {
-		pathMetrics = pathMetrics[:10]
-	}
-
-	// 转换为值切片
-	pathMetricsValues := make([]models.PathMetricsJSON, len(pathMetrics))
-	for i, metric := range pathMetrics {
-		pathMetricsValues[i] = metric.ToJSON()
-	}
-
 	// 收集引用来源统计
 	var refererMetrics []*models.PathMetrics
 	refererCount := 0
@@ -344,9 +279,9 @@ func (c *Collector) GetStats() map[string]interface{} {
 		return refererMetrics[i].Path < refererMetrics[j].Path
 	})
 
-	// 只保留前10个
-	if len(refererMetrics) > 10 {
-		refererMetrics = refererMetrics[:10]
+	// 只保留前20个
+	if len(refererMetrics) > 20 {
+		refererMetrics = refererMetrics[:20]
 	}
 
 	// 转换为值切片
@@ -396,7 +331,6 @@ func (c *Collector) GetStats() map[string]interface{} {
 		"requests_per_second": requestsPerSecond,
 		"bytes_per_second":    float64(atomic.LoadInt64(&c.totalBytes)) / totalRuntime.Seconds(),
 		"status_code_stats":   statusCodeStats,
-		"top_paths":           pathMetricsValues,
 		"top_referers":        refererMetricsValues,
 		"recent_requests":     recentRequests,
 		"latency_stats": map[string]interface{}{
@@ -451,29 +385,6 @@ func (c *Collector) validateLoadedData() error {
 		statusCodeTotal += count
 		return true
 	})
-
-	// 验证路径统计
-	var totalPathRequests int64
-	c.pathStats.Range(func(_, value interface{}) bool {
-		stats := value.(*models.PathMetrics)
-		requestCount := stats.GetRequestCount()
-		errorCount := stats.GetErrorCount()
-		if requestCount < 0 || errorCount < 0 {
-			return false
-		}
-		if errorCount > requestCount {
-			return false
-		}
-		totalPathRequests += requestCount
-		return true
-	})
-
-	// 由于我们限制了路径统计的收集数量，路径统计总数可能小于状态码统计总数
-	// 因此，我们只需要确保路径统计总数不超过状态码统计总数即可
-	if float64(totalPathRequests) > float64(statusCodeTotal)*1.1 { // 允许10%的误差
-		return fmt.Errorf("path stats total (%d) significantly exceeds status code total (%d)",
-			totalPathRequests, statusCodeTotal)
-	}
 
 	return nil
 }
@@ -601,56 +512,6 @@ func (c *Collector) startCleanupTask() {
 func (c *Collector) cleanupOldData() {
 	log.Printf("[Metrics] 开始清理旧数据...")
 
-	// 清理路径统计 - 只保留有请求且请求数较多的路径
-	var pathsToRemove []string
-	var pathsCount int
-	var totalRequests int64
-
-	// 先收集所有路径及其请求数
-	type pathInfo struct {
-		path  string
-		count int64
-	}
-	var paths []pathInfo
-
-	c.pathStats.Range(func(key, value interface{}) bool {
-		path := key.(string)
-		stats := value.(*models.PathMetrics)
-		count := stats.GetRequestCount()
-		pathsCount++
-		totalRequests += count
-		paths = append(paths, pathInfo{path, count})
-		return true
-	})
-
-	// 按请求数排序
-	sort.Slice(paths, func(i, j int) bool {
-		return paths[i].count > paths[j].count
-	})
-
-	// 只保留前100个请求数最多的路径，或者请求数占总请求数1%以上的路径
-	threshold := totalRequests / 100 // 1%的阈值
-	if threshold < 10 {
-		threshold = 10 // 至少保留请求数>=10的路径
-	}
-
-	// 标记要删除的路径
-	for _, pi := range paths {
-		if len(paths)-len(pathsToRemove) <= 100 {
-			// 已经只剩下100个路径了，不再删除
-			break
-		}
-
-		if pi.count < threshold {
-			pathsToRemove = append(pathsToRemove, pi.path)
-		}
-	}
-
-	// 删除标记的路径
-	for _, path := range pathsToRemove {
-		c.pathStats.Delete(path)
-	}
-
 	// 清理引用来源统计 - 类似地处理
 	var referersToRemove []string
 	var referersCount int
@@ -736,8 +597,7 @@ func (c *Collector) cleanupOldData() {
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 
-	log.Printf("[Metrics] 清理完成: 删除了 %d/%d 个路径, %d/%d 个引用来源, 当前内存使用: %s",
-		len(pathsToRemove), pathsCount,
+	log.Printf("[Metrics] 清理完成: 删除了 %d/%d 个引用来源, 当前内存使用: %s",
 		len(referersToRemove), referersCount,
 		utils.FormatBytes(int64(mem.Alloc)))
 }

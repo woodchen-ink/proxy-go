@@ -24,7 +24,6 @@ type MetricsStorage struct {
 	lastSaveTime     time.Time
 	mutex            sync.RWMutex
 	metricsFile      string
-	pathStatsFile    string
 	statusCodeFile   string
 	refererStatsFile string
 }
@@ -41,7 +40,6 @@ func NewMetricsStorage(collector *Collector, dataDir string, saveInterval time.D
 		dataDir:          dataDir,
 		stopChan:         make(chan struct{}),
 		metricsFile:      filepath.Join(dataDir, "metrics.json"),
-		pathStatsFile:    filepath.Join(dataDir, "path_stats.json"),
 		statusCodeFile:   filepath.Join(dataDir, "status_codes.json"),
 		refererStatsFile: filepath.Join(dataDir, "referer_stats.json"),
 	}
@@ -124,12 +122,6 @@ func (ms *MetricsStorage) SaveMetrics() error {
 		return fmt.Errorf("保存基本指标失败: %v", err)
 	}
 
-	// 保存路径统计 - 限制数量
-	topPaths := stats["top_paths"]
-	if err := saveJSONToFile(ms.pathStatsFile, topPaths); err != nil {
-		return fmt.Errorf("保存路径统计失败: %v", err)
-	}
-
 	// 保存状态码统计
 	if err := saveJSONToFile(ms.statusCodeFile, stats["status_code_stats"]); err != nil {
 		return fmt.Errorf("保存状态码统计失败: %v", err)
@@ -188,47 +180,7 @@ func (ms *MetricsStorage) LoadMetrics() error {
 		atomic.StoreInt64(&ms.collector.totalBytes, int64(totalBytes))
 	}
 
-	// 2. 加载路径统计（如果文件存在）
-	if fileExists(ms.pathStatsFile) {
-		var pathStats []map[string]interface{}
-		if err := loadJSONFromFile(ms.pathStatsFile, &pathStats); err != nil {
-			log.Printf("[MetricsStorage] 加载路径统计失败: %v", err)
-		} else {
-			// 只加载前10个路径统计
-			maxPaths := 10
-			if len(pathStats) > maxPaths {
-				pathStats = pathStats[:maxPaths]
-			}
-
-			for _, pathStat := range pathStats {
-				path, ok := pathStat["path"].(string)
-				if !ok {
-					continue
-				}
-
-				requestCount, _ := pathStat["request_count"].(float64)
-				errorCount, _ := pathStat["error_count"].(float64)
-				bytesTransferred, _ := pathStat["bytes_transferred"].(float64)
-
-				// 创建或更新路径统计
-				var pathMetrics *models.PathMetrics
-				if existingMetrics, ok := ms.collector.pathStats.Load(path); ok {
-					pathMetrics = existingMetrics.(*models.PathMetrics)
-				} else {
-					pathMetrics = &models.PathMetrics{Path: path}
-					ms.collector.pathStats.Store(path, pathMetrics)
-				}
-
-				// 设置统计值
-				pathMetrics.RequestCount.Store(int64(requestCount))
-				pathMetrics.ErrorCount.Store(int64(errorCount))
-				pathMetrics.BytesTransferred.Store(int64(bytesTransferred))
-			}
-			log.Printf("[MetricsStorage] 加载了 %d 条路径统计", len(pathStats))
-		}
-	}
-
-	// 3. 加载状态码统计（如果文件存在）
+	// 2. 加载状态码统计（如果文件存在）
 	if fileExists(ms.statusCodeFile) {
 		var statusCodeStats map[string]interface{}
 		if err := loadJSONFromFile(ms.statusCodeFile, &statusCodeStats); err != nil {
@@ -253,14 +205,14 @@ func (ms *MetricsStorage) LoadMetrics() error {
 		}
 	}
 
-	// 4. 加载引用来源统计（如果文件存在）
+	// 3. 加载引用来源统计（如果文件存在）
 	if fileExists(ms.refererStatsFile) {
 		var refererStats []map[string]interface{}
 		if err := loadJSONFromFile(ms.refererStatsFile, &refererStats); err != nil {
 			log.Printf("[MetricsStorage] 加载引用来源统计失败: %v", err)
 		} else {
-			// 只加载前10个引用来源统计
-			maxReferers := 10
+			// 只加载前20个引用来源统计
+			maxReferers := 20
 			if len(refererStats) > maxReferers {
 				refererStats = refererStats[:maxReferers]
 			}

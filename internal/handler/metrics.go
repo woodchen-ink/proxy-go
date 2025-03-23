@@ -35,9 +35,6 @@ type Metrics struct {
 	// 状态码统计
 	StatusCodeStats map[string]int64 `json:"status_code_stats"`
 
-	// 路径统计
-	TopPaths []models.PathMetricsJSON `json:"top_paths"`
-
 	// 最近请求
 	RecentRequests []models.RequestLog `json:"recent_requests"`
 
@@ -76,7 +73,6 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 			"bytes_per_second":    float64(0),
 			"requests_per_second": float64(0),
 			"status_code_stats":   make(map[string]int64),
-			"top_paths":           make([]models.PathMetrics, 0),
 			"recent_requests":     make([]models.RequestLog, 0),
 			"top_referers":        make([]models.PathMetrics, 0),
 			"latency_stats": map[string]interface{}{
@@ -124,7 +120,6 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 		BytesPerSecond:      float64(totalBytes) / utils.MaxFloat64(uptimeSeconds, 1),
 		RequestsPerSecond:   float64(totalRequests) / utils.MaxFloat64(uptimeSeconds, 1),
 		StatusCodeStats:     statusCodeStats,
-		TopPaths:            models.SafePathMetrics(stats["top_paths"]),
 		RecentRequests:      models.SafeRequestLogs(stats["recent_requests"]),
 		TopReferers:         models.SafePathMetrics(stats["top_referers"]),
 		BandwidthHistory:    bandwidthHistory,

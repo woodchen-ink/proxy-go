@@ -17,13 +17,6 @@ interface Metrics {
   bytes_per_second: number
   error_rate: number
   status_code_stats: Record<string, number>
-  top_paths: Array<{
-    path: string
-    request_count: number
-    error_count: number
-    avg_latency: string
-    bytes_transferred: number
-  }>
   recent_requests: Array<{
     Time: string
     Path: string
@@ -358,47 +351,6 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       )}
-
-      <Card>
-        <CardHeader>
-          <CardTitle>热门路径 (Top 10)</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b">
-                  <th className="text-left p-2">路径</th>
-                  <th className="text-left p-2">请求数</th>
-                  <th className="text-left p-2">错误数</th>
-                  <th className="text-left p-2">平均延迟</th>
-                  <th className="text-left p-2">传输大小</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(metrics.top_paths || []).map((path, index) => (
-                  <tr key={index} className="border-b">
-                    <td className="p-2 max-w-xs truncate">
-                      <a
-                        href={path.path}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-600 hover:text-blue-800 hover:underline"
-                      >
-                        {path.path}
-                      </a>
-                    </td>
-                    <td className="p-2">{path.request_count}</td>
-                    <td className="p-2">{path.error_count}</td>
-                    <td className="p-2">{path.avg_latency}</td>
-                    <td className="p-2">{formatBytes(path.bytes_transferred)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
 
       <Card>
         <CardHeader>
