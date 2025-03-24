@@ -223,10 +223,35 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	copyHeader(proxyReq.Header, r.Header)
 
 	// 添加常见浏览器User-Agent
-	proxyReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	if ua := r.Header.Get("User-Agent"); ua != "" {
+		proxyReq.Header.Set("User-Agent", ua)
+	} else {
+		proxyReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	}
 
-	// 设置Referer为源站的host
-	proxyReq.Header.Set("Referer", fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host))
+	// 添加Origin
+	proxyReq.Header.Set("Origin", fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host))
+
+	// 设置Referer为源站的完整域名（带上斜杠）
+	proxyReq.Header.Set("Referer", fmt.Sprintf("%s://%s/", parsedURL.Scheme, parsedURL.Host))
+
+	// 设置Host头和proxyReq.Host
+	proxyReq.Header.Set("Host", parsedURL.Host)
+	proxyReq.Host = parsedURL.Host
+
+	// 确保设置适当的Accept头
+	if accept := r.Header.Get("Accept"); accept != "" {
+		proxyReq.Header.Set("Accept", accept)
+	} else {
+		proxyReq.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
+	}
+
+	// 确保设置Accept-Encoding
+	if acceptEncoding := r.Header.Get("Accept-Encoding"); acceptEncoding != "" {
+		proxyReq.Header.Set("Accept-Encoding", acceptEncoding)
+	} else {
+		proxyReq.Header.Set("Accept-Encoding", "gzip, deflate, br")
+	}
 
 	// 特别处理图片请求
 	if utils.IsImageRequest(r.URL.Path) {
@@ -244,12 +269,13 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		proxyReq.Header.Set("CF-Image-Format", "auto") // 让 Cloudflare 根据 Accept 头自动选择格式
 	}
 
-	// 设置其他必要的头部
-	proxyReq.Host = parsedURL.Host
-	proxyReq.Header.Set("Host", parsedURL.Host)
+	// 设置最小必要的代理头部
 	proxyReq.Header.Set("X-Real-IP", utils.GetClientIP(r))
-	proxyReq.Header.Set("X-Forwarded-Host", r.Host)
-	proxyReq.Header.Set("X-Forwarded-Proto", r.URL.Scheme)
+
+	// 如果源站不严格要求Host匹配，可以保留以下头部
+	// 否则可能需要注释掉这些头部
+	// proxyReq.Header.Set("X-Forwarded-Host", r.Host)
+	// proxyReq.Header.Set("X-Forwarded-Proto", r.URL.Scheme)
 
 	// 添加或更新 X-Forwarded-For
 	if clientIP := utils.GetClientIP(r); clientIP != "" {
