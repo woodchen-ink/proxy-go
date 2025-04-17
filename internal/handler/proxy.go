@@ -12,6 +12,7 @@ import (
 	"proxy-go/internal/config"
 	"proxy-go/internal/metrics"
 	"proxy-go/internal/utils"
+	"sort"
 	"strings"
 	"time"
 
@@ -22,9 +23,9 @@ const (
 	// 超时时间常量
 	clientConnTimeout   = 10 * time.Second
 	proxyRespTimeout    = 60 * time.Second
-	backendServTimeout  = 40 * time.Second
-	idleConnTimeout     = 120 * time.Second
-	tlsHandshakeTimeout = 10 * time.Second
+	backendServTimeout  = 30 * time.Second
+	idleConnTimeout     = 90 * time.Second
+	tlsHandshakeTimeout = 5 * time.Second
 )
 
 // 添加 hop-by-hop 头部映射
@@ -45,12 +46,71 @@ type ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)
 
 type ProxyHandler struct {
 	pathMap      map[string]config.PathConfig
+	prefixTree   *prefixMatcher // 添加前缀匹配树
 	client       *http.Client
 	startTime    time.Time
 	config       *config.Config
 	auth         *authManager
 	errorHandler ErrorHandler
 	Cache        *cache.CacheManager
+}
+
+// 前缀匹配器结构体
+type prefixMatcher struct {
+	prefixes []string
+	configs  map[string]config.PathConfig
+}
+
+// 创建新的前缀匹配器
+func newPrefixMatcher(pathMap map[string]config.PathConfig) *prefixMatcher {
+	pm := &prefixMatcher{
+		prefixes: make([]string, 0, len(pathMap)),
+		configs:  make(map[string]config.PathConfig, len(pathMap)),
+	}
+
+	// 按长度降序排列前缀，确保最长匹配优先
+	for prefix, cfg := range pathMap {
+		pm.prefixes = append(pm.prefixes, prefix)
+		pm.configs[prefix] = cfg
+	}
+
+	// 按长度降序排列
+	sort.Slice(pm.prefixes, func(i, j int) bool {
+		return len(pm.prefixes[i]) > len(pm.prefixes[j])
+	})
+
+	return pm
+}
+
+// 根据路径查找匹配的前缀和配置
+func (pm *prefixMatcher) match(path string) (string, config.PathConfig, bool) {
+	// 按预排序的前缀列表查找最长匹配
+	for _, prefix := range pm.prefixes {
+		if strings.HasPrefix(path, prefix) {
+			// 确保匹配的是完整的路径段
+			restPath := path[len(prefix):]
+			if restPath == "" || restPath[0] == '/' {
+				return prefix, pm.configs[prefix], true
+			}
+		}
+	}
+	return "", config.PathConfig{}, false
+}
+
+// 更新前缀匹配器
+func (pm *prefixMatcher) update(pathMap map[string]config.PathConfig) {
+	pm.prefixes = make([]string, 0, len(pathMap))
+	pm.configs = make(map[string]config.PathConfig, len(pathMap))
+
+	for prefix, cfg := range pathMap {
+		pm.prefixes = append(pm.prefixes, prefix)
+		pm.configs[prefix] = cfg
+	}
+
+	// 按长度降序排列
+	sort.Slice(pm.prefixes, func(i, j int) bool {
+		return len(pm.prefixes[i]) > len(pm.prefixes[j])
+	})
 }
 
 // NewProxyHandler 创建新的代理处理器
@@ -62,17 +122,17 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 
 	transport := &http.Transport{
 		DialContext:            dialer.DialContext,
-		MaxIdleConns:           1000,
-		MaxIdleConnsPerHost:    100,
+		MaxIdleConns:           2000,
+		MaxIdleConnsPerHost:    200,
 		IdleConnTimeout:        idleConnTimeout,
 		TLSHandshakeTimeout:    tlsHandshakeTimeout,
 		ExpectContinueTimeout:  1 * time.Second,
-		MaxConnsPerHost:        200,
+		MaxConnsPerHost:        400,
 		DisableKeepAlives:      false,
 		DisableCompression:     false,
 		ForceAttemptHTTP2:      true,
-		WriteBufferSize:        64 * 1024,
-		ReadBufferSize:         64 * 1024,
+		WriteBufferSize:        128 * 1024,
+		ReadBufferSize:         128 * 1024,
 		ResponseHeaderTimeout:  backendServTimeout,
 		MaxResponseHeaderBytes: 64 * 1024,
 	}
@@ -94,7 +154,8 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 	}
 
 	handler := &ProxyHandler{
-		pathMap: cfg.MAP,
+		pathMap:    cfg.MAP,
+		prefixTree: newPrefixMatcher(cfg.MAP), // 初始化前缀匹配树
 		client: &http.Client{
 			Transport: transport,
 			Timeout:   proxyRespTimeout,
@@ -124,6 +185,7 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 		}
 
 		handler.pathMap = newCfg.MAP
+		handler.prefixTree.update(newCfg.MAP) // 更新前缀匹配树
 		handler.config = newCfg
 		log.Printf("[Config] 代理处理器配置已更新: %d 个路径映射", len(newCfg.MAP))
 	})
@@ -159,27 +221,11 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 查找匹配的代理路径
-	var matchedPrefix string
-	var pathConfig config.PathConfig
+	// 使用前缀匹配树快速查找匹配的路径
+	matchedPrefix, pathConfig, matched := h.prefixTree.match(r.URL.Path)
 
-	// 首先尝试完全匹配路径段
-	for prefix, cfg := range h.pathMap {
-		// 检查是否是完整的路径段匹配
-		if strings.HasPrefix(r.URL.Path, prefix) {
-			// 确保匹配的是完整的路径段
-			restPath := r.URL.Path[len(prefix):]
-			if restPath == "" || restPath[0] == '/' {
-				matchedPrefix = prefix
-				pathConfig = cfg
-				break
-			}
-		}
-	}
-
-	// 如果没有找到完全匹配，返回404
-	if matchedPrefix == "" {
-		// 返回 404
+	// 如果没有找到匹配，返回404
+	if !matched {
 		http.NotFound(w, r)
 		return
 	}
@@ -219,66 +265,59 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 复制并处理请求头
+	// 复制并处理请求头 - 使用更高效的方式
 	copyHeader(proxyReq.Header, r.Header)
 
-	// 添加常见浏览器User-Agent
-	if ua := r.Header.Get("User-Agent"); ua != "" {
-		proxyReq.Header.Set("User-Agent", ua)
-	} else {
+	// 添加常见浏览器User-Agent - 避免冗余字符串操作
+	if r.Header.Get("User-Agent") == "" {
 		proxyReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 	}
 
+	// 使用预先构建的URL字符串
+	hostScheme := parsedURL.Scheme + "://" + parsedURL.Host
+
 	// 添加Origin
-	proxyReq.Header.Set("Origin", fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host))
+	proxyReq.Header.Set("Origin", hostScheme)
 
 	// 设置Referer为源站的完整域名（带上斜杠）
-	proxyReq.Header.Set("Referer", fmt.Sprintf("%s://%s/", parsedURL.Scheme, parsedURL.Host))
+	proxyReq.Header.Set("Referer", hostScheme+"/")
 
 	// 设置Host头和proxyReq.Host
 	proxyReq.Header.Set("Host", parsedURL.Host)
 	proxyReq.Host = parsedURL.Host
 
-	// 确保设置适当的Accept头
-	if accept := r.Header.Get("Accept"); accept != "" {
-		proxyReq.Header.Set("Accept", accept)
-	} else {
+	// 确保设置适当的Accept头 - 避免冗余字符串操作
+	if r.Header.Get("Accept") == "" {
 		proxyReq.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
 	}
 
-	// 确保设置Accept-Encoding
-	if acceptEncoding := r.Header.Get("Accept-Encoding"); acceptEncoding != "" {
-		proxyReq.Header.Set("Accept-Encoding", acceptEncoding)
-	} else {
+	// 确保设置Accept-Encoding - 避免冗余字符串操作
+	if r.Header.Get("Accept-Encoding") == "" {
 		proxyReq.Header.Set("Accept-Encoding", "gzip, deflate, br")
 	}
 
 	// 特别处理图片请求
 	if utils.IsImageRequest(r.URL.Path) {
-		// 获取 Accept 头
 		accept := r.Header.Get("Accept")
 
-		// 根据 Accept 头设置合适的图片格式
-		if strings.Contains(accept, "image/avif") {
+		// 使用switch语句优化条件分支
+		switch {
+		case strings.Contains(accept, "image/avif"):
 			proxyReq.Header.Set("Accept", "image/avif")
-		} else if strings.Contains(accept, "image/webp") {
+		case strings.Contains(accept, "image/webp"):
 			proxyReq.Header.Set("Accept", "image/webp")
 		}
 
 		// 设置 Cloudflare 特定的头部
-		proxyReq.Header.Set("CF-Image-Format", "auto") // 让 Cloudflare 根据 Accept 头自动选择格式
+		proxyReq.Header.Set("CF-Image-Format", "auto")
 	}
 
 	// 设置最小必要的代理头部
-	proxyReq.Header.Set("X-Real-IP", utils.GetClientIP(r))
+	clientIP := utils.GetClientIP(r)
+	proxyReq.Header.Set("X-Real-IP", clientIP)
 
-	// 如果源站不严格要求Host匹配，可以保留以下头部
-	// 否则可能需要注释掉这些头部
-	// proxyReq.Header.Set("X-Forwarded-Host", r.Host)
-	// proxyReq.Header.Set("X-Forwarded-Proto", r.URL.Scheme)
-
-	// 添加或更新 X-Forwarded-For
-	if clientIP := utils.GetClientIP(r); clientIP != "" {
+	// 添加或更新 X-Forwarded-For - 减少重复获取客户端IP
+	if clientIP != "" {
 		if prior := proxyReq.Header.Get("X-Forwarded-For"); prior != "" {
 			proxyReq.Header.Set("X-Forwarded-For", prior+", "+clientIP)
 		} else {
@@ -357,20 +396,39 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		cacheKey := h.Cache.GenerateCacheKey(r)
 		if cacheFile, err := h.Cache.CreateTemp(cacheKey, resp); err == nil {
 			defer cacheFile.Close()
+
+			// 使用缓冲IO提高性能
+			bufSize := 32 * 1024 // 32KB 缓冲区
+			buf := make([]byte, bufSize)
+
 			teeReader := io.TeeReader(resp.Body, cacheFile)
-			written, err = io.Copy(w, teeReader)
+			written, err = io.CopyBuffer(w, teeReader, buf)
+
 			if err == nil {
-				h.Cache.Commit(cacheKey, cacheFile.Name(), resp, written)
+				// 异步提交缓存，不阻塞当前请求处理
+				fileName := cacheFile.Name()
+				respClone := *resp // 创建响应的浅拷贝
+				go func() {
+					h.Cache.Commit(cacheKey, fileName, &respClone, written)
+				}()
 			}
 		} else {
-			written, err = io.Copy(w, resp.Body)
+			// 使用缓冲的复制提高性能
+			bufSize := 32 * 1024 // 32KB 缓冲区
+			buf := make([]byte, bufSize)
+
+			written, err = io.CopyBuffer(w, resp.Body, buf)
 			if err != nil && !isConnectionClosed(err) {
 				log.Printf("[Proxy] ERR %s %s -> write error (%s) from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 				return
 			}
 		}
 	} else {
-		written, err = io.Copy(w, resp.Body)
+		// 使用缓冲的复制提高性能
+		bufSize := 32 * 1024 // 32KB 缓冲区
+		buf := make([]byte, bufSize)
+
+		written, err = io.CopyBuffer(w, resp.Body, buf)
 		if err != nil && !isConnectionClosed(err) {
 			log.Printf("[Proxy] ERR %s %s -> write error (%s) from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
 			return

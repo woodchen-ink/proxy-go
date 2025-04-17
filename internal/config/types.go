@@ -70,3 +70,20 @@ func (p *PathConfig) ProcessExtensionMap() {
 		}
 	}
 }
+
+// GetProcessedExtTarget 快速获取扩展名对应的目标URL，如果存在返回true
+func (p *PathConfig) GetProcessedExtTarget(ext string) (string, bool) {
+	if p.ExtRules == nil {
+		return "", false
+	}
+
+	for _, rule := range p.ExtRules {
+		for _, e := range rule.Extensions {
+			if e == ext {
+				return rule.Target, true
+			}
+		}
+	}
+
+	return "", false
+}

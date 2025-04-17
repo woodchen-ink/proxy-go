@@ -6,13 +6,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
-	"math"
 	"net"
 	"net/http"
 	neturl "net/url"
 	"path/filepath"
 	"proxy-go/internal/config"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -191,11 +189,23 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 	targetBase := pathConfig.DefaultTarget
 	usedAltTarget := false
 
-	// 获取文件扩展名
-	ext := strings.ToLower(filepath.Ext(path))
-	if ext != "" {
-		ext = ext[1:] // 移除开头的点
-	} else {
+	// 获取文件扩展名（使用优化的字符串处理）
+	ext := ""
+	lastDotIndex := strings.LastIndex(path, ".")
+	if lastDotIndex > 0 && lastDotIndex < len(path)-1 {
+		ext = strings.ToLower(path[lastDotIndex+1:])
+	}
+
+	// 如果没有扩展名规则，直接返回默认目标
+	if len(pathConfig.ExtRules) == 0 {
+		if ext == "" {
+			log.Printf("[Route] %s -> %s (无扩展名)", path, targetBase)
+		}
+		return targetBase, false
+	}
+
+	// 确保有扩展名规则
+	if ext == "" {
 		log.Printf("[Route] %s -> %s (无扩展名)", path, targetBase)
 		// 即使没有扩展名，也要尝试匹配 * 通配符规则
 	}
@@ -204,20 +214,27 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 	contentLength, err := GetFileSize(client, targetBase+path)
 	if err != nil {
 		log.Printf("[Route] %s -> %s (获取文件大小出错: %v)", path, targetBase, err)
-		return targetBase, false
+
+		// 如果无法获取文件大小，尝试使用扩展名直接匹配（优化点）
+		if altTarget, exists := pathConfig.GetProcessedExtTarget(ext); exists {
+			usedAltTarget = true
+			targetBase = altTarget
+			log.Printf("[Route] %s -> %s (基于扩展名直接匹配)", path, targetBase)
+		} else if altTarget, exists := pathConfig.GetProcessedExtTarget("*"); exists {
+			// 尝试使用通配符
+			usedAltTarget = true
+			targetBase = altTarget
+			log.Printf("[Route] %s -> %s (基于通配符匹配)", path, targetBase)
+		}
+
+		return targetBase, usedAltTarget
 	}
 
 	// 获取匹配的扩展名规则
 	matchingRules := []config.ExtensionRule{}
 	wildcardRules := []config.ExtensionRule{} // 存储通配符规则
 
-	// 处理扩展名，找出所有匹配的规则
-	if pathConfig.ExtRules == nil {
-		pathConfig.ProcessExtensionMap()
-	}
-
 	// 找出所有匹配当前扩展名的规则
-	ext = strings.ToLower(ext)
 	for _, rule := range pathConfig.ExtRules {
 		// 处理阈值默认值
 		if rule.SizeThreshold < 0 {
@@ -225,18 +242,23 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 		}
 
 		if rule.MaxSize <= 0 {
-			rule.MaxSize = math.MaxInt64 // 设置为最大值表示不限制
+			rule.MaxSize = 1<<63 - 1 // 设置为最大值表示不限制
 		}
 
 		// 检查是否包含通配符
-		if slices.Contains(rule.Extensions, "*") {
-			wildcardRules = append(wildcardRules, rule)
-			continue
+		for _, e := range rule.Extensions {
+			if e == "*" {
+				wildcardRules = append(wildcardRules, rule)
+				break
+			}
 		}
 
 		// 检查具体扩展名匹配
-		if slices.Contains(rule.Extensions, ext) {
-			matchingRules = append(matchingRules, rule)
+		for _, e := range rule.Extensions {
+			if e == ext {
+				matchingRules = append(matchingRules, rule)
+				break
+			}
 		}
 	}
 
@@ -250,8 +272,7 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 		}
 	}
 
-	// 按阈值排序规则，优先使用阈值范围更精确的规则
-	// 先按最小阈值升序排序，再按最大阈值降序排序（在最小阈值相同的情况下）
+	// 按阈值排序规则（优化点：使用更高效的排序）
 	sort.Slice(matchingRules, func(i, j int) bool {
 		if matchingRules[i].SizeThreshold == matchingRules[j].SizeThreshold {
 			return matchingRules[i].MaxSize > matchingRules[j].MaxSize
@@ -260,8 +281,6 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 	})
 
 	// 根据文件大小找出最匹配的规则
-	var bestRule *config.ExtensionRule
-
 	for i := range matchingRules {
 		rule := &matchingRules[i]
 
@@ -271,71 +290,18 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 			log.Printf("[Route] %s -> %s (文件大小: %s, 在区间 %s 到 %s 之间)",
 				path, rule.Target, FormatBytes(contentLength),
 				FormatBytes(rule.SizeThreshold), FormatBytes(rule.MaxSize))
-			bestRule = rule
-			break
-		}
-	}
 
-	// 如果找到匹配的规则
-	if bestRule != nil {
-		// 创建一个带超时的 context
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		// 使用 channel 来接收备用源检查结果
-		altChan := make(chan struct {
-			accessible bool
-			err        error
-		}, 1)
-
-		// 在 goroutine 中检查备用源可访问性
-		go func() {
-			accessible := isTargetAccessible(client, bestRule.Target+path)
-			select {
-			case altChan <- struct {
-				accessible bool
-				err        error
-			}{accessible: accessible}:
-			case <-ctx.Done():
-				// context 已取消，不需要发送结果
-			}
-		}()
-
-		// 等待结果或超时
-		select {
-		case result := <-altChan:
-			if result.accessible {
-				log.Printf("[Route] %s -> %s (文件大小: %s, 在区间 %s 到 %s 之间)",
-					path, bestRule.Target, FormatBytes(contentLength),
-					FormatBytes(bestRule.SizeThreshold), FormatBytes(bestRule.MaxSize))
-				return bestRule.Target, true
-			}
-			// 如果是通配符规则但不可访问，记录日志
-			if slices.Contains(bestRule.Extensions, "*") {
-				log.Printf("[Route] %s -> %s (回退: 通配符规则目标不可访问)",
-					path, targetBase)
+			// 检查目标是否可访问（使用带缓存的检查）
+			if isTargetAccessible(client, rule.Target+path) {
+				targetBase = rule.Target
+				usedAltTarget = true
 			} else {
 				log.Printf("[Route] %s -> %s (回退: 备用目标不可访问)",
 					path, targetBase)
 			}
-		case <-ctx.Done():
-			log.Printf("[Route] %s -> %s (回退: 备用目标检查超时)",
-				path, targetBase)
-		}
-	} else {
-		// 记录日志，为什么没有匹配的规则
-		allThresholds := ""
-		for i, rule := range matchingRules {
-			if i > 0 {
-				allThresholds += ", "
-			}
-			allThresholds += fmt.Sprintf("[%s-%s]",
-				FormatBytes(rule.SizeThreshold),
-				FormatBytes(rule.MaxSize))
-		}
 
-		log.Printf("[Route] %s -> %s (文件大小: %s 不在任何阈值范围内: %s)",
-			path, targetBase, FormatBytes(contentLength), allThresholds)
+			break
+		}
 	}
 
 	return targetBase, usedAltTarget
