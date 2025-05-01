@@ -41,8 +41,9 @@ func NewConfigManager(configPath string) (*ConfigManager, error) {
 	}
 
 	// 确保所有路径配置的扩展名规则都已更新
-	for _, pathConfig := range config.MAP {
-		pathConfig.ProcessExtensionMap()
+	for path, pc := range config.MAP {
+		pc.ProcessExtensionMap()
+		config.MAP[path] = pc // 更新回原始map
 	}
 
 	cm.config.Store(config)
@@ -131,8 +132,9 @@ func RegisterUpdateCallback(callback func(*Config)) {
 // TriggerCallbacks 触发所有回调
 func TriggerCallbacks(cfg *Config) {
 	// 确保所有路径配置的扩展名规则都已更新
-	for _, pathConfig := range cfg.MAP {
-		pathConfig.ProcessExtensionMap()
+	for path, pc := range cfg.MAP {
+		pc.ProcessExtensionMap()
+		cfg.MAP[path] = pc // 更新回原始map
 	}
 
 	callbackMutex.RLock()
@@ -151,8 +153,9 @@ func (c *configImpl) Update(newConfig *Config) {
 	defer c.Unlock()
 
 	// 确保所有路径配置的扩展名规则都已更新
-	for _, pathConfig := range newConfig.MAP {
-		pathConfig.ProcessExtensionMap()
+	for path, pc := range newConfig.MAP {
+		pc.ProcessExtensionMap()
+		newConfig.MAP[path] = pc // 更新回原始map
 	}
 
 	// 更新配置
@@ -191,8 +194,9 @@ func (cm *ConfigManager) loadConfig() error {
 	}
 
 	// 确保所有路径配置的扩展名规则都已更新
-	for _, pathConfig := range config.MAP {
-		pathConfig.ProcessExtensionMap()
+	for path, pc := range config.MAP {
+		pc.ProcessExtensionMap()
+		config.MAP[path] = pc // 更新回原始map
 	}
 
 	cm.config.Store(config)

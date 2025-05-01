@@ -33,7 +33,6 @@ data/metrics/metrics.json
 data/metrics/path_stats.json
 data/metrics/referer_stats.json
 data/metrics/status_codes.json
-data/config.example.json
 data/config.json
 .env
 data/cache

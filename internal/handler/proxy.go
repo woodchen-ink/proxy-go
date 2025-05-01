@@ -179,11 +179,7 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 
 	// 注册配置更新回调
 	config.RegisterUpdateCallback(func(newCfg *config.Config) {
-		// 确保所有路径配置的processedExtMap都已更新
-		for _, pathConfig := range newCfg.MAP {
-			pathConfig.ProcessExtensionMap()
-		}
-
+		// 注意：config包已经在回调触发前处理了所有ExtRules，这里无需再次处理
 		handler.pathMap = newCfg.MAP
 		handler.prefixTree.update(newCfg.MAP) // 更新前缀匹配树
 		handler.config = newCfg

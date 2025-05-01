@@ -1,0 +1,61 @@
+{
+  "MAP": {
+    "/path1": {
+      "DefaultTarget": "https://path1.com/path/path/path",
+      "ExtensionMap": [
+        {
+          "Extensions": "jpg,png,avif",
+          "Target": "https://path1-img.com/path/path/path",
+          "SizeThreshold": 204800,
+          "MaxSize": 5242880
+        },
+        {
+          "Extensions": "mp4,webm",
+          "Target": "https://path1-video.com/path/path/path",
+          "SizeThreshold": 204800,
+          "MaxSize": 5242880
+        },
+        {
+          "Extensions": "*",
+          "Target": "https://path1-wildcard.com/path/path/path",
+          "SizeThreshold": 204800,
+          "MaxSize": 5242880
+        }
+      ]
+    },
+    "/path2": "https://path2.com",
+    "/path3": {
+      "DefaultTarget": "https://path3.com",
+      "ExtensionMap": [
+        {
+          "Extensions": "*",
+          "Target": "https://path3-wildcard.com",
+          "SizeThreshold": 512000,
+          "MaxSize": 10485760
+        }
+      ],
+      "SizeThreshold": 512000
+    },
+    "/wildcard-no-limits": {
+      "DefaultTarget": "https://default.example.com",
+      "ExtensionMap": [
+        {
+          "Extensions": "*",
+          "Target": "https://unlimited.example.com",
+          "SizeThreshold": 0,
+          "MaxSize": 0
+        }
+      ]
+    }
+  },
+  "Compression": {
+    "Gzip": {
+      "Enabled": false,
+      "Level": 6
+    },
+    "Brotli": {
+      "Enabled": false,
+      "Level": 4
+    }
+  }
+}
