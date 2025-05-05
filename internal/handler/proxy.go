@@ -288,8 +288,10 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 确保设置Accept-Encoding - 避免冗余字符串操作
-	if r.Header.Get("Accept-Encoding") == "" {
-		proxyReq.Header.Set("Accept-Encoding", "gzip, deflate, br")
+	if ae := r.Header.Get("Accept-Encoding"); ae != "" {
+		proxyReq.Header.Set("Accept-Encoding", ae)
+	} else {
+		proxyReq.Header.Del("Accept-Encoding")
 	}
 
 	// 特别处理图片请求
