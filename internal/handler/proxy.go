@@ -247,6 +247,11 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	encodedPath := strings.Join(parts, "/")
 	targetURL := targetBase + encodedPath
 
+	// 添加原始请求的查询参数
+	if r.URL.RawQuery != "" {
+		targetURL = targetURL + "?" + r.URL.RawQuery
+	}
+
 	// 解析目标 URL 以获取 host
 	parsedURL, err := url.Parse(targetURL)
 	if err != nil {
