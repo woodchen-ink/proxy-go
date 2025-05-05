@@ -6,9 +6,6 @@ A 'simple' reverse proxy server written in Go.
 
 ```
 最新镜像地址: woodchen/proxy-go:latest
-
-稳定版镜像地址: woodchen/proxy-go:v1.0.4
-持续稳定版镜像地址: woodchen/proxy-go:stable
 ```
 
 ## 新版统计仪表盘
