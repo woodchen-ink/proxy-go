@@ -125,7 +125,7 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if item.ContentEncoding != "" {
 				w.Header().Set("Content-Encoding", item.ContentEncoding)
 			}
-			w.Header().Set("Proxy-Go-Cache", "HIT")
+			w.Header().Set("Proxy-Go-Cache-HIT", "1")
 			if notModified {
 				w.WriteHeader(http.StatusNotModified)
 				return
@@ -149,7 +149,7 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 复制响应头
 	copyHeader(w.Header(), resp.Header)
-	w.Header().Set("Proxy-Go-Cache", "MISS")
+	w.Header().Set("Proxy-Go-Cache-HIT", "0")
 
 	// 设置状态码
 	w.WriteHeader(resp.StatusCode)

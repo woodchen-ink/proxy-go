@@ -350,12 +350,13 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if item.ContentEncoding != "" {
 				w.Header().Set("Content-Encoding", item.ContentEncoding)
 			}
-			w.Header().Set("Proxy-Go-Cache", "HIT")
+			w.Header().Set("Proxy-Go-Cache-HIT", "1")
 
 			// 如果使用了扩展名映射的备用目标，添加标记响应头
 			if usedAltTarget {
-				w.Header().Set("Proxy-Go-AltTarget", "true")
+				w.Header().Set("Proxy-Go-AltTarget", "1")
 			}
+			w.Header().Set("Proxy-Go-AltTarget", "0")
 
 			if notModified {
 				w.WriteHeader(http.StatusNotModified)
@@ -383,12 +384,13 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 复制响应头
 	copyHeader(w.Header(), resp.Header)
-	w.Header().Set("Proxy-Go-Cache", "MISS")
+	w.Header().Set("Proxy-Go-Cache-HIT", "0")
 
 	// 如果使用了扩展名映射的备用目标，添加标记响应头
 	if usedAltTarget {
-		w.Header().Set("Proxy-Go-AltTarget", "true")
+		w.Header().Set("Proxy-Go-AltTarget", "1")
 	}
+	w.Header().Set("Proxy-Go-AltTarget", "0")
 
 	// 设置响应状态码
 	w.WriteHeader(resp.StatusCode)
