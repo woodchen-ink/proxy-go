@@ -92,6 +92,7 @@ export default function ConfigPage() {
   const [editingPathData, setEditingPathData] = useState<{
     path: string;
     defaultTarget: string;
+    redirectMode: boolean;
     sizeThreshold: number;
     maxSize: number;
     sizeThresholdUnit: 'B' | 'KB' | 'MB' | 'GB';
@@ -104,6 +105,7 @@ export default function ConfigPage() {
   const [newExtensionRule, setNewExtensionRule] = useState<{
     extensions: string;
     target: string;
+    redirectMode: boolean;
     sizeThreshold: number;
     maxSize: number;
     sizeThresholdUnit: 'B' | 'KB' | 'MB' | 'GB';
@@ -111,6 +113,7 @@ export default function ConfigPage() {
   }>({
     extensions: "",
     target: "",
+    redirectMode: false,
     sizeThreshold: 0,
     maxSize: 0,
     sizeThresholdUnit: 'MB',
@@ -313,6 +316,7 @@ export default function ConfigPage() {
     const newConfig = { ...config }
     const pathConfig: PathMapping = {
       DefaultTarget: defaultTarget,
+      RedirectMode: data.redirectMode,
       ExtensionMap: []
     }
 
@@ -475,6 +479,7 @@ export default function ConfigPage() {
       setEditingPathData({
         path,
         defaultTarget: target,
+        redirectMode: false,
         sizeThreshold: 0,
         maxSize: 0,
         sizeThresholdUnit: 'MB',
@@ -486,6 +491,7 @@ export default function ConfigPage() {
       setEditingPathData({
         path,
         defaultTarget: target.DefaultTarget,
+        redirectMode: target.RedirectMode || false,
         sizeThreshold: thresholdValue,
         maxSize: maxValue,
         sizeThresholdUnit: thresholdUnit,
@@ -516,6 +522,7 @@ export default function ConfigPage() {
         setNewExtensionRule({
           extensions: "",
           target: "",
+          redirectMode: false,
           sizeThreshold: 0,
           maxSize: 0,
           sizeThresholdUnit: 'MB',
@@ -548,6 +555,7 @@ export default function ConfigPage() {
       setNewExtensionRule({
         extensions: rule.Extensions,
         target: rule.Target,
+        redirectMode: false, // TODO: 从rule中获取RedirectMode
         sizeThreshold: thresholdValue,
         maxSize: maxValue,
         sizeThresholdUnit: thresholdUnit,
@@ -559,6 +567,7 @@ export default function ConfigPage() {
       setNewExtensionRule({
         extensions: "",
         target: "",
+        redirectMode: false,
         sizeThreshold: 0,
         maxSize: 0,
         sizeThresholdUnit: 'MB',
@@ -573,7 +582,7 @@ export default function ConfigPage() {
   const addOrUpdateExtensionRule = () => {
     if (!config || !editingPath) return;
     
-    const { extensions, target, sizeThreshold, maxSize, sizeThresholdUnit, maxSizeUnit } = newExtensionRule;
+    const { extensions, target, redirectMode, sizeThreshold, maxSize, sizeThresholdUnit, maxSizeUnit } = newExtensionRule;
     
     // 验证输入
     if (!extensions.trim() || !target.trim()) {
@@ -649,7 +658,8 @@ export default function ConfigPage() {
           Extensions: extensions,
           Target: target,
           SizeThreshold: sizeThresholdBytes,
-          MaxSize: maxSizeBytes
+          MaxSize: maxSizeBytes,
+          RedirectMode: redirectMode
         };
       } else {
         // 添加新规则
@@ -657,7 +667,8 @@ export default function ConfigPage() {
           Extensions: extensions,
           Target: target,
           SizeThreshold: sizeThresholdBytes,
-          MaxSize: maxSizeBytes
+          MaxSize: maxSizeBytes,
+          RedirectMode: redirectMode
         });
       }
     }
@@ -668,6 +679,7 @@ export default function ConfigPage() {
     setNewExtensionRule({
       extensions: "",
       target: "",
+      redirectMode: false,
       sizeThreshold: 0,
       maxSize: 0,
       sizeThresholdUnit: 'MB',
@@ -787,6 +799,19 @@ export default function ConfigPage() {
                           默认的回源地址，所有请求都会转发到这个地址
                         </p>
                       </div>
+                      <div className="flex items-center justify-between">
+                        <Label>使用302跳转</Label>
+                        <Switch
+                          checked={editingPathData ? editingPathData.redirectMode : newPathData.redirectMode}
+                          onCheckedChange={(checked) => editingPathData
+                            ? setEditingPathData({ ...editingPathData, redirectMode: checked })
+                            : setNewPathData({ ...newPathData, redirectMode: checked })
+                          }
+                        />
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        启用后，访问此路径时将302跳转到目标URL，而不是代理转发
+                      </p>
                       <Button onClick={addOrUpdatePath}>
                         {editingPathData ? "保存" : "添加"}
                       </Button>
@@ -985,6 +1010,16 @@ export default function ConfigPage() {
                 placeholder="https://example.com"
               />
             </div>
+            <div className="flex items-center justify-between">
+              <Label>使用302跳转</Label>
+              <Switch
+                checked={newExtensionRule.redirectMode}
+                onCheckedChange={(checked) => setNewExtensionRule({ ...newExtensionRule, redirectMode: checked })}
+              />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              启用后，匹配此扩展名的请求将302跳转到目标URL，而不是代理转发
+            </p>
             <div className="grid gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="ruleSizeThreshold">最小阈值</Label>
