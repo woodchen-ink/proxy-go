@@ -34,6 +34,7 @@ interface ExtRuleConfig {
   Target: string;        // 目标服务器
   SizeThreshold: number; // 最小阈值（字节）
   MaxSize: number;       // 最大阈值（字节）
+  RedirectMode?: boolean; // 是否使用302跳转模式
 }
 
 interface PathMapping {
@@ -41,6 +42,7 @@ interface PathMapping {
   ExtensionMap?: ExtRuleConfig[]  // 只支持新格式
   SizeThreshold?: number  // 保留全局阈值字段（向后兼容）
   MaxSize?: number       // 保留全局阈值字段（向后兼容）
+  RedirectMode?: boolean  // 是否使用302跳转模式
 }
 
 interface CompressionConfig {
@@ -77,6 +79,7 @@ export default function ConfigPage() {
   const [newPathData, setNewPathData] = useState({
     path: "",
     defaultTarget: "",
+    redirectMode: false,
     extensionMap: {} as Record<string, string>,
     sizeThreshold: 0,
     maxSize: 0,
@@ -281,6 +284,7 @@ export default function ConfigPage() {
         setNewPathData({
           path: "",
           defaultTarget: "",
+          redirectMode: false,
           extensionMap: {},
           sizeThreshold: 0,
           maxSize: 0,
@@ -327,6 +331,7 @@ export default function ConfigPage() {
       setNewPathData({
         path: "",
         defaultTarget: "",
+        redirectMode: false,
         extensionMap: {},
         sizeThreshold: 0,
         maxSize: 0,
@@ -375,6 +380,7 @@ export default function ConfigPage() {
     setNewPathData({
       path: "",
       defaultTarget: "",
+      redirectMode: false,
       extensionMap: {},
       sizeThreshold: 0,
       maxSize: 0,
@@ -1109,4 +1115,4 @@ const convertBytesToUnit = (bytes: number): { value: number, unit: 'B' | 'KB' | 
     value: Number((bytes / Math.pow(k, i)).toFixed(2)),
     unit: sizes[i]
   }
-} 
+}

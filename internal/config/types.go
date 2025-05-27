@@ -13,6 +13,7 @@ type PathConfig struct {
 	DefaultTarget string          `json:"DefaultTarget"` // 默认目标URL
 	ExtensionMap  []ExtRuleConfig `json:"ExtensionMap"`  // 扩展名映射规则
 	ExtRules      []ExtensionRule `json:"-"`             // 内部使用，存储处理后的扩展名规则
+	RedirectMode  bool            `json:"RedirectMode"`  // 是否使用302跳转模式
 }
 
 // ExtensionRule 表示一个扩展名映射规则（内部使用）
@@ -21,6 +22,7 @@ type ExtensionRule struct {
 	Target        string   // 目标服务器
 	SizeThreshold int64    // 最小阈值
 	MaxSize       int64    // 最大阈值
+	RedirectMode  bool     // 是否使用302跳转模式
 }
 
 type CompressionConfig struct {
@@ -39,6 +41,7 @@ type ExtRuleConfig struct {
 	Target        string `json:"Target"`        // 目标服务器
 	SizeThreshold int64  `json:"SizeThreshold"` // 最小阈值
 	MaxSize       int64  `json:"MaxSize"`       // 最大阈值
+	RedirectMode  bool   `json:"RedirectMode"`  // 是否使用302跳转模式
 }
 
 // 处理扩展名映射的方法
@@ -55,6 +58,7 @@ func (p *PathConfig) ProcessExtensionMap() {
 			Target:        rule.Target,
 			SizeThreshold: rule.SizeThreshold,
 			MaxSize:       rule.MaxSize,
+			RedirectMode:  rule.RedirectMode,
 		}
 
 		// 处理扩展名列表
@@ -86,4 +90,21 @@ func (p *PathConfig) GetProcessedExtTarget(ext string) (string, bool) {
 	}
 
 	return "", false
+}
+
+// GetProcessedExtRule 获取扩展名对应的完整规则信息，包括RedirectMode
+func (p *PathConfig) GetProcessedExtRule(ext string) (*ExtensionRule, bool) {
+	if p.ExtRules == nil {
+		return nil, false
+	}
+
+	for _, rule := range p.ExtRules {
+		for _, e := range rule.Extensions {
+			if e == ext {
+				return &rule, true
+			}
+		}
+	}
+
+	return nil, false
 }

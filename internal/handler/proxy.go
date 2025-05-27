@@ -45,14 +45,15 @@ var hopHeadersBase = map[string]bool{
 type ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)
 
 type ProxyHandler struct {
-	pathMap      map[string]config.PathConfig
-	prefixTree   *prefixMatcher // 添加前缀匹配树
-	client       *http.Client
-	startTime    time.Time
-	config       *config.Config
-	auth         *authManager
-	errorHandler ErrorHandler
-	Cache        *cache.CacheManager
+	pathMap         map[string]config.PathConfig
+	prefixTree      *prefixMatcher // 添加前缀匹配树
+	client          *http.Client
+	startTime       time.Time
+	config          *config.Config
+	auth            *authManager
+	errorHandler    ErrorHandler
+	Cache           *cache.CacheManager
+	redirectHandler *RedirectHandler // 添加302跳转处理器
 }
 
 // 前缀匹配器结构体
@@ -166,10 +167,11 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 				return nil
 			},
 		},
-		startTime: time.Now(),
-		config:    cfg,
-		auth:      newAuthManager(),
-		Cache:     cacheManager,
+		startTime:       time.Now(),
+		config:          cfg,
+		auth:            newAuthManager(),
+		Cache:           cacheManager,
+		redirectHandler: NewRedirectHandler(), // 初始化302跳转处理器
 		errorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			log.Printf("[Error] %s %s -> %v from %s", r.Method, r.URL.Path, err, utils.GetRequestSource(r))
 			w.WriteHeader(http.StatusInternalServerError)
@@ -233,6 +235,13 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	decodedPath, err := url.QueryUnescape(targetPath)
 	if err != nil {
 		h.errorHandler(w, r, fmt.Errorf("error decoding path: %v", err))
+		return
+	}
+
+	// 检查是否需要进行302跳转
+	if h.redirectHandler != nil && h.redirectHandler.HandleRedirect(w, r, pathConfig, decodedPath) {
+		// 如果进行了302跳转，直接返回，不继续处理
+		collector.RecordRequest(r.URL.Path, http.StatusFound, time.Since(start), 0, utils.GetClientIP(r), r)
 		return
 	}
 
