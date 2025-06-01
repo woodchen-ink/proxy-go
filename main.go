@@ -14,6 +14,7 @@ import (
 	"proxy-go/internal/metrics"
 	"proxy-go/internal/middleware"
 	"strings"
+	"sync/atomic"
 	"syscall"
 )
 
@@ -46,15 +47,31 @@ func main() {
 	// 初始化统计服务
 	metrics.Init(cfg)
 
-	// 创建压缩管理器
+	// 创建压缩管理器（使用atomic.Value来支持动态更新）
+	var compManagerAtomic atomic.Value
 	compManager := compression.NewManager(compression.Config{
 		Gzip:   compression.CompressorConfig(cfg.Compression.Gzip),
 		Brotli: compression.CompressorConfig(cfg.Compression.Brotli),
 	})
+	compManagerAtomic.Store(compManager)
 
 	// 创建代理处理器
 	mirrorHandler := handler.NewMirrorProxyHandler()
 	proxyHandler := handler.NewProxyHandler(cfg)
+
+	// 创建配置处理器
+	configHandler := handler.NewConfigHandler(configManager)
+
+	// 注册压缩配置更新回调
+	config.RegisterUpdateCallback(func(newCfg *config.Config) {
+		// 更新压缩管理器
+		newCompManager := compression.NewManager(compression.Config{
+			Gzip:   compression.CompressorConfig(newCfg.Compression.Gzip),
+			Brotli: compression.CompressorConfig(newCfg.Compression.Brotli),
+		})
+		compManagerAtomic.Store(newCompManager)
+		log.Printf("[Config] 压缩管理器配置已更新")
+	})
 
 	// 定义API路由
 	apiRoutes := []Route{
@@ -66,8 +83,8 @@ func main() {
 		}, true},
 		{http.MethodPost, "/admin/api/logout", proxyHandler.LogoutHandler, false},
 		{http.MethodGet, "/admin/api/metrics", proxyHandler.MetricsHandler, true},
-		{http.MethodGet, "/admin/api/config/get", handler.NewConfigHandler(cfg).ServeHTTP, true},
-		{http.MethodPost, "/admin/api/config/save", handler.NewConfigHandler(cfg).ServeHTTP, true},
+		{http.MethodGet, "/admin/api/config/get", configHandler.ServeHTTP, true},
+		{http.MethodPost, "/admin/api/config/save", configHandler.ServeHTTP, true},
 		{http.MethodGet, "/admin/api/cache/stats", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).GetCacheStats, true},
 		{http.MethodPost, "/admin/api/cache/enable", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).SetCacheEnabled, true},
 		{http.MethodPost, "/admin/api/cache/clear", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).ClearCache, true},
@@ -148,10 +165,14 @@ func main() {
 		http.NotFound(w, r)
 	})
 
-	// 添加压缩中间件
+	// 添加压缩中间件（使用动态压缩管理器）
 	var handler http.Handler = mainHandler
 	if cfg.Compression.Gzip.Enabled || cfg.Compression.Brotli.Enabled {
-		handler = middleware.CompressionMiddleware(compManager)(handler)
+		// 创建动态压缩中间件包装器
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			currentCompManager := compManagerAtomic.Load().(compression.Manager)
+			middleware.CompressionMiddleware(currentCompManager)(mainHandler).ServeHTTP(w, r)
+		})
 	}
 
 	// 创建服务器

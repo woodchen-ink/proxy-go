@@ -11,13 +11,13 @@ import (
 
 // ConfigHandler 配置管理处理器
 type ConfigHandler struct {
-	config *config.Config
+	configManager *config.ConfigManager
 }
 
 // NewConfigHandler 创建新的配置管理处理器
-func NewConfigHandler(cfg *config.Config) *ConfigHandler {
+func NewConfigHandler(configManager *config.ConfigManager) *ConfigHandler {
 	return &ConfigHandler{
-		config: cfg,
+		configManager: configManager,
 	}
 }
 
@@ -67,41 +67,11 @@ func (h *ConfigHandler) handleSaveConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 确保对每个路径配置调用ProcessExtensionMap方法
-	for _, pathConfig := range newConfig.MAP {
-		pathConfig.ProcessExtensionMap()
-	}
-
-	// 将新配置格式化为JSON
-	configData, err := json.MarshalIndent(newConfig, "", "  ")
-	if err != nil {
-		http.Error(w, fmt.Sprintf("格式化配置失败: %v", err), http.StatusInternalServerError)
+	// 使用ConfigManager更新配置
+	if err := h.configManager.UpdateConfig(&newConfig); err != nil {
+		http.Error(w, fmt.Sprintf("更新配置失败: %v", err), http.StatusInternalServerError)
 		return
 	}
-
-	// 保存到临时文件
-	tempFile := "data/config.json.tmp"
-	if err := os.WriteFile(tempFile, configData, 0644); err != nil {
-		http.Error(w, fmt.Sprintf("保存配置失败: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// 重命名临时文件为正式文件
-	if err := os.Rename(tempFile, "data/config.json"); err != nil {
-		http.Error(w, fmt.Sprintf("更新配置文件失败: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// 更新运行时配置
-	*h.config = newConfig
-
-	// 确保在触发回调之前，所有路径配置的processedExtMap都已更新
-	for _, pathConfig := range h.config.MAP {
-		pathConfig.ProcessExtensionMap()
-	}
-
-	// 触发配置更新回调
-	config.TriggerCallbacks(h.config)
 
 	// 添加日志
 	fmt.Printf("[Config] 配置已更新: %d 个路径映射\n", len(newConfig.MAP))

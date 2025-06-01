@@ -9,17 +9,7 @@ import (
 	"sync/atomic"
 )
 
-// Config 配置结构体
-type configImpl struct {
-	sync.RWMutex
-	Config
-	// 配置更新回调函数
-	onConfigUpdate []func(*Config)
-}
-
 var (
-	instance        *configImpl
-	once            sync.Once
 	configCallbacks []func(*Config)
 	callbackMutex   sync.RWMutex
 )
@@ -27,6 +17,7 @@ var (
 type ConfigManager struct {
 	config     atomic.Value
 	configPath string
+	mu         sync.RWMutex
 }
 
 func NewConfigManager(configPath string) (*ConfigManager, error) {
@@ -35,7 +26,7 @@ func NewConfigManager(configPath string) (*ConfigManager, error) {
 	}
 
 	// 加载配置
-	config, err := Load(configPath)
+	config, err := cm.loadConfigFromFile()
 	if err != nil {
 		return nil, err
 	}
@@ -52,28 +43,33 @@ func NewConfigManager(configPath string) (*ConfigManager, error) {
 	return cm, nil
 }
 
-// Load 加载配置
-func Load(path string) (*Config, error) {
-	var err error
-	once.Do(func() {
-		instance = &configImpl{}
-		err = instance.reload(path)
-		// 如果文件不存在，创建默认配置并重新加载
-		if err != nil && os.IsNotExist(err) {
-			if createErr := createDefaultConfig(path); createErr == nil {
-				err = instance.reload(path)
+// loadConfigFromFile 从文件加载配置
+func (cm *ConfigManager) loadConfigFromFile() (*Config, error) {
+	data, err := os.ReadFile(cm.configPath)
+	if err != nil {
+		// 如果文件不存在，创建默认配置
+		if os.IsNotExist(err) {
+			if createErr := cm.createDefaultConfig(); createErr == nil {
+				return cm.loadConfigFromFile() // 重新加载
 			} else {
-				err = createErr
+				return nil, createErr
 			}
 		}
-	})
-	return &instance.Config, err
+		return nil, err
+	}
+
+	var config Config
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, err
+	}
+
+	return &config, nil
 }
 
 // createDefaultConfig 创建默认配置文件
-func createDefaultConfig(path string) error {
+func (cm *ConfigManager) createDefaultConfig() error {
 	// 创建目录（如果不存在）
-	dir := path[:strings.LastIndex(path, "/")]
+	dir := cm.configPath[:strings.LastIndex(cm.configPath, "/")]
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
@@ -119,7 +115,78 @@ func createDefaultConfig(path string) error {
 	}
 
 	// 写入文件
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(cm.configPath, data, 0644)
+}
+
+// GetConfig 获取当前配置
+func (cm *ConfigManager) GetConfig() *Config {
+	return cm.config.Load().(*Config)
+}
+
+// UpdateConfig 更新配置
+func (cm *ConfigManager) UpdateConfig(newConfig *Config) error {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	// 确保所有路径配置的扩展名规则都已更新
+	for path, pc := range newConfig.MAP {
+		pc.ProcessExtensionMap()
+		newConfig.MAP[path] = pc // 更新回原始map
+	}
+
+	// 保存到文件
+	if err := cm.saveConfigToFile(newConfig); err != nil {
+		return err
+	}
+
+	// 更新内存中的配置
+	cm.config.Store(newConfig)
+
+	// 触发回调
+	TriggerCallbacks(newConfig)
+
+	log.Printf("[ConfigManager] 配置已更新: %d 个路径映射", len(newConfig.MAP))
+	return nil
+}
+
+// saveConfigToFile 保存配置到文件
+func (cm *ConfigManager) saveConfigToFile(config *Config) error {
+	// 将新配置格式化为JSON
+	configData, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	// 保存到临时文件
+	tempFile := cm.configPath + ".tmp"
+	if err := os.WriteFile(tempFile, configData, 0644); err != nil {
+		return err
+	}
+
+	// 重命名临时文件为正式文件
+	return os.Rename(tempFile, cm.configPath)
+}
+
+// ReloadConfig 重新加载配置文件
+func (cm *ConfigManager) ReloadConfig() error {
+	config, err := cm.loadConfigFromFile()
+	if err != nil {
+		return err
+	}
+
+	// 确保所有路径配置的扩展名规则都已更新
+	for path, pc := range config.MAP {
+		pc.ProcessExtensionMap()
+		config.MAP[path] = pc // 更新回原始map
+	}
+
+	cm.config.Store(config)
+
+	// 触发回调
+	TriggerCallbacks(config)
+
+	log.Printf("[ConfigManager] 配置已重新加载: %d 个路径映射", len(config.MAP))
+	return nil
 }
 
 // RegisterUpdateCallback 注册配置更新回调函数
@@ -147,63 +214,17 @@ func TriggerCallbacks(cfg *Config) {
 	log.Printf("[Config] 触发了 %d 个配置更新回调", len(configCallbacks))
 }
 
-// Update 更新配置并触发回调
-func (c *configImpl) Update(newConfig *Config) {
-	c.Lock()
-	defer c.Unlock()
+// 为了向后兼容，保留Load函数，但现在它使用ConfigManager
+var globalConfigManager *ConfigManager
 
-	// 确保所有路径配置的扩展名规则都已更新
-	for path, pc := range newConfig.MAP {
-		pc.ProcessExtensionMap()
-		newConfig.MAP[path] = pc // 更新回原始map
+// Load 加载配置（向后兼容）
+func Load(path string) (*Config, error) {
+	if globalConfigManager == nil {
+		var err error
+		globalConfigManager, err = NewConfigManager(path)
+		if err != nil {
+			return nil, err
+		}
 	}
-
-	// 更新配置
-	c.MAP = newConfig.MAP
-	c.Compression = newConfig.Compression
-
-	// 触发回调
-	for _, callback := range c.onConfigUpdate {
-		callback(newConfig)
-	}
-
-	// 添加日志
-	log.Printf("[Config] 配置已更新: %d 个路径映射", len(newConfig.MAP))
-}
-
-// reload 重新加载配置文件
-func (c *configImpl) reload(path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-
-	var newConfig Config
-	if err := json.Unmarshal(data, &newConfig); err != nil {
-		return err
-	}
-
-	c.Update(&newConfig)
-	return nil
-}
-
-func (cm *ConfigManager) loadConfig() error {
-	config, err := Load(cm.configPath)
-	if err != nil {
-		return err
-	}
-
-	// 确保所有路径配置的扩展名规则都已更新
-	for path, pc := range config.MAP {
-		pc.ProcessExtensionMap()
-		config.MAP[path] = pc // 更新回原始map
-	}
-
-	cm.config.Store(config)
-	log.Printf("[ConfigManager] 配置已加载: %d 个路径映射", len(config.MAP))
-	return nil
-}
-
-func (cm *ConfigManager) GetConfig() *Config {
-	return cm.config.Load().(*Config)
+	return globalConfigManager.GetConfig(), nil
 }
