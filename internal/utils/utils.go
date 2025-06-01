@@ -183,12 +183,9 @@ func GetFileSize(client *http.Client, url string) (int64, error) {
 	return resp.ContentLength, nil
 }
 
-// GetTargetURL 根据路径和配置决定目标URL
-func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathConfig, path string) (string, bool) {
-	// 默认使用默认目标
-	targetBase := pathConfig.DefaultTarget
-	usedAltTarget := false
-
+// SelectBestRule 根据文件大小和扩展名选择最合适的规则
+// 返回值: (选中的规则, 是否找到匹配的规则, 是否使用了备用目标)
+func SelectBestRule(client *http.Client, pathConfig config.PathConfig, path string) (*config.ExtensionRule, bool, bool) {
 	// 获取文件扩展名（使用优化的字符串处理）
 	ext := ""
 	lastDotIndex := strings.LastIndex(path, ".")
@@ -196,38 +193,38 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 		ext = strings.ToLower(path[lastDotIndex+1:])
 	}
 
-	// 如果没有扩展名规则，直接返回默认目标
+	// 如果没有扩展名规则，返回nil
 	if len(pathConfig.ExtRules) == 0 {
-		if ext == "" {
-			log.Printf("[Route] %s -> %s (无扩展名)", path, targetBase)
-		}
-		return targetBase, false
-	}
-
-	// 确保有扩展名规则
-	if ext == "" {
-		log.Printf("[Route] %s -> %s (无扩展名)", path, targetBase)
-		// 即使没有扩展名，也要尝试匹配 * 通配符规则
+		return nil, false, false
 	}
 
 	// 获取文件大小
-	contentLength, err := GetFileSize(client, targetBase+path)
+	contentLength, err := GetFileSize(client, pathConfig.DefaultTarget+path)
 	if err != nil {
-		log.Printf("[Route] %s -> %s (获取文件大小出错: %v)", path, targetBase, err)
+		log.Printf("[SelectRule] %s -> 获取文件大小出错: %v", path, err)
 
-		// 如果无法获取文件大小，尝试使用扩展名直接匹配（优化点）
-		if altTarget, exists := pathConfig.GetProcessedExtTarget(ext); exists {
-			usedAltTarget = true
-			targetBase = altTarget
-			log.Printf("[Route] %s -> %s (基于扩展名直接匹配)", path, targetBase)
-		} else if altTarget, exists := pathConfig.GetProcessedExtTarget("*"); exists {
-			// 尝试使用通配符
-			usedAltTarget = true
-			targetBase = altTarget
-			log.Printf("[Route] %s -> %s (基于通配符匹配)", path, targetBase)
+		// 如果无法获取文件大小，尝试使用扩展名直接匹配
+		for _, rule := range pathConfig.ExtRules {
+			// 检查具体扩展名匹配
+			for _, e := range rule.Extensions {
+				if e == ext {
+					log.Printf("[SelectRule] %s -> 基于扩展名直接匹配规则", path)
+					return &rule, true, true
+				}
+			}
 		}
 
-		return targetBase, usedAltTarget
+		// 尝试使用通配符规则
+		for _, rule := range pathConfig.ExtRules {
+			for _, e := range rule.Extensions {
+				if e == "*" {
+					log.Printf("[SelectRule] %s -> 基于通配符匹配规则", path)
+					return &rule, true, true
+				}
+			}
+		}
+
+		return nil, false, false
 	}
 
 	// 获取匹配的扩展名规则
@@ -265,10 +262,10 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 	// 如果没有找到匹配的具体扩展名规则，使用通配符规则
 	if len(matchingRules) == 0 {
 		if len(wildcardRules) > 0 {
-			log.Printf("[Route] %s -> 使用通配符规则", path)
+			log.Printf("[SelectRule] %s -> 使用通配符规则", path)
 			matchingRules = wildcardRules
 		} else {
-			return targetBase, false
+			return nil, false, false
 		}
 	}
 
@@ -287,20 +284,69 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 		// 检查文件大小是否在阈值范围内
 		if contentLength >= rule.SizeThreshold && contentLength <= rule.MaxSize {
 			// 找到匹配的规则
-			log.Printf("[Route] %s -> %s (文件大小: %s, 在区间 %s 到 %s 之间)",
-				path, rule.Target, FormatBytes(contentLength),
+			log.Printf("[SelectRule] %s -> 选中规则 (文件大小: %s, 在区间 %s 到 %s 之间)",
+				path, FormatBytes(contentLength),
 				FormatBytes(rule.SizeThreshold), FormatBytes(rule.MaxSize))
 
 			// 检查目标是否可访问（使用带缓存的检查）
 			if isTargetAccessible(client, rule.Target+path) {
-				targetBase = rule.Target
-				usedAltTarget = true
+				return rule, true, true
 			} else {
-				log.Printf("[Route] %s -> %s (回退: 备用目标不可访问)",
-					path, targetBase)
+				log.Printf("[SelectRule] %s -> 规则目标不可访问，继续查找", path)
+				// 继续查找下一个匹配的规则
+				continue
 			}
+		}
+	}
 
-			break
+	// 没有找到合适的规则
+	return nil, false, false
+}
+
+// GetTargetURL 根据路径和配置决定目标URL
+func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathConfig, path string) (string, bool) {
+	// 默认使用默认目标
+	targetBase := pathConfig.DefaultTarget
+	usedAltTarget := false
+
+	// 获取文件扩展名（使用优化的字符串处理）
+	ext := ""
+	lastDotIndex := strings.LastIndex(path, ".")
+	if lastDotIndex > 0 && lastDotIndex < len(path)-1 {
+		ext = strings.ToLower(path[lastDotIndex+1:])
+	}
+
+	// 如果没有扩展名规则，直接返回默认目标
+	if len(pathConfig.ExtRules) == 0 {
+		if ext == "" {
+			log.Printf("[Route] %s -> %s (无扩展名)", path, targetBase)
+		}
+		return targetBase, false
+	}
+
+	// 确保有扩展名规则
+	if ext == "" {
+		log.Printf("[Route] %s -> %s (无扩展名)", path, targetBase)
+		// 即使没有扩展名，也要尝试匹配 * 通配符规则
+	}
+
+	// 使用新的统一规则选择逻辑
+	rule, found, usedAlt := SelectBestRule(client, pathConfig, path)
+	if found && rule != nil {
+		targetBase = rule.Target
+		usedAltTarget = usedAlt
+		log.Printf("[Route] %s -> %s (使用选中的规则)", path, targetBase)
+	} else {
+		// 如果无法获取文件大小，尝试使用扩展名直接匹配（优化点）
+		if altTarget, exists := pathConfig.GetProcessedExtTarget(ext); exists {
+			usedAltTarget = true
+			targetBase = altTarget
+			log.Printf("[Route] %s -> %s (基于扩展名直接匹配)", path, targetBase)
+		} else if altTarget, exists := pathConfig.GetProcessedExtTarget("*"); exists {
+			// 尝试使用通配符
+			usedAltTarget = true
+			targetBase = altTarget
+			log.Printf("[Route] %s -> %s (基于通配符匹配)", path, targetBase)
 		}
 	}
 

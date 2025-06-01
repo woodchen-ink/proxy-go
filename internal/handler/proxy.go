@@ -239,7 +239,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 检查是否需要进行302跳转
-	if h.redirectHandler != nil && h.redirectHandler.HandleRedirect(w, r, pathConfig, decodedPath) {
+	if h.redirectHandler != nil && h.redirectHandler.HandleRedirect(w, r, pathConfig, decodedPath, h.client) {
 		// 如果进行了302跳转，直接返回，不继续处理
 		collector.RecordRequest(r.URL.Path, http.StatusFound, time.Since(start), 0, utils.GetClientIP(r), r)
 		return
