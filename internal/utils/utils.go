@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -37,6 +38,10 @@ var (
 	cacheTTL     = 5 * time.Minute
 	accessTTL    = 30 * time.Second
 	maxCacheSize = 10000 // 最大缓存条目数
+
+	// 缓存统计
+	matcherCacheHits   int64
+	matcherCacheMisses int64
 )
 
 // 清理过期缓存
@@ -79,6 +84,19 @@ func init() {
 				}
 				return true
 			})
+		}
+	}()
+
+	// 定期打印缓存统计信息
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		for range ticker.C {
+			hits, misses := GetMatcherCacheStats()
+			if hits+misses > 0 {
+				hitRate := float64(hits) / float64(hits+misses) * 100
+				log.Printf("[Cache] ExtensionMatcher stats: hits=%d, misses=%d, hit_rate=%.2f%%",
+					hits, misses, hitRate)
+			}
 		}
 	}()
 }
@@ -183,18 +201,151 @@ func GetFileSize(client *http.Client, url string) (int64, error) {
 	return resp.ContentLength, nil
 }
 
-// SelectBestRule 根据文件大小和扩展名选择最合适的规则
-// 返回值: (选中的规则, 是否找到匹配的规则, 是否使用了备用目标)
-func SelectBestRule(client *http.Client, pathConfig config.PathConfig, path string) (*config.ExtensionRule, bool, bool) {
-	// 获取文件扩展名（使用优化的字符串处理）
-	ext := ""
-	lastDotIndex := strings.LastIndex(path, ".")
-	if lastDotIndex > 0 && lastDotIndex < len(path)-1 {
-		ext = strings.ToLower(path[lastDotIndex+1:])
+// RuleSelectionResult 规则选择结果，用于缓存和传递结果
+type RuleSelectionResult struct {
+	Rule           *config.ExtensionRule
+	Found          bool
+	UsedAltTarget  bool
+	TargetURL      string
+	ShouldRedirect bool
+}
+
+// ExtensionMatcher 扩展名匹配器，用于优化扩展名匹配性能
+type ExtensionMatcher struct {
+	exactMatches    map[string][]*config.ExtensionRule // 精确匹配的扩展名
+	wildcardRules   []*config.ExtensionRule            // 通配符规则
+	hasRedirectRule bool                               // 是否有任何302跳转规则
+}
+
+// NewExtensionMatcher 创建扩展名匹配器
+func NewExtensionMatcher(rules []config.ExtensionRule) *ExtensionMatcher {
+	matcher := &ExtensionMatcher{
+		exactMatches:  make(map[string][]*config.ExtensionRule),
+		wildcardRules: make([]*config.ExtensionRule, 0),
 	}
 
+	for i := range rules {
+		rule := &rules[i]
+
+		// 处理阈值默认值
+		if rule.SizeThreshold < 0 {
+			rule.SizeThreshold = 0
+		}
+		if rule.MaxSize <= 0 {
+			rule.MaxSize = 1<<63 - 1
+		}
+
+		// 检查是否有302跳转规则
+		if rule.RedirectMode {
+			matcher.hasRedirectRule = true
+		}
+
+		// 分类存储规则
+		for _, ext := range rule.Extensions {
+			if ext == "*" {
+				matcher.wildcardRules = append(matcher.wildcardRules, rule)
+			} else {
+				if matcher.exactMatches[ext] == nil {
+					matcher.exactMatches[ext] = make([]*config.ExtensionRule, 0, 1)
+				}
+				matcher.exactMatches[ext] = append(matcher.exactMatches[ext], rule)
+			}
+		}
+	}
+
+	// 预排序所有规则组
+	for ext := range matcher.exactMatches {
+		sortRulesByThreshold(matcher.exactMatches[ext])
+	}
+	sortRulesByThreshold(matcher.wildcardRules)
+
+	return matcher
+}
+
+// sortRulesByThreshold 按阈值排序规则
+func sortRulesByThreshold(rules []*config.ExtensionRule) {
+	sort.Slice(rules, func(i, j int) bool {
+		if rules[i].SizeThreshold == rules[j].SizeThreshold {
+			return rules[i].MaxSize > rules[j].MaxSize
+		}
+		return rules[i].SizeThreshold < rules[j].SizeThreshold
+	})
+}
+
+// GetMatchingRules 获取匹配的规则
+func (em *ExtensionMatcher) GetMatchingRules(ext string) []*config.ExtensionRule {
+	// 先查找精确匹配
+	if rules, exists := em.exactMatches[ext]; exists {
+		return rules
+	}
+	// 返回通配符规则
+	return em.wildcardRules
+}
+
+// HasRedirectRule 检查是否有任何302跳转规则
+func (em *ExtensionMatcher) HasRedirectRule() bool {
+	return em.hasRedirectRule
+}
+
+// extractExtension 提取文件扩展名（优化版本）
+func extractExtension(path string) string {
+	lastDotIndex := strings.LastIndex(path, ".")
+	if lastDotIndex > 0 && lastDotIndex < len(path)-1 {
+		return strings.ToLower(path[lastDotIndex+1:])
+	}
+	return ""
+}
+
+// GetMatcherCacheStats 获取缓存统计信息
+func GetMatcherCacheStats() (hits, misses int64) {
+	return atomic.LoadInt64(&matcherCacheHits), atomic.LoadInt64(&matcherCacheMisses)
+}
+
+// ResetMatcherCacheStats 重置缓存统计
+func ResetMatcherCacheStats() {
+	atomic.StoreInt64(&matcherCacheHits, 0)
+	atomic.StoreInt64(&matcherCacheMisses, 0)
+}
+
+// getOrCreateExtensionMatcher 获取或创建ExtensionMatcher（带缓存和统计）
+func getOrCreateExtensionMatcher(pathConfig *config.PathConfig) *ExtensionMatcher {
+	// 尝试从缓存获取
+	if cached, valid := pathConfig.GetMatcherCache(); valid && cached != nil {
+		if matcher, ok := cached.(*ExtensionMatcher); ok {
+			atomic.AddInt64(&matcherCacheHits, 1)
+			return matcher
+		}
+	}
+
+	// 缓存未命中，创建新的匹配器
+	atomic.AddInt64(&matcherCacheMisses, 1)
+	matcher := NewExtensionMatcher(pathConfig.ExtRules)
+
+	// 存储到缓存
+	pathConfig.SetMatcherCache(matcher)
+
+	log.Printf("[Cache] ExtensionMatcher created and cached for %d rules", len(pathConfig.ExtRules))
+
+	return matcher
+}
+
+// SelectBestRule 根据文件大小和扩展名选择最合适的规则（优化版本，带缓存）
+// 返回值: (选中的规则, 是否找到匹配的规则, 是否使用了备用目标)
+func SelectBestRule(client *http.Client, pathConfig config.PathConfig, path string) (*config.ExtensionRule, bool, bool) {
 	// 如果没有扩展名规则，返回nil
 	if len(pathConfig.ExtRules) == 0 {
+		return nil, false, false
+	}
+
+	// 提取扩展名
+	ext := extractExtension(path)
+
+	// 获取或创建缓存的扩展名匹配器
+	matcher := getOrCreateExtensionMatcher(&pathConfig)
+
+	// 获取匹配的规则
+	matchingRules := matcher.GetMatchingRules(ext)
+	if len(matchingRules) == 0 {
 		return nil, false, false
 	}
 
@@ -202,85 +353,16 @@ func SelectBestRule(client *http.Client, pathConfig config.PathConfig, path stri
 	contentLength, err := GetFileSize(client, pathConfig.DefaultTarget+path)
 	if err != nil {
 		log.Printf("[SelectRule] %s -> 获取文件大小出错: %v", path, err)
-
-		// 如果无法获取文件大小，尝试使用扩展名直接匹配
-		for _, rule := range pathConfig.ExtRules {
-			// 检查具体扩展名匹配
-			for _, e := range rule.Extensions {
-				if e == ext {
-					log.Printf("[SelectRule] %s -> 基于扩展名直接匹配规则", path)
-					return &rule, true, true
-				}
-			}
+		// 如果无法获取文件大小，返回第一个匹配的规则
+		if len(matchingRules) > 0 {
+			log.Printf("[SelectRule] %s -> 基于扩展名直接匹配规则", path)
+			return matchingRules[0], true, true
 		}
-
-		// 尝试使用通配符规则
-		for _, rule := range pathConfig.ExtRules {
-			for _, e := range rule.Extensions {
-				if e == "*" {
-					log.Printf("[SelectRule] %s -> 基于通配符匹配规则", path)
-					return &rule, true, true
-				}
-			}
-		}
-
 		return nil, false, false
 	}
 
-	// 获取匹配的扩展名规则
-	matchingRules := []config.ExtensionRule{}
-	wildcardRules := []config.ExtensionRule{} // 存储通配符规则
-
-	// 找出所有匹配当前扩展名的规则
-	for _, rule := range pathConfig.ExtRules {
-		// 处理阈值默认值
-		if rule.SizeThreshold < 0 {
-			rule.SizeThreshold = 0 // 默认不限制
-		}
-
-		if rule.MaxSize <= 0 {
-			rule.MaxSize = 1<<63 - 1 // 设置为最大值表示不限制
-		}
-
-		// 检查是否包含通配符
-		for _, e := range rule.Extensions {
-			if e == "*" {
-				wildcardRules = append(wildcardRules, rule)
-				break
-			}
-		}
-
-		// 检查具体扩展名匹配
-		for _, e := range rule.Extensions {
-			if e == ext {
-				matchingRules = append(matchingRules, rule)
-				break
-			}
-		}
-	}
-
-	// 如果没有找到匹配的具体扩展名规则，使用通配符规则
-	if len(matchingRules) == 0 {
-		if len(wildcardRules) > 0 {
-			log.Printf("[SelectRule] %s -> 使用通配符规则", path)
-			matchingRules = wildcardRules
-		} else {
-			return nil, false, false
-		}
-	}
-
-	// 按阈值排序规则（优化点：使用更高效的排序）
-	sort.Slice(matchingRules, func(i, j int) bool {
-		if matchingRules[i].SizeThreshold == matchingRules[j].SizeThreshold {
-			return matchingRules[i].MaxSize > matchingRules[j].MaxSize
-		}
-		return matchingRules[i].SizeThreshold < matchingRules[j].SizeThreshold
-	})
-
-	// 根据文件大小找出最匹配的规则
-	for i := range matchingRules {
-		rule := &matchingRules[i]
-
+	// 根据文件大小找出最匹配的规则（规则已经预排序）
+	for _, rule := range matchingRules {
 		// 检查文件大小是否在阈值范围内
 		if contentLength >= rule.SizeThreshold && contentLength <= rule.MaxSize {
 			// 找到匹配的规则
@@ -303,31 +385,82 @@ func SelectBestRule(client *http.Client, pathConfig config.PathConfig, path stri
 	return nil, false, false
 }
 
-// GetTargetURL 根据路径和配置决定目标URL
+// SelectRuleForRedirect 专门为302跳转优化的规则选择函数（带缓存）
+func SelectRuleForRedirect(client *http.Client, pathConfig config.PathConfig, path string) *RuleSelectionResult {
+	result := &RuleSelectionResult{}
+
+	// 快速检查：如果没有任何302跳转配置，直接返回
+	if !pathConfig.RedirectMode && len(pathConfig.ExtRules) == 0 {
+		return result
+	}
+
+	// 如果默认目标配置了302跳转，优先使用
+	if pathConfig.RedirectMode {
+		result.Found = true
+		result.ShouldRedirect = true
+		result.TargetURL = pathConfig.DefaultTarget
+		return result
+	}
+
+	// 检查扩展名规则
+	if len(pathConfig.ExtRules) > 0 {
+		ext := extractExtension(path)
+
+		// 获取或创建缓存的扩展名匹配器
+		matcher := getOrCreateExtensionMatcher(&pathConfig)
+
+		// 快速检查：如果没有任何302跳转规则，跳过复杂逻辑
+		if !matcher.HasRedirectRule() {
+			return result
+		}
+
+		// 尝试选择最佳规则
+		if rule, found, usedAlt := SelectBestRule(client, pathConfig, path); found && rule != nil && rule.RedirectMode {
+			result.Rule = rule
+			result.Found = found
+			result.UsedAltTarget = usedAlt
+			result.ShouldRedirect = true
+			result.TargetURL = rule.Target
+			return result
+		}
+
+		// 回退到简单的扩展名匹配
+		if rule, found := pathConfig.GetProcessedExtRule(ext); found && rule.RedirectMode {
+			result.Rule = rule
+			result.Found = found
+			result.UsedAltTarget = true
+			result.ShouldRedirect = true
+			result.TargetURL = rule.Target
+			return result
+		}
+
+		// 检查通配符规则
+		if rule, found := pathConfig.GetProcessedExtRule("*"); found && rule.RedirectMode {
+			result.Rule = rule
+			result.Found = found
+			result.UsedAltTarget = true
+			result.ShouldRedirect = true
+			result.TargetURL = rule.Target
+			return result
+		}
+	}
+
+	return result
+}
+
+// GetTargetURL 根据路径和配置决定目标URL（优化版本）
 func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathConfig, path string) (string, bool) {
 	// 默认使用默认目标
 	targetBase := pathConfig.DefaultTarget
 	usedAltTarget := false
 
-	// 获取文件扩展名（使用优化的字符串处理）
-	ext := ""
-	lastDotIndex := strings.LastIndex(path, ".")
-	if lastDotIndex > 0 && lastDotIndex < len(path)-1 {
-		ext = strings.ToLower(path[lastDotIndex+1:])
-	}
-
 	// 如果没有扩展名规则，直接返回默认目标
 	if len(pathConfig.ExtRules) == 0 {
+		ext := extractExtension(path)
 		if ext == "" {
 			log.Printf("[Route] %s -> %s (无扩展名)", path, targetBase)
 		}
 		return targetBase, false
-	}
-
-	// 确保有扩展名规则
-	if ext == "" {
-		log.Printf("[Route] %s -> %s (无扩展名)", path, targetBase)
-		// 即使没有扩展名，也要尝试匹配 * 通配符规则
 	}
 
 	// 使用新的统一规则选择逻辑
@@ -338,6 +471,7 @@ func GetTargetURL(client *http.Client, r *http.Request, pathConfig config.PathCo
 		log.Printf("[Route] %s -> %s (使用选中的规则)", path, targetBase)
 	} else {
 		// 如果无法获取文件大小，尝试使用扩展名直接匹配（优化点）
+		ext := extractExtension(path)
 		if altTarget, exists := pathConfig.GetProcessedExtTarget(ext); exists {
 			usedAltTarget = true
 			targetBase = altTarget
@@ -456,4 +590,16 @@ func ParseInt(s string, defaultValue int) int {
 		return defaultValue
 	}
 	return result
+}
+
+// ClearAllMatcherCaches 清理所有ExtensionMatcher缓存（用于配置更新时）
+func ClearAllMatcherCaches(configMap map[string]config.PathConfig) {
+	cleared := 0
+	for path := range configMap {
+		pathConfig := configMap[path]
+		pathConfig.InvalidateMatcherCache()
+		configMap[path] = pathConfig
+		cleared++
+	}
+	log.Printf("[Cache] Cleared %d ExtensionMatcher caches due to config update", cleared)
 }

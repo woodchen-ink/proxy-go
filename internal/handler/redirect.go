@@ -4,7 +4,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"proxy-go/internal/config"
 	"proxy-go/internal/utils"
 	"strings"
@@ -32,43 +31,21 @@ func (rh *RedirectHandler) HandleRedirect(w http.ResponseWriter, r *http.Request
 	return true
 }
 
-// shouldRedirect 判断是否应该进行302跳转，并返回目标URL
+// shouldRedirect 判断是否应该进行302跳转，并返回目标URL（优化版本）
 func (rh *RedirectHandler) shouldRedirect(r *http.Request, pathConfig config.PathConfig, targetPath string, client *http.Client) (bool, string) {
-	// 获取文件扩展名
-	ext := strings.ToLower(filepath.Ext(targetPath))
-	if ext != "" {
-		ext = ext[1:] // 去掉点号
-	}
+	// 使用优化的规则选择函数
+	result := utils.SelectRuleForRedirect(client, pathConfig, targetPath)
 
-	// 使用统一的规则选择逻辑，考虑文件大小
-	if rule, found, _ := utils.SelectBestRule(client, pathConfig, targetPath); found && rule != nil && rule.RedirectMode {
-		// 使用选中规则的目标URL进行302跳转
-		targetURL := rh.buildTargetURL(rule.Target, targetPath, r.URL.RawQuery)
-		log.Printf("[Redirect] %s -> 使用选中规则进行302跳转: %s", targetPath, targetURL)
-		return true, targetURL
-	}
+	if result.ShouldRedirect {
+		// 构建完整的目标URL
+		targetURL := rh.buildTargetURL(result.TargetURL, targetPath, r.URL.RawQuery)
 
-	// 检查默认目标是否配置为302跳转
-	if pathConfig.RedirectMode {
-		// 使用默认目标URL进行302跳转
-		targetURL := rh.buildTargetURL(pathConfig.DefaultTarget, targetPath, r.URL.RawQuery)
-		log.Printf("[Redirect] %s -> 使用默认目标进行302跳转: %s", targetPath, targetURL)
-		return true, targetURL
-	}
+		if result.Rule != nil {
+			log.Printf("[Redirect] %s -> 使用选中规则进行302跳转: %s", targetPath, targetURL)
+		} else {
+			log.Printf("[Redirect] %s -> 使用默认目标进行302跳转: %s", targetPath, targetURL)
+		}
 
-	// 如果默认目标没有配置302跳转，检查是否有简单的扩展名匹配（向后兼容）
-	if rule, found := pathConfig.GetProcessedExtRule(ext); found && rule.RedirectMode {
-		// 使用扩展名规则的目标URL进行302跳转
-		targetURL := rh.buildTargetURL(rule.Target, targetPath, r.URL.RawQuery)
-		log.Printf("[Redirect] %s -> 使用扩展名规则进行302跳转: %s", targetPath, targetURL)
-		return true, targetURL
-	}
-
-	// 检查通配符规则
-	if rule, found := pathConfig.GetProcessedExtRule("*"); found && rule.RedirectMode {
-		// 使用通配符规则的目标URL进行302跳转
-		targetURL := rh.buildTargetURL(rule.Target, targetPath, r.URL.RawQuery)
-		log.Printf("[Redirect] %s -> 使用通配符规则进行302跳转: %s", targetPath, targetURL)
 		return true, targetURL
 	}
 

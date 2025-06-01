@@ -182,6 +182,10 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 	// 注册配置更新回调
 	config.RegisterUpdateCallback(func(newCfg *config.Config) {
 		// 注意：config包已经在回调触发前处理了所有ExtRules，这里无需再次处理
+
+		// 清理所有ExtensionMatcher缓存，因为配置已更新
+		utils.ClearAllMatcherCaches(newCfg.MAP)
+
 		handler.pathMap = newCfg.MAP
 		handler.prefixTree.update(newCfg.MAP) // 更新前缀匹配树
 		handler.config = newCfg

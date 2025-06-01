@@ -13,12 +13,14 @@ type OldPathConfig struct {
 	SizeThreshold int64       `json:"SizeThreshold,omitempty"`
 	MaxSize       int64       `json:"MaxSize,omitempty"`
 	Path          string      `json:"Path,omitempty"`
+	RedirectMode  bool        `json:"RedirectMode,omitempty"`
 }
 
 // 新配置结构
 type NewPathConfig struct {
 	DefaultTarget string          `json:"DefaultTarget"`
 	ExtensionMap  []ExtRuleConfig `json:"ExtensionMap"`
+	RedirectMode  bool            `json:"RedirectMode"`
 }
 
 type ExtRuleConfig struct {
@@ -26,6 +28,7 @@ type ExtRuleConfig struct {
 	Target        string `json:"Target"`
 	SizeThreshold int64  `json:"SizeThreshold"`
 	MaxSize       int64  `json:"MaxSize"`
+	RedirectMode  bool   `json:"RedirectMode"`
 }
 
 type CompressionConfig struct {
@@ -79,6 +82,7 @@ func MigrateConfig(configPath string) error {
 		newPathConfig := NewPathConfig{
 			DefaultTarget: oldPathConfig.DefaultTarget,
 			ExtensionMap:  []ExtRuleConfig{},
+			RedirectMode:  oldPathConfig.RedirectMode,
 		}
 
 		// 检查ExtensionMap类型
@@ -94,6 +98,7 @@ func MigrateConfig(configPath string) error {
 							Target:        target,
 							SizeThreshold: oldPathConfig.SizeThreshold,
 							MaxSize:       oldPathConfig.MaxSize,
+							RedirectMode:  oldPathConfig.RedirectMode,
 						}
 						newPathConfig.ExtensionMap = append(newPathConfig.ExtensionMap, rule)
 					}
