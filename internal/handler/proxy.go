@@ -191,6 +191,17 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 		handler.pathMap = newCfg.MAP
 		handler.prefixTree.update(newCfg.MAP) // 更新前缀匹配树
 		handler.config = newCfg
+
+		// 清理ExtensionMatcher缓存，确保使用新配置
+		if handler.Cache != nil {
+			handler.Cache.InvalidateAllExtensionMatchers()
+			log.Printf("[Config] ExtensionMatcher缓存已清理")
+		}
+
+		// 清理URL可访问性缓存和文件大小缓存
+		utils.ClearAccessibilityCache()
+		utils.ClearFileSizeCache()
+
 		log.Printf("[Config] 代理处理器配置已更新: %d 个路径映射", len(newCfg.MAP))
 	})
 

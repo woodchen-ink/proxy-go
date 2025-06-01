@@ -364,3 +364,29 @@ func ParseInt(s string, defaultValue int) int {
 	}
 	return result
 }
+
+// ClearAccessibilityCache 清理可访问性缓存
+func ClearAccessibilityCache() {
+	count := 0
+	accessCache.Range(func(key, value interface{}) bool {
+		accessCache.Delete(key)
+		count++
+		return true
+	})
+	if count > 0 {
+		log.Printf("[AccessibilityCache] 清理了 %d 个可访问性缓存项", count)
+	}
+}
+
+// ClearFileSizeCache 清理文件大小缓存
+func ClearFileSizeCache() {
+	count := 0
+	sizeCache.Range(func(key, value interface{}) bool {
+		sizeCache.Delete(key)
+		count++
+		return true
+	})
+	if count > 0 {
+		log.Printf("[FileSizeCache] 清理了 %d 个文件大小缓存项", count)
+	}
+}
