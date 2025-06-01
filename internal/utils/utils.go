@@ -14,7 +14,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -38,10 +37,6 @@ var (
 	cacheTTL     = 5 * time.Minute
 	accessTTL    = 30 * time.Second
 	maxCacheSize = 10000 // 最大缓存条目数
-
-	// 缓存统计
-	matcherCacheHits   int64
-	matcherCacheMisses int64
 )
 
 // 清理过期缓存
@@ -84,19 +79,6 @@ func init() {
 				}
 				return true
 			})
-		}
-	}()
-
-	// 定期打印缓存统计信息
-	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
-		for range ticker.C {
-			hits, misses := GetMatcherCacheStats()
-			if hits+misses > 0 {
-				hitRate := float64(hits) / float64(hits+misses) * 100
-				log.Printf("[Cache] ExtensionMatcher stats: hits=%d, misses=%d, hit_rate=%.2f%%",
-					hits, misses, hitRate)
-			}
 		}
 	}()
 }
@@ -296,40 +278,7 @@ func extractExtension(path string) string {
 	return ""
 }
 
-// GetMatcherCacheStats 获取缓存统计信息
-func GetMatcherCacheStats() (hits, misses int64) {
-	return atomic.LoadInt64(&matcherCacheHits), atomic.LoadInt64(&matcherCacheMisses)
-}
-
-// ResetMatcherCacheStats 重置缓存统计
-func ResetMatcherCacheStats() {
-	atomic.StoreInt64(&matcherCacheHits, 0)
-	atomic.StoreInt64(&matcherCacheMisses, 0)
-}
-
-// getOrCreateExtensionMatcher 获取或创建ExtensionMatcher（带缓存和统计）
-func getOrCreateExtensionMatcher(pathConfig *config.PathConfig) *ExtensionMatcher {
-	// 尝试从缓存获取
-	if cached, valid := pathConfig.GetMatcherCache(); valid && cached != nil {
-		if matcher, ok := cached.(*ExtensionMatcher); ok {
-			atomic.AddInt64(&matcherCacheHits, 1)
-			return matcher
-		}
-	}
-
-	// 缓存未命中，创建新的匹配器
-	atomic.AddInt64(&matcherCacheMisses, 1)
-	matcher := NewExtensionMatcher(pathConfig.ExtRules)
-
-	// 存储到缓存
-	pathConfig.SetMatcherCache(matcher)
-
-	log.Printf("[Cache] ExtensionMatcher created and cached for %d rules", len(pathConfig.ExtRules))
-
-	return matcher
-}
-
-// SelectBestRule 根据文件大小和扩展名选择最合适的规则（优化版本，带缓存）
+// SelectBestRule 根据文件大小和扩展名选择最合适的规则（优化版本）
 // 返回值: (选中的规则, 是否找到匹配的规则, 是否使用了备用目标)
 func SelectBestRule(client *http.Client, pathConfig config.PathConfig, path string) (*config.ExtensionRule, bool, bool) {
 	// 如果没有扩展名规则，返回nil
@@ -340,8 +289,8 @@ func SelectBestRule(client *http.Client, pathConfig config.PathConfig, path stri
 	// 提取扩展名
 	ext := extractExtension(path)
 
-	// 获取或创建缓存的扩展名匹配器
-	matcher := getOrCreateExtensionMatcher(&pathConfig)
+	// 创建扩展名匹配器（可以考虑缓存这个匹配器）
+	matcher := NewExtensionMatcher(pathConfig.ExtRules)
 
 	// 获取匹配的规则
 	matchingRules := matcher.GetMatchingRules(ext)
@@ -385,7 +334,7 @@ func SelectBestRule(client *http.Client, pathConfig config.PathConfig, path stri
 	return nil, false, false
 }
 
-// SelectRuleForRedirect 专门为302跳转优化的规则选择函数（带缓存）
+// SelectRuleForRedirect 专门为302跳转优化的规则选择函数
 func SelectRuleForRedirect(client *http.Client, pathConfig config.PathConfig, path string) *RuleSelectionResult {
 	result := &RuleSelectionResult{}
 
@@ -405,9 +354,7 @@ func SelectRuleForRedirect(client *http.Client, pathConfig config.PathConfig, pa
 	// 检查扩展名规则
 	if len(pathConfig.ExtRules) > 0 {
 		ext := extractExtension(path)
-
-		// 获取或创建缓存的扩展名匹配器
-		matcher := getOrCreateExtensionMatcher(&pathConfig)
+		matcher := NewExtensionMatcher(pathConfig.ExtRules)
 
 		// 快速检查：如果没有任何302跳转规则，跳过复杂逻辑
 		if !matcher.HasRedirectRule() {
@@ -590,16 +537,4 @@ func ParseInt(s string, defaultValue int) int {
 		return defaultValue
 	}
 	return result
-}
-
-// ClearAllMatcherCaches 清理所有ExtensionMatcher缓存（用于配置更新时）
-func ClearAllMatcherCaches(configMap map[string]config.PathConfig) {
-	cleared := 0
-	for path := range configMap {
-		pathConfig := configMap[path]
-		pathConfig.InvalidateMatcherCache()
-		configMap[path] = pathConfig
-		cleared++
-	}
-	log.Printf("[Cache] Cleared %d ExtensionMatcher caches due to config update", cleared)
 }
