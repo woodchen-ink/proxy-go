@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"proxy-go/internal/config"
 	"proxy-go/internal/utils"
 	"sort"
 	"strings"
@@ -80,6 +81,9 @@ type CacheManager struct {
 	bytesSaved   atomic.Int64  // 节省的带宽
 	cleanupTimer *time.Ticker  // 添加清理定时器
 	stopCleanup  chan struct{} // 添加停止信号通道
+
+	// ExtensionMatcher缓存
+	extensionMatcherCache *ExtensionMatcherCache
 }
 
 // NewCacheManager 创建新的缓存管理器
@@ -94,6 +98,9 @@ func NewCacheManager(cacheDir string) (*CacheManager, error) {
 		cleanupTick:  5 * time.Minute,
 		maxCacheSize: 10 * 1024 * 1024 * 1024, // 10GB
 		stopCleanup:  make(chan struct{}),
+
+		// 初始化ExtensionMatcher缓存
+		extensionMatcherCache: NewExtensionMatcherCache(),
 	}
 
 	cm.enabled.Store(true) // 默认启用缓存
@@ -590,4 +597,55 @@ func (cm *CacheManager) loadConfig() error {
 	}
 
 	return nil
+}
+
+// GetExtensionMatcher 获取缓存的ExtensionMatcher
+func (cm *CacheManager) GetExtensionMatcher(pathKey string, rules []config.ExtensionRule) *utils.ExtensionMatcher {
+	if cm.extensionMatcherCache == nil {
+		return utils.NewExtensionMatcher(rules)
+	}
+	return cm.extensionMatcherCache.GetOrCreate(pathKey, rules)
+}
+
+// InvalidateExtensionMatcherPath 使指定路径的ExtensionMatcher缓存失效
+func (cm *CacheManager) InvalidateExtensionMatcherPath(pathKey string) {
+	if cm.extensionMatcherCache != nil {
+		cm.extensionMatcherCache.InvalidatePath(pathKey)
+	}
+}
+
+// InvalidateAllExtensionMatchers 清空所有ExtensionMatcher缓存
+func (cm *CacheManager) InvalidateAllExtensionMatchers() {
+	if cm.extensionMatcherCache != nil {
+		cm.extensionMatcherCache.InvalidateAll()
+	}
+}
+
+// GetExtensionMatcherStats 获取ExtensionMatcher缓存统计信息
+func (cm *CacheManager) GetExtensionMatcherStats() ExtensionMatcherCacheStats {
+	if cm.extensionMatcherCache != nil {
+		return cm.extensionMatcherCache.GetStats()
+	}
+	return ExtensionMatcherCacheStats{}
+}
+
+// UpdateExtensionMatcherConfig 更新ExtensionMatcher缓存配置
+func (cm *CacheManager) UpdateExtensionMatcherConfig(maxAge, cleanupTick time.Duration) {
+	if cm.extensionMatcherCache != nil {
+		cm.extensionMatcherCache.UpdateConfig(maxAge, cleanupTick)
+	}
+}
+
+// Stop 停止缓存管理器（包括ExtensionMatcher缓存）
+func (cm *CacheManager) Stop() {
+	// 停止主缓存清理
+	if cm.cleanupTimer != nil {
+		cm.cleanupTimer.Stop()
+	}
+	close(cm.stopCleanup)
+
+	// 停止ExtensionMatcher缓存
+	if cm.extensionMatcherCache != nil {
+		cm.extensionMatcherCache.Stop()
+	}
 }

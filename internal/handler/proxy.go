@@ -11,6 +11,7 @@ import (
 	"proxy-go/internal/cache"
 	"proxy-go/internal/config"
 	"proxy-go/internal/metrics"
+	"proxy-go/internal/service"
 	"proxy-go/internal/utils"
 	"sort"
 	"strings"
@@ -53,7 +54,8 @@ type ProxyHandler struct {
 	auth            *authManager
 	errorHandler    ErrorHandler
 	Cache           *cache.CacheManager
-	redirectHandler *RedirectHandler // 添加302跳转处理器
+	redirectHandler *RedirectHandler     // 添加302跳转处理器
+	ruleService     *service.RuleService // 添加规则服务
 }
 
 // 前缀匹配器结构体
@@ -154,6 +156,9 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 		log.Printf("[Cache] Failed to initialize cache manager: %v", err)
 	}
 
+	// 初始化规则服务
+	ruleService := service.NewRuleService(cacheManager)
+
 	handler := &ProxyHandler{
 		pathMap:    cfg.MAP,
 		prefixTree: newPrefixMatcher(cfg.MAP), // 初始化前缀匹配树
@@ -171,7 +176,8 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 		config:          cfg,
 		auth:            newAuthManager(),
 		Cache:           cacheManager,
-		redirectHandler: NewRedirectHandler(), // 初始化302跳转处理器
+		ruleService:     ruleService,
+		redirectHandler: NewRedirectHandler(ruleService), // 初始化302跳转处理器
 		errorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			log.Printf("[Error] %s %s -> %v from %s", r.Method, r.URL.Path, err, utils.GetRequestSource(r))
 			w.WriteHeader(http.StatusInternalServerError)
@@ -246,7 +252,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 使用统一的路由选择逻辑
-	targetBase, usedAltTarget := utils.GetTargetURL(h.client, r, pathConfig, decodedPath)
+	targetBase, usedAltTarget := h.ruleService.GetTargetURL(h.client, r, pathConfig, decodedPath)
 
 	// 重新编码路径，保留 '/'
 	parts := strings.Split(decodedPath, "/")

@@ -5,16 +5,21 @@ import (
 	"net/http"
 	"net/url"
 	"proxy-go/internal/config"
+	"proxy-go/internal/service"
 	"proxy-go/internal/utils"
 	"strings"
 )
 
 // RedirectHandler 处理302跳转逻辑
-type RedirectHandler struct{}
+type RedirectHandler struct {
+	ruleService *service.RuleService
+}
 
 // NewRedirectHandler 创建新的跳转处理器
-func NewRedirectHandler() *RedirectHandler {
-	return &RedirectHandler{}
+func NewRedirectHandler(ruleService *service.RuleService) *RedirectHandler {
+	return &RedirectHandler{
+		ruleService: ruleService,
+	}
 }
 
 // HandleRedirect 处理302跳转请求
@@ -33,8 +38,8 @@ func (rh *RedirectHandler) HandleRedirect(w http.ResponseWriter, r *http.Request
 
 // shouldRedirect 判断是否应该进行302跳转，并返回目标URL（优化版本）
 func (rh *RedirectHandler) shouldRedirect(r *http.Request, pathConfig config.PathConfig, targetPath string, client *http.Client) (bool, string) {
-	// 使用优化的规则选择函数
-	result := utils.SelectRuleForRedirect(client, pathConfig, targetPath)
+	// 使用service包的规则选择函数
+	result := rh.ruleService.SelectRuleForRedirect(client, pathConfig, targetPath)
 
 	if result.ShouldRedirect {
 		// 构建完整的目标URL
