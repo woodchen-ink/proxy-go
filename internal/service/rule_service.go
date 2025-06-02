@@ -107,34 +107,9 @@ func (rs *RuleService) SelectRuleForRedirect(client *http.Client, pathConfig con
 		return result
 	}
 
-	// 如果默认目标配置了302跳转，优先使用
-	if pathConfig.RedirectMode {
-		result.Found = true
-		result.ShouldRedirect = true
-		result.TargetURL = pathConfig.DefaultTarget
-		return result
-	}
-
-	// 检查扩展名规则
+	// 优先检查扩展名规则，即使根级别配置了302跳转
 	if len(pathConfig.ExtRules) > 0 {
-		ext := extractExtension(path)
-
-		var matcher *utils.ExtensionMatcher
-
-		// 尝试使用缓存管理器
-		if rs.cacheManager != nil {
-			pathKey := fmt.Sprintf("redirect_%p", &pathConfig)
-			matcher = rs.cacheManager.GetExtensionMatcher(pathKey, pathConfig.ExtRules)
-		} else {
-			matcher = utils.NewExtensionMatcher(pathConfig.ExtRules)
-		}
-
-		// 快速检查：如果没有任何302跳转规则，跳过复杂逻辑
-		if !matcher.HasRedirectRule() {
-			return result
-		}
-
-		// 尝试选择最佳规则
+		// 尝试选择最佳规则（包括文件大小检测）
 		if rule, found, usedAlt := rs.SelectBestRule(client, pathConfig, path); found && rule != nil && rule.RedirectMode {
 			result.Rule = rule
 			result.Found = found
@@ -144,25 +119,21 @@ func (rs *RuleService) SelectRuleForRedirect(client *http.Client, pathConfig con
 			return result
 		}
 
-		// 回退到简单的扩展名匹配
-		if rule, found := pathConfig.GetProcessedExtRule(ext); found && rule.RedirectMode {
-			result.Rule = rule
-			result.Found = found
-			result.UsedAltTarget = true
-			result.ShouldRedirect = true
-			result.TargetURL = rule.Target
-			return result
-		}
+		// 注意：这里不再进行"忽略大小"的回退匹配
+		// 如果SelectBestRule没有找到合适的规则，说明：
+		// 1. 扩展名不匹配，或者
+		// 2. 扩展名匹配但文件大小不在配置范围内，或者
+		// 3. 无法获取文件大小，或者
+		// 4. 目标服务器不可访问
+		// 在这些情况下，我们不应该强制使用扩展名规则
+	}
 
-		// 检查通配符规则
-		if rule, found := pathConfig.GetProcessedExtRule("*"); found && rule.RedirectMode {
-			result.Rule = rule
-			result.Found = found
-			result.UsedAltTarget = true
-			result.ShouldRedirect = true
-			result.TargetURL = rule.Target
-			return result
-		}
+	// 如果没有匹配的扩展名规则，且默认目标配置了302跳转，使用默认目标
+	if pathConfig.RedirectMode {
+		result.Found = true
+		result.ShouldRedirect = true
+		result.TargetURL = pathConfig.DefaultTarget
+		return result
 	}
 
 	return result
