@@ -533,7 +533,7 @@ export default function ConfigPage() {
   }, [handleDialogOpenChange]);
 
   // 处理扩展名规则的编辑
-  const handleExtensionRuleEdit = (path: string, index?: number, rule?: { Extensions: string; Target: string; SizeThreshold?: number; MaxSize?: number }) => {
+  const handleExtensionRuleEdit = (path: string, index?: number, rule?: { Extensions: string; Target: string; SizeThreshold?: number; MaxSize?: number; RedirectMode?: boolean }) => {
     setEditingPath(path);
     
     if (index !== undefined && rule) {
@@ -555,7 +555,7 @@ export default function ConfigPage() {
       setNewExtensionRule({
         extensions: rule.Extensions,
         target: rule.Target,
-        redirectMode: false, // TODO: 从rule中获取RedirectMode
+        redirectMode: rule.RedirectMode || false, // 正确读取RedirectMode字段
         sizeThreshold: thresholdValue,
         maxSize: maxValue,
         sizeThresholdUnit: thresholdUnit,
@@ -872,7 +872,14 @@ export default function ConfigPage() {
                                 className="bg-muted/30 rounded-md p-2 text-xs"
                               >
                                 <div className="flex justify-between mb-1">
-                                  <span className="font-semibold">{rule.Extensions}</span>
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-semibold">{rule.Extensions}</span>
+                                    {rule.RedirectMode && (
+                                      <span className="text-xs bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">
+                                        302
+                                      </span>
+                                    )}
+                                  </div>
                                   <div className="flex space-x-1">
                                     <Button
                                       variant="ghost"
