@@ -825,7 +825,14 @@ export default function ConfigPage() {
                   <Card key={`${path}-card`} className="overflow-hidden">
                     <CardHeader className="pb-2">
                       <CardTitle className="text-lg flex justify-between items-center">
-                        <span className="font-medium truncate" title={path}>{path}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium truncate" title={path}>{path}</span>
+                          {(typeof target === 'object' && target.RedirectMode) && (
+                            <span className="text-xs bg-green-100 text-green-800 px-1.5 py-0.5 rounded">
+                              302
+                            </span>
+                          )}
+                        </div>
                         <div className="flex space-x-1">
                           <Button
                             variant="ghost"
