@@ -56,12 +56,8 @@ func (rs *RuleService) SelectBestRule(client *http.Client, pathConfig config.Pat
 	// 获取文件大小
 	contentLength, err := utils.GetFileSize(client, pathConfig.DefaultTarget+path)
 	if err != nil {
-		log.Printf("[SelectRule] %s -> 获取文件大小出错: %v", path, err)
-		// 如果无法获取文件大小，返回第一个匹配的规则
-		if len(matchingRules) > 0 {
-			log.Printf("[SelectRule] %s -> 基于扩展名直接匹配规则", path)
-			return matchingRules[0], true, true
-		}
+		log.Printf("[SelectRule] %s -> 获取文件大小出错: %v，严格模式下不使用扩展名规则", path, err)
+		// 严格模式：如果无法获取文件大小，不使用扩展名规则
 		return nil, false, false
 	}
 
@@ -154,25 +150,16 @@ func (rs *RuleService) GetTargetURL(client *http.Client, r *http.Request, pathCo
 		return targetBase, false
 	}
 
-	// 使用新的统一规则选择逻辑
+	// 使用严格的规则选择逻辑
 	rule, found, usedAlt := rs.SelectBestRule(client, pathConfig, path)
 	if found && rule != nil {
 		targetBase = rule.Target
 		usedAltTarget = usedAlt
 		log.Printf("[Route] %s -> %s (使用选中的规则)", path, targetBase)
 	} else {
-		// 如果无法获取文件大小，尝试使用扩展名直接匹配
-		ext := extractExtension(path)
-		if altTarget, exists := pathConfig.GetProcessedExtTarget(ext); exists {
-			usedAltTarget = true
-			targetBase = altTarget
-			log.Printf("[Route] %s -> %s (基于扩展名直接匹配)", path, targetBase)
-		} else if altTarget, exists := pathConfig.GetProcessedExtTarget("*"); exists {
-			// 尝试使用通配符
-			usedAltTarget = true
-			targetBase = altTarget
-			log.Printf("[Route] %s -> %s (基于通配符匹配)", path, targetBase)
-		}
+		// 如果没有找到合适的规则，使用默认目标
+		// 不再进行"基于扩展名直接匹配"的回退
+		log.Printf("[Route] %s -> %s (使用默认目标，扩展名规则不匹配)", path, targetBase)
 	}
 
 	return targetBase, usedAltTarget
