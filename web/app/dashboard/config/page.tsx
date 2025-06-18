@@ -35,6 +35,7 @@ interface ExtRuleConfig {
   SizeThreshold: number; // 最小阈值（字节）
   MaxSize: number;       // 最大阈值（字节）
   RedirectMode?: boolean; // 是否使用302跳转模式
+  Domains?: string;      // 逗号分隔的域名列表，为空表示匹配所有域名
 }
 
 interface PathMapping {
@@ -110,6 +111,7 @@ export default function ConfigPage() {
     maxSize: number;
     sizeThresholdUnit: 'B' | 'KB' | 'MB' | 'GB';
     maxSizeUnit: 'B' | 'KB' | 'MB' | 'GB';
+    domains: string;
   }>({
     extensions: "",
     target: "",
@@ -118,6 +120,7 @@ export default function ConfigPage() {
     maxSize: 0,
     sizeThresholdUnit: 'MB',
     maxSizeUnit: 'MB',
+    domains: "",
   });
 
   const [editingExtensionRule, setEditingExtensionRule] = useState<{
@@ -128,6 +131,7 @@ export default function ConfigPage() {
     maxSize: number;
     sizeThresholdUnit: 'B' | 'KB' | 'MB' | 'GB';
     maxSizeUnit: 'B' | 'KB' | 'MB' | 'GB';
+    domains: string;
   } | null>(null);
 
   // 添加扩展名规则对话框状态
@@ -527,13 +531,14 @@ export default function ConfigPage() {
           maxSize: 0,
           sizeThresholdUnit: 'MB',
           maxSizeUnit: 'MB',
+          domains: "",
         });
       }
     });
   }, [handleDialogOpenChange]);
 
   // 处理扩展名规则的编辑
-  const handleExtensionRuleEdit = (path: string, index?: number, rule?: { Extensions: string; Target: string; SizeThreshold?: number; MaxSize?: number; RedirectMode?: boolean }) => {
+  const handleExtensionRuleEdit = (path: string, index?: number, rule?: { Extensions: string; Target: string; SizeThreshold?: number; MaxSize?: number; RedirectMode?: boolean; Domains?: string }) => {
     setEditingPath(path);
     
     if (index !== undefined && rule) {
@@ -549,6 +554,7 @@ export default function ConfigPage() {
         maxSize: maxValue,
         sizeThresholdUnit: thresholdUnit,
         maxSizeUnit: maxUnit,
+        domains: rule.Domains || "",
       });
       
       // 同时更新表单显示数据
@@ -560,6 +566,7 @@ export default function ConfigPage() {
         maxSize: maxValue,
         sizeThresholdUnit: thresholdUnit,
         maxSizeUnit: maxUnit,
+        domains: rule.Domains || "",
       });
     } else {
       setEditingExtensionRule(null);
@@ -572,6 +579,7 @@ export default function ConfigPage() {
         maxSize: 0,
         sizeThresholdUnit: 'MB',
         maxSizeUnit: 'MB',
+        domains: "",
       });
     }
     
@@ -582,7 +590,7 @@ export default function ConfigPage() {
   const addOrUpdateExtensionRule = () => {
     if (!config || !editingPath) return;
     
-    const { extensions, target, redirectMode, sizeThreshold, maxSize, sizeThresholdUnit, maxSizeUnit } = newExtensionRule;
+    const { extensions, target, redirectMode, sizeThreshold, maxSize, sizeThresholdUnit, maxSizeUnit, domains } = newExtensionRule;
     
     // 验证输入
     if (!extensions.trim() || !target.trim()) {
@@ -617,6 +625,23 @@ export default function ConfigPage() {
       return;
     }
 
+    // 验证域名格式（如果提供）
+    if (domains.trim()) {
+      const domainList = domains.split(',').map(d => d.trim());
+      const domainRegex = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+      
+      for (const domain of domainList) {
+        if (domain && !domainRegex.test(domain)) {
+          toast({
+            title: "错误",
+            description: `域名格式不正确: ${domain}`,
+            variant: "destructive",
+          });
+          return;
+        }
+      }
+    }
+
     // 转换大小为字节
     const sizeThresholdBytes = convertToBytes(sizeThreshold, sizeThresholdUnit);
     const maxSizeBytes = convertToBytes(maxSize, maxSizeUnit);
@@ -642,7 +667,9 @@ export default function ConfigPage() {
           Extensions: extensions,
           Target: target,
           SizeThreshold: sizeThresholdBytes,
-          MaxSize: maxSizeBytes
+          MaxSize: maxSizeBytes,
+          RedirectMode: redirectMode,
+          Domains: domains.trim() || undefined
         }]
       };
     } else {
@@ -659,7 +686,8 @@ export default function ConfigPage() {
           Target: target,
           SizeThreshold: sizeThresholdBytes,
           MaxSize: maxSizeBytes,
-          RedirectMode: redirectMode
+          RedirectMode: redirectMode,
+          Domains: domains.trim() || undefined
         };
       } else {
         // 添加新规则
@@ -668,7 +696,8 @@ export default function ConfigPage() {
           Target: target,
           SizeThreshold: sizeThresholdBytes,
           MaxSize: maxSizeBytes,
-          RedirectMode: redirectMode
+          RedirectMode: redirectMode,
+          Domains: domains.trim() || undefined
         });
       }
     }
@@ -684,6 +713,7 @@ export default function ConfigPage() {
       maxSize: 0,
       sizeThresholdUnit: 'MB',
       maxSizeUnit: 'MB',
+      domains: "",
     });
   };
 
@@ -886,6 +916,11 @@ export default function ConfigPage() {
                                         302
                                       </span>
                                     )}
+                                    {rule.Domains && (
+                                      <span className="text-xs bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded" title={`限制域名: ${rule.Domains}`}>
+                                        域名
+                                      </span>
+                                    )}
                                   </div>
                                   <div className="flex space-x-1">
                                     <Button
@@ -909,6 +944,11 @@ export default function ConfigPage() {
                                 <div className="text-muted-foreground truncate" title={rule.Target}>
                                   目标: {truncateUrl(rule.Target)}
                                 </div>
+                                {rule.Domains && (
+                                  <div className="text-muted-foreground truncate" title={rule.Domains}>
+                                    域名: {rule.Domains}
+                                  </div>
+                                )}
                                 <div className="flex justify-between mt-1 text-muted-foreground">
                                   <div>阈值: {formatBytes(rule.SizeThreshold || 0)}</div>
                                   <div>最大: {formatBytes(rule.MaxSize || 0)}</div>
@@ -1023,6 +1063,17 @@ export default function ConfigPage() {
                 onChange={(e) => setNewExtensionRule({ ...newExtensionRule, target: e.target.value })}
                 placeholder="https://example.com"
               />
+            </div>
+            <div className="space-y-2">
+              <Label>限制域名（可选）</Label>
+              <Input
+                value={newExtensionRule.domains}
+                onChange={(e) => setNewExtensionRule({ ...newExtensionRule, domains: e.target.value })}
+                placeholder="a.com,b.com"
+              />
+              <p className="text-sm text-muted-foreground">
+                指定该规则适用的域名，多个域名用逗号分隔。留空表示适用于所有域名。
+              </p>
             </div>
             <div className="flex items-center justify-between">
               <Label>使用302跳转</Label>

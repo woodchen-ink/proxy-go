@@ -23,6 +23,7 @@ type ExtensionRule struct {
 	SizeThreshold int64    // 最小阈值
 	MaxSize       int64    // 最大阈值
 	RedirectMode  bool     // 是否使用302跳转模式
+	Domains       []string // 支持的域名列表，为空表示匹配所有域名
 }
 
 type CompressionConfig struct {
@@ -42,6 +43,7 @@ type ExtRuleConfig struct {
 	SizeThreshold int64  `json:"SizeThreshold"` // 最小阈值
 	MaxSize       int64  `json:"MaxSize"`       // 最大阈值
 	RedirectMode  bool   `json:"RedirectMode"`  // 是否使用302跳转模式
+	Domains       string `json:"Domains"`       // 逗号分隔的域名列表，为空表示匹配所有域名
 }
 
 // 处理扩展名映射的方法
@@ -66,6 +68,16 @@ func (p *PathConfig) ProcessExtensionMap() {
 			ext = strings.TrimSpace(ext)
 			if ext != "" {
 				extRule.Extensions = append(extRule.Extensions, ext)
+			}
+		}
+
+		// 处理域名列表
+		if rule.Domains != "" {
+			for _, domain := range strings.Split(rule.Domains, ",") {
+				domain = strings.TrimSpace(domain)
+				if domain != "" {
+					extRule.Domains = append(extRule.Domains, domain)
+				}
 			}
 		}
 

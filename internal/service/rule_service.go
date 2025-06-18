@@ -27,7 +27,7 @@ func NewRuleService(cacheManager CacheManager) *RuleService {
 }
 
 // SelectBestRule 选择最合适的规则
-func (rs *RuleService) SelectBestRule(client *http.Client, pathConfig config.PathConfig, path string) (*config.ExtensionRule, bool, bool) {
+func (rs *RuleService) SelectBestRule(client *http.Client, pathConfig config.PathConfig, path string, requestHost string) (*config.ExtensionRule, bool, bool) {
 	// 如果没有扩展名规则，返回nil
 	if len(pathConfig.ExtRules) == 0 {
 		return nil, false, false
@@ -53,6 +53,20 @@ func (rs *RuleService) SelectBestRule(client *http.Client, pathConfig config.Pat
 		return nil, false, false
 	}
 
+	// 过滤符合域名条件的规则
+	var domainMatchingRules []*config.ExtensionRule
+	for _, rule := range matchingRules {
+		if rs.isDomainMatching(rule, requestHost) {
+			domainMatchingRules = append(domainMatchingRules, rule)
+		}
+	}
+
+	// 如果没有域名匹配的规则，返回nil
+	if len(domainMatchingRules) == 0 {
+		log.Printf("[SelectRule] %s -> 没有找到匹配域名 %s 的扩展名规则", path, requestHost)
+		return nil, false, false
+	}
+
 	// 获取文件大小
 	contentLength, err := utils.GetFileSize(client, pathConfig.DefaultTarget+path)
 	if err != nil {
@@ -62,12 +76,12 @@ func (rs *RuleService) SelectBestRule(client *http.Client, pathConfig config.Pat
 	}
 
 	// 根据文件大小找出最匹配的规则（规则已经预排序）
-	for _, rule := range matchingRules {
+	for _, rule := range domainMatchingRules {
 		// 检查文件大小是否在阈值范围内
 		if contentLength >= rule.SizeThreshold && contentLength <= rule.MaxSize {
 			// 找到匹配的规则
-			log.Printf("[SelectRule] %s -> 选中规则 (文件大小: %s, 在区间 %s 到 %s 之间)",
-				path, utils.FormatBytes(contentLength),
+			log.Printf("[SelectRule] %s -> 选中规则 (域名: %s, 文件大小: %s, 在区间 %s 到 %s 之间)",
+				path, requestHost, utils.FormatBytes(contentLength),
 				utils.FormatBytes(rule.SizeThreshold), utils.FormatBytes(rule.MaxSize))
 
 			// 检查目标是否可访问
@@ -85,6 +99,29 @@ func (rs *RuleService) SelectBestRule(client *http.Client, pathConfig config.Pat
 	return nil, false, false
 }
 
+// isDomainMatching 检查规则的域名是否匹配请求的域名
+func (rs *RuleService) isDomainMatching(rule *config.ExtensionRule, requestHost string) bool {
+	// 如果规则没有指定域名，则匹配所有域名
+	if len(rule.Domains) == 0 {
+		return true
+	}
+
+	// 提取请求域名（去除端口号）
+	host := requestHost
+	if colonIndex := strings.Index(host, ":"); colonIndex != -1 {
+		host = host[:colonIndex]
+	}
+
+	// 检查是否匹配任一指定的域名
+	for _, domain := range rule.Domains {
+		if strings.EqualFold(host, domain) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // RuleSelectionResult 规则选择结果
 type RuleSelectionResult struct {
 	Rule           *config.ExtensionRule
@@ -95,7 +132,7 @@ type RuleSelectionResult struct {
 }
 
 // SelectRuleForRedirect 专门为302跳转优化的规则选择函数
-func (rs *RuleService) SelectRuleForRedirect(client *http.Client, pathConfig config.PathConfig, path string) *RuleSelectionResult {
+func (rs *RuleService) SelectRuleForRedirect(client *http.Client, pathConfig config.PathConfig, path string, requestHost string) *RuleSelectionResult {
 	result := &RuleSelectionResult{}
 
 	// 快速检查：如果没有任何302跳转配置，直接返回
@@ -106,7 +143,7 @@ func (rs *RuleService) SelectRuleForRedirect(client *http.Client, pathConfig con
 	// 优先检查扩展名规则，即使根级别配置了302跳转
 	if len(pathConfig.ExtRules) > 0 {
 		// 尝试选择最佳规则（包括文件大小检测）
-		if rule, found, usedAlt := rs.SelectBestRule(client, pathConfig, path); found && rule != nil && rule.RedirectMode {
+		if rule, found, usedAlt := rs.SelectBestRule(client, pathConfig, path, requestHost); found && rule != nil && rule.RedirectMode {
 			result.Rule = rule
 			result.Found = found
 			result.UsedAltTarget = usedAlt
@@ -120,7 +157,8 @@ func (rs *RuleService) SelectRuleForRedirect(client *http.Client, pathConfig con
 		// 1. 扩展名不匹配，或者
 		// 2. 扩展名匹配但文件大小不在配置范围内，或者
 		// 3. 无法获取文件大小，或者
-		// 4. 目标服务器不可访问
+		// 4. 目标服务器不可访问，或者
+		// 5. 域名不匹配
 		// 在这些情况下，我们不应该强制使用扩展名规则
 	}
 
@@ -151,7 +189,7 @@ func (rs *RuleService) GetTargetURL(client *http.Client, r *http.Request, pathCo
 	}
 
 	// 使用严格的规则选择逻辑
-	rule, found, usedAlt := rs.SelectBestRule(client, pathConfig, path)
+	rule, found, usedAlt := rs.SelectBestRule(client, pathConfig, path, r.Host)
 	if found && rule != nil {
 		targetBase = rule.Target
 		usedAltTarget = usedAlt

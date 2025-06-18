@@ -86,12 +86,21 @@ func (cm *ConfigManager) createDefaultConfig() error {
 						Target:        "https://img1.example.com",
 						SizeThreshold: 500 * 1024,      // 500KB
 						MaxSize:       2 * 1024 * 1024, // 2MB
+						Domains:       "a.com,b.com",   // 只对a.com和b.com域名生效
 					},
 					{
 						Extensions:    "jpg,png,webp",
 						Target:        "https://img2.example.com",
 						SizeThreshold: 2 * 1024 * 1024, // 2MB
 						MaxSize:       5 * 1024 * 1024, // 5MB
+						Domains:       "b.com",         // 只对b.com域名生效
+					},
+					{
+						Extensions:    "mp4,avi",
+						Target:        "https://video.example.com",
+						SizeThreshold: 1024 * 1024,      // 1MB
+						MaxSize:       50 * 1024 * 1024, // 50MB
+						// 不指定Domains，对所有域名生效
 					},
 				},
 			},

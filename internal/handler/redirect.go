@@ -38,17 +38,17 @@ func (rh *RedirectHandler) HandleRedirect(w http.ResponseWriter, r *http.Request
 
 // shouldRedirect 判断是否应该进行302跳转，并返回目标URL（优化版本）
 func (rh *RedirectHandler) shouldRedirect(r *http.Request, pathConfig config.PathConfig, targetPath string, client *http.Client) (bool, string) {
-	// 使用service包的规则选择函数
-	result := rh.ruleService.SelectRuleForRedirect(client, pathConfig, targetPath)
+	// 使用service包的规则选择函数，传递请求的域名
+	result := rh.ruleService.SelectRuleForRedirect(client, pathConfig, targetPath, r.Host)
 
 	if result.ShouldRedirect {
 		// 构建完整的目标URL
 		targetURL := rh.buildTargetURL(result.TargetURL, targetPath, r.URL.RawQuery)
 
 		if result.Rule != nil {
-			log.Printf("[Redirect] %s -> 使用选中规则进行302跳转: %s", targetPath, targetURL)
+			log.Printf("[Redirect] %s -> 使用选中规则进行302跳转 (域名: %s): %s", targetPath, r.Host, targetURL)
 		} else {
-			log.Printf("[Redirect] %s -> 使用默认目标进行302跳转: %s", targetPath, targetURL)
+			log.Printf("[Redirect] %s -> 使用默认目标进行302跳转 (域名: %s): %s", targetPath, r.Host, targetURL)
 		}
 
 		return true, targetURL
