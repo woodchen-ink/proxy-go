@@ -57,5 +57,14 @@
       "Enabled": false,
       "Level": 4
     }
+  },
+  "Security": {
+    "IPBan": {
+      "Enabled": true,
+      "ErrorThreshold": 10,
+      "WindowMinutes": 5,
+      "BanDurationMinutes": 5,
+      "CleanupIntervalMinutes": 1
+    }
   }
 }

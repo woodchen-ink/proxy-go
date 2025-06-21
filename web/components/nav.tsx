@@ -55,6 +55,12 @@ export function Nav() {
           >
             缓存
           </Link>
+          <Link
+            href="/dashboard/security"
+            className={pathname === "/dashboard/security" ? "text-primary" : "text-muted-foreground"}
+          >
+            安全
+          </Link>
         </div>
         <Button variant="ghost" onClick={handleLogout}>
           退出登录

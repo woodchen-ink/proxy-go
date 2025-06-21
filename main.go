@@ -13,6 +13,7 @@ import (
 	"proxy-go/internal/initapp"
 	"proxy-go/internal/metrics"
 	"proxy-go/internal/middleware"
+	"proxy-go/internal/security"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -55,12 +56,32 @@ func main() {
 	})
 	compManagerAtomic.Store(compManager)
 
+	// 创建安全管理器
+	var banManager *security.IPBanManager
+	var securityMiddleware *middleware.SecurityMiddleware
+	if cfg.Security.IPBan.Enabled {
+		banConfig := &security.IPBanConfig{
+			ErrorThreshold:         cfg.Security.IPBan.ErrorThreshold,
+			WindowMinutes:          cfg.Security.IPBan.WindowMinutes,
+			BanDurationMinutes:     cfg.Security.IPBan.BanDurationMinutes,
+			CleanupIntervalMinutes: cfg.Security.IPBan.CleanupIntervalMinutes,
+		}
+		banManager = security.NewIPBanManager(banConfig)
+		securityMiddleware = middleware.NewSecurityMiddleware(banManager)
+	}
+
 	// 创建代理处理器
 	mirrorHandler := handler.NewMirrorProxyHandler()
 	proxyHandler := handler.NewProxyHandler(cfg)
 
 	// 创建配置处理器
 	configHandler := handler.NewConfigHandler(configManager)
+
+	// 创建安全管理处理器
+	var securityHandler *handler.SecurityHandler
+	if banManager != nil {
+		securityHandler = handler.NewSecurityHandler(banManager)
+	}
 
 	// 注册压缩配置更新回调
 	config.RegisterUpdateCallback(func(newCfg *config.Config) {
@@ -90,6 +111,17 @@ func main() {
 		{http.MethodPost, "/admin/api/cache/clear", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).ClearCache, true},
 		{http.MethodGet, "/admin/api/cache/config", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).GetCacheConfig, true},
 		{http.MethodPost, "/admin/api/cache/config", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).UpdateCacheConfig, true},
+	}
+
+	// 添加安全API路由（如果启用了安全功能）
+	if securityHandler != nil {
+		securityRoutes := []Route{
+			{http.MethodGet, "/admin/api/security/banned-ips", securityHandler.GetBannedIPs, true},
+			{http.MethodPost, "/admin/api/security/unban", securityHandler.UnbanIP, true},
+			{http.MethodGet, "/admin/api/security/stats", securityHandler.GetSecurityStats, true},
+			{http.MethodGet, "/admin/api/security/check-ip", securityHandler.CheckIPStatus, true},
+		}
+		apiRoutes = append(apiRoutes, securityRoutes...)
 	}
 
 	// 创建路由处理器
@@ -165,13 +197,20 @@ func main() {
 		http.NotFound(w, r)
 	})
 
-	// 添加压缩中间件（使用动态压缩管理器）
+	// 构建中间件链
 	var handler http.Handler = mainHandler
+
+	// 添加安全中间件（最外层，优先级最高）
+	if securityMiddleware != nil {
+		handler = securityMiddleware.IPBanMiddleware(handler)
+	}
+
+	// 添加压缩中间件
 	if cfg.Compression.Gzip.Enabled || cfg.Compression.Brotli.Enabled {
 		// 创建动态压缩中间件包装器
 		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			currentCompManager := compManagerAtomic.Load().(compression.Manager)
-			middleware.CompressionMiddleware(currentCompManager)(mainHandler).ServeHTTP(w, r)
+			middleware.CompressionMiddleware(currentCompManager)(handler).ServeHTTP(w, r)
 		})
 	}
 
@@ -187,6 +226,11 @@ func main() {
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
 		log.Println("Shutting down server...")
+
+		// 停止安全管理器
+		if banManager != nil {
+			banManager.Stop()
+		}
 
 		// 停止指标存储服务
 		metrics.StopMetricsStorage()

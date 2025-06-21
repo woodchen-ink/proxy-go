@@ -94,12 +94,19 @@ func GenerateRequestID() string {
 }
 
 func GetClientIP(r *http.Request) string {
+	// 优先级1: Cloudflare 提供的原始客户端 IP（最准确）
+	if ip := r.Header.Get("CF-Connecting-IP"); ip != "" {
+		return ip
+	}
+	// 优先级2: 通用的真实 IP 头
 	if ip := r.Header.Get("X-Real-IP"); ip != "" {
 		return ip
 	}
+	// 优先级3: 标准的转发链头部（取第一个 IP，即原始客户端 IP）
 	if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
 		return strings.Split(ip, ",")[0]
 	}
+	// 优先级4: 直连 IP（兜底方案）
 	if ip, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return ip
 	}

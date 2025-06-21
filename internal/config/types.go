@@ -7,6 +7,7 @@ import (
 type Config struct {
 	MAP         map[string]PathConfig `json:"MAP"` // 路径映射配置
 	Compression CompressionConfig     `json:"Compression"`
+	Security    SecurityConfig        `json:"Security"` // 安全配置
 }
 
 type PathConfig struct {
@@ -34,6 +35,18 @@ type CompressionConfig struct {
 type CompressorConfig struct {
 	Enabled bool `json:"Enabled"`
 	Level   int  `json:"Level"`
+}
+
+type SecurityConfig struct {
+	IPBan IPBanConfig `json:"IPBan"` // IP封禁配置
+}
+
+type IPBanConfig struct {
+	Enabled                bool `json:"Enabled"`                // 是否启用IP封禁
+	ErrorThreshold         int  `json:"ErrorThreshold"`         // 404错误阈值
+	WindowMinutes          int  `json:"WindowMinutes"`          // 统计窗口时间（分钟）
+	BanDurationMinutes     int  `json:"BanDurationMinutes"`     // 封禁时长（分钟）
+	CleanupIntervalMinutes int  `json:"CleanupIntervalMinutes"` // 清理间隔（分钟）
 }
 
 // 扩展名映射配置结构

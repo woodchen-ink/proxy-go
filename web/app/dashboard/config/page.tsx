@@ -17,7 +17,8 @@ import {
 } from "@/components/ui/dialog"
 import { Switch } from "@/components/ui/switch"
 import { Slider } from "@/components/ui/slider"
-import { Plus, Trash2, Edit, Download, Upload } from "lucide-react"
+import { Plus, Trash2, Edit, Download, Upload, Shield } from "lucide-react"
+import Link from "next/link"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -51,12 +52,23 @@ interface CompressionConfig {
   Level: number
 }
 
+interface SecurityConfig {
+  IPBan: {
+    Enabled: boolean
+    ErrorThreshold: number
+    WindowMinutes: number
+    BanDurationMinutes: number
+    CleanupIntervalMinutes: number
+  }
+}
+
 interface Config {
   MAP: Record<string, PathMapping | string>
   Compression: {
     Gzip: CompressionConfig
     Brotli: CompressionConfig
   }
+  Security: SecurityConfig
 }
 
 export default function ConfigPage() {
@@ -163,6 +175,20 @@ export default function ConfigPage() {
       }
 
       const data = await response.json()
+      
+      // 确保安全配置存在
+      if (!data.Security) {
+        data.Security = {
+          IPBan: {
+            Enabled: false,
+            ErrorThreshold: 10,
+            WindowMinutes: 5,
+            BanDurationMinutes: 5,
+            CleanupIntervalMinutes: 1
+          }
+        }
+      }
+      
       isConfigFromApiRef.current = true // 标记配置来自API
       setConfig(data)
     } catch (error) {
@@ -374,6 +400,31 @@ export default function ConfigPage() {
     updateConfig(newConfig)
   }
 
+  const updateSecurity = (field: keyof SecurityConfig['IPBan'], value: boolean | number) => {
+    if (!config) return
+    const newConfig = { ...config }
+    
+    // 确保安全配置存在
+    if (!newConfig.Security) {
+      newConfig.Security = {
+        IPBan: {
+          Enabled: false,
+          ErrorThreshold: 10,
+          WindowMinutes: 5,
+          BanDurationMinutes: 5,
+          CleanupIntervalMinutes: 1
+        }
+      }
+    }
+    
+    if (field === 'Enabled') {
+      newConfig.Security.IPBan.Enabled = value as boolean
+    } else {
+      newConfig.Security.IPBan[field] = value as number
+    }
+    updateConfig(newConfig)
+  }
+
   const handleExtensionMapEdit = (path: string) => {
     // 将添加规则的操作重定向到handleExtensionRuleEdit
     handleExtensionRuleEdit(path);
@@ -431,6 +482,19 @@ export default function ConfigPage() {
             !newConfig.Compression.Gzip ||
             !newConfig.Compression.Brotli) {
           throw new Error('配置文件压缩设置格式不正确')
+        }
+
+        // 如果没有安全配置，添加默认配置
+        if (!newConfig.Security) {
+          newConfig.Security = {
+            IPBan: {
+              Enabled: false,
+              ErrorThreshold: 10,
+              WindowMinutes: 5,
+              BanDurationMinutes: 5,
+              CleanupIntervalMinutes: 1
+            }
+          }
         }
 
         // 验证路径映射
@@ -785,6 +849,7 @@ export default function ConfigPage() {
             <TabsList>
               <TabsTrigger value="paths">路径映射</TabsTrigger>
               <TabsTrigger value="compression">压缩设置</TabsTrigger>
+              <TabsTrigger value="security">安全策略</TabsTrigger>
             </TabsList>
 
             <TabsContent value="paths" className="space-y-4">
@@ -1012,6 +1077,94 @@ export default function ConfigPage() {
                       onValueChange={(value: number[]) => updateCompression('Brotli', 'Level', value[0])}
                     />
                   </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="security" className="space-y-6">
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between">
+                  <CardTitle>IP 封禁策略</CardTitle>
+                  <Button variant="outline" asChild>
+                    <Link href="/dashboard/security">
+                      <Shield className="w-4 h-4 mr-2" />
+                      安全管理
+                    </Link>
+                  </Button>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label>启用 IP 封禁</Label>
+                      <p className="text-sm text-muted-foreground">
+                        当 IP 频繁访问不存在的资源时自动封禁
+                      </p>
+                    </div>
+                    <Switch
+                      checked={config?.Security?.IPBan?.Enabled || false}
+                      onCheckedChange={(checked) => updateSecurity('Enabled', checked)}
+                    />
+                  </div>
+                  
+                  {config?.Security?.IPBan?.Enabled && (
+                    <>
+                      <div className="space-y-2">
+                        <Label>404 错误阈值</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={100}
+                          value={config?.Security?.IPBan?.ErrorThreshold || 10}
+                          onChange={(e) => updateSecurity('ErrorThreshold', parseInt(e.target.value) || 10)}
+                        />
+                        <p className="text-sm text-muted-foreground">
+                          在指定时间窗口内，IP 访问不存在资源的次数超过此值将被封禁
+                        </p>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <Label>统计窗口时间（分钟）</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={60}
+                          value={config?.Security?.IPBan?.WindowMinutes || 5}
+                          onChange={(e) => updateSecurity('WindowMinutes', parseInt(e.target.value) || 5)}
+                        />
+                        <p className="text-sm text-muted-foreground">
+                          统计 404 错误的时间窗口长度
+                        </p>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <Label>封禁时长（分钟）</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={1440}
+                          value={config?.Security?.IPBan?.BanDurationMinutes || 5}
+                          onChange={(e) => updateSecurity('BanDurationMinutes', parseInt(e.target.value) || 5)}
+                        />
+                        <p className="text-sm text-muted-foreground">
+                          IP 被封禁的持续时间
+                        </p>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <Label>清理间隔（分钟）</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={60}
+                          value={config?.Security?.IPBan?.CleanupIntervalMinutes || 1}
+                          onChange={(e) => updateSecurity('CleanupIntervalMinutes', parseInt(e.target.value) || 1)}
+                        />
+                        <p className="text-sm text-muted-foreground">
+                          清理过期记录的间隔时间
+                        </p>
+                      </div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>
