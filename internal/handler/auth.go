@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/woodchen-ink/go-web-utils/iputil"
 )
 
 const (
@@ -154,7 +156,7 @@ func (h *ProxyHandler) CheckAuth(token string) bool {
 func (h *ProxyHandler) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	auth := r.Header.Get("Authorization")
 	if auth == "" || !strings.HasPrefix(auth, "Bearer ") {
-		log.Printf("[Auth] ERR %s %s -> 401 (%s) no token from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
+		log.Printf("[Auth] ERR %s %s -> 401 (%s) no token from %s", r.Method, r.URL.Path, iputil.GetClientIP(r), utils.GetRequestSource(r))
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -162,7 +164,7 @@ func (h *ProxyHandler) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimPrefix(auth, "Bearer ")
 	h.auth.tokens.Delete(token)
 
-	log.Printf("[Auth] %s %s -> 200 (%s) logout success from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
+	log.Printf("[Auth] %s %s -> 200 (%s) logout success from %s", r.Method, r.URL.Path, iputil.GetClientIP(r), utils.GetRequestSource(r))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
@@ -175,14 +177,14 @@ func (h *ProxyHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 		if auth == "" || !strings.HasPrefix(auth, "Bearer ") {
-			log.Printf("[Auth] ERR %s %s -> 401 (%s) no token from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
+			log.Printf("[Auth] ERR %s %s -> 401 (%s) no token from %s", r.Method, r.URL.Path, iputil.GetClientIP(r), utils.GetRequestSource(r))
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 
 		token := strings.TrimPrefix(auth, "Bearer ")
 		if !h.auth.validateToken(token) {
-			log.Printf("[Auth] ERR %s %s -> 401 (%s) invalid token from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
+			log.Printf("[Auth] ERR %s %s -> 401 (%s) invalid token from %s", r.Method, r.URL.Path, iputil.GetClientIP(r), utils.GetRequestSource(r))
 			http.Error(w, "Invalid token", http.StatusUnauthorized)
 			return
 		}
@@ -253,14 +255,14 @@ func (h *ProxyHandler) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reque
 	// 验证 state
 	if !h.auth.validateState(state) {
 		log.Printf("[Auth] ERR %s %s -> 400 (%s) invalid state '%s' from %s",
-			r.Method, r.URL.Path, utils.GetClientIP(r), state, utils.GetRequestSource(r))
+			r.Method, r.URL.Path, iputil.GetClientIP(r), state, utils.GetRequestSource(r))
 		http.Error(w, "Invalid state", http.StatusBadRequest)
 		return
 	}
 
 	// 验证code参数
 	if code == "" {
-		log.Printf("[Auth] ERR %s %s -> 400 (%s) missing code parameter from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
+		log.Printf("[Auth] ERR %s %s -> 400 (%s) missing code parameter from %s", r.Method, r.URL.Path, iputil.GetClientIP(r), utils.GetRequestSource(r))
 		http.Error(w, "Missing code parameter", http.StatusBadRequest)
 		return
 	}
@@ -272,7 +274,7 @@ func (h *ProxyHandler) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reque
 
 	// 验证OAuth配置
 	if clientID == "" || clientSecret == "" {
-		log.Printf("[Auth] ERR %s %s -> 500 (%s) missing OAuth credentials from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
+		log.Printf("[Auth] ERR %s %s -> 500 (%s) missing OAuth credentials from %s", r.Method, r.URL.Path, iputil.GetClientIP(r), utils.GetRequestSource(r))
 		http.Error(w, "Server configuration error", http.StatusInternalServerError)
 		return
 	}
@@ -290,7 +292,7 @@ func (h *ProxyHandler) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reque
 			"client_secret": {clientSecret},
 		})
 	if err != nil {
-		log.Printf("[Auth] ERR %s %s -> 500 (%s) failed to get access token: %v from %s", r.Method, r.URL.Path, utils.GetClientIP(r), err, utils.GetRequestSource(r))
+		log.Printf("[Auth] ERR %s %s -> 500 (%s) failed to get access token: %v from %s", r.Method, r.URL.Path, iputil.GetClientIP(r), err, utils.GetRequestSource(r))
 		http.Error(w, "Failed to get access token", http.StatusInternalServerError)
 		return
 	}
@@ -301,21 +303,21 @@ func (h *ProxyHandler) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reque
 		// 读取错误响应内容
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		log.Printf("[Auth] ERR %s %s -> %d (%s) OAuth server returned error: %s, response: %s",
-			r.Method, r.URL.Path, resp.StatusCode, utils.GetClientIP(r), resp.Status, string(bodyBytes))
+			r.Method, r.URL.Path, resp.StatusCode, iputil.GetClientIP(r), resp.Status, string(bodyBytes))
 		http.Error(w, "OAuth server error: "+resp.Status, http.StatusInternalServerError)
 		return
 	}
 
 	var token OAuthToken
 	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {
-		log.Printf("[Auth] ERR %s %s -> 500 (%s) failed to parse token response: %v from %s", r.Method, r.URL.Path, utils.GetClientIP(r), err, utils.GetRequestSource(r))
+		log.Printf("[Auth] ERR %s %s -> 500 (%s) failed to parse token response: %v from %s", r.Method, r.URL.Path, iputil.GetClientIP(r), err, utils.GetRequestSource(r))
 		http.Error(w, "Failed to parse token response", http.StatusInternalServerError)
 		return
 	}
 
 	// 验证访问令牌
 	if token.AccessToken == "" {
-		log.Printf("[Auth] ERR %s %s -> 500 (%s) received empty access token from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
+		log.Printf("[Auth] ERR %s %s -> 500 (%s) received empty access token from %s", r.Method, r.URL.Path, iputil.GetClientIP(r), utils.GetRequestSource(r))
 		http.Error(w, "Received invalid token", http.StatusInternalServerError)
 		return
 	}
@@ -326,7 +328,7 @@ func (h *ProxyHandler) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reque
 	client := &http.Client{Timeout: 10 * time.Second}
 	userResp, err := client.Do(req)
 	if err != nil {
-		log.Printf("[Auth] ERR %s %s -> 500 (%s) failed to get user info: %v from %s", r.Method, r.URL.Path, utils.GetClientIP(r), err, utils.GetRequestSource(r))
+		log.Printf("[Auth] ERR %s %s -> 500 (%s) failed to get user info: %v from %s", r.Method, r.URL.Path, iputil.GetClientIP(r), err, utils.GetRequestSource(r))
 		http.Error(w, "Failed to get user info", http.StatusInternalServerError)
 		return
 	}
@@ -335,7 +337,7 @@ func (h *ProxyHandler) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reque
 	// 检查用户信息响应状态码
 	if userResp.StatusCode != http.StatusOK {
 		log.Printf("[Auth] ERR %s %s -> %d (%s) userinfo endpoint returned error status: %s from %s",
-			r.Method, r.URL.Path, userResp.StatusCode, utils.GetClientIP(r), userResp.Status, utils.GetRequestSource(r))
+			r.Method, r.URL.Path, userResp.StatusCode, iputil.GetClientIP(r), userResp.Status, utils.GetRequestSource(r))
 		http.Error(w, "Failed to get user info: "+userResp.Status, http.StatusInternalServerError)
 		return
 	}
@@ -344,7 +346,7 @@ func (h *ProxyHandler) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reque
 	bodyBytes, err := io.ReadAll(userResp.Body)
 	if err != nil {
 		log.Printf("[Auth] ERR %s %s -> 500 (%s) failed to read user info response body: %v from %s",
-			r.Method, r.URL.Path, utils.GetClientIP(r), err, utils.GetRequestSource(r))
+			r.Method, r.URL.Path, iputil.GetClientIP(r), err, utils.GetRequestSource(r))
 		http.Error(w, "Failed to read user info response", http.StatusInternalServerError)
 		return
 	}
@@ -356,7 +358,7 @@ func (h *ProxyHandler) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reque
 	var rawUserInfo map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &rawUserInfo); err != nil {
 		log.Printf("[Auth] ERR %s %s -> 500 (%s) failed to parse raw user info: %v from %s",
-			r.Method, r.URL.Path, utils.GetClientIP(r), err, utils.GetRequestSource(r))
+			r.Method, r.URL.Path, iputil.GetClientIP(r), err, utils.GetRequestSource(r))
 		http.Error(w, "Failed to parse user info", http.StatusInternalServerError)
 		return
 	}
@@ -391,7 +393,7 @@ func (h *ProxyHandler) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reque
 	// 验证用户信息
 	if userInfo.Username == "" {
 		log.Printf("[Auth] ERR %s %s -> 500 (%s) could not extract username from user info from %s",
-			r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
+			r.Method, r.URL.Path, iputil.GetClientIP(r), utils.GetRequestSource(r))
 		http.Error(w, "Invalid user information: missing username", http.StatusInternalServerError)
 		return
 	}
@@ -400,7 +402,7 @@ func (h *ProxyHandler) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reque
 	internalToken := h.auth.generateToken()
 	h.auth.addToken(internalToken, userInfo.Username, tokenExpiry)
 
-	log.Printf("[Auth] %s %s -> 200 (%s) login success for user %s from %s", r.Method, r.URL.Path, utils.GetClientIP(r), userInfo.Username, utils.GetRequestSource(r))
+	log.Printf("[Auth] %s %s -> 200 (%s) login success for user %s from %s", r.Method, r.URL.Path, iputil.GetClientIP(r), userInfo.Username, utils.GetRequestSource(r))
 
 	// 返回登录成功页面
 	w.Header().Set("Content-Type", "text/html")

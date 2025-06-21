@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/woodchen-ink/go-web-utils/iputil"
 	"golang.org/x/net/http2"
 )
 
@@ -232,7 +233,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/" {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "Welcome to CZL proxy.")
-		log.Printf("[Proxy] %s %s -> %d (%s) from %s", r.Method, r.URL.Path, http.StatusOK, utils.GetClientIP(r), utils.GetRequestSource(r))
+		log.Printf("[Proxy] %s %s -> %d (%s) from %s", r.Method, r.URL.Path, http.StatusOK, iputil.GetClientIP(r), utils.GetRequestSource(r))
 		return
 	}
 
@@ -258,7 +259,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 检查是否需要进行302跳转
 	if h.redirectHandler != nil && h.redirectHandler.HandleRedirect(w, r, pathConfig, decodedPath, h.client) {
 		// 如果进行了302跳转，直接返回，不继续处理
-		collector.RecordRequest(r.URL.Path, http.StatusFound, time.Since(start), 0, utils.GetClientIP(r), r)
+		collector.RecordRequest(r.URL.Path, http.StatusFound, time.Since(start), 0, iputil.GetClientIP(r), r)
 		return
 	}
 
@@ -342,7 +343,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 设置最小必要的代理头部
-	clientIP := utils.GetClientIP(r)
+	clientIP := iputil.GetClientIP(r)
 	proxyReq.Header.Set("X-Real-IP", clientIP)
 
 	// 添加或更新 X-Forwarded-For - 减少重复获取客户端IP
@@ -389,7 +390,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			http.ServeFile(w, r, item.FilePath)
-			collector.RecordRequest(r.URL.Path, http.StatusOK, time.Since(start), item.Size, utils.GetClientIP(r), r)
+			collector.RecordRequest(r.URL.Path, http.StatusOK, time.Since(start), item.Size, iputil.GetClientIP(r), r)
 			return
 		}
 	}
@@ -399,10 +400,10 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			h.errorHandler(w, r, fmt.Errorf("request timeout after %v", proxyRespTimeout))
-			log.Printf("[Proxy] ERR %s %s -> 408 (%s) timeout from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
+			log.Printf("[Proxy] ERR %s %s -> 408 (%s) timeout from %s", r.Method, r.URL.Path, iputil.GetClientIP(r), utils.GetRequestSource(r))
 		} else {
 			h.errorHandler(w, r, fmt.Errorf("proxy error: %v", err))
-			log.Printf("[Proxy] ERR %s %s -> 502 (%s) proxy error from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
+			log.Printf("[Proxy] ERR %s %s -> 502 (%s) proxy error from %s", r.Method, r.URL.Path, iputil.GetClientIP(r), utils.GetRequestSource(r))
 		}
 		return
 	}
@@ -450,7 +451,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 			written, err = io.CopyBuffer(w, resp.Body, buf)
 			if err != nil && !isConnectionClosed(err) {
-				log.Printf("[Proxy] ERR %s %s -> write error (%s) from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
+				log.Printf("[Proxy] ERR %s %s -> write error (%s) from %s", r.Method, r.URL.Path, iputil.GetClientIP(r), utils.GetRequestSource(r))
 				return
 			}
 		}
@@ -461,13 +462,13 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		written, err = io.CopyBuffer(w, resp.Body, buf)
 		if err != nil && !isConnectionClosed(err) {
-			log.Printf("[Proxy] ERR %s %s -> write error (%s) from %s", r.Method, r.URL.Path, utils.GetClientIP(r), utils.GetRequestSource(r))
+			log.Printf("[Proxy] ERR %s %s -> write error (%s) from %s", r.Method, r.URL.Path, iputil.GetClientIP(r), utils.GetRequestSource(r))
 			return
 		}
 	}
 
 	// 记录统计信息
-	collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(start), written, utils.GetClientIP(r), r)
+	collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(start), written, iputil.GetClientIP(r), r)
 }
 
 func copyHeader(dst, src http.Header) {

@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"net/http"
 	"proxy-go/internal/security"
-	"proxy-go/internal/utils"
 	"time"
+
+	"github.com/woodchen-ink/go-web-utils/iputil"
 )
 
 // SecurityMiddleware 安全中间件
@@ -23,7 +24,7 @@ func NewSecurityMiddleware(banManager *security.IPBanManager) *SecurityMiddlewar
 // IPBanMiddleware IP封禁中间件
 func (sm *SecurityMiddleware) IPBanMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		clientIP := utils.GetClientIP(r)
+		clientIP := iputil.GetClientIP(r)
 
 		// 检查IP是否被封禁
 		if sm.banManager.IsIPBanned(clientIP) {

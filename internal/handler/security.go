@@ -4,8 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"proxy-go/internal/security"
-	"proxy-go/internal/utils"
 	"time"
+
+	"github.com/woodchen-ink/go-web-utils/iputil"
 )
 
 // SecurityHandler 安全管理处理器
@@ -109,7 +110,7 @@ func (sh *SecurityHandler) CheckIPStatus(w http.ResponseWriter, r *http.Request)
 	ip := r.URL.Query().Get("ip")
 	if ip == "" {
 		// 如果没有指定IP，使用请求的IP
-		ip = utils.GetClientIP(r)
+		ip = iputil.GetClientIP(r)
 	}
 
 	banned, banEndTime := sh.banManager.GetBanInfo(ip)

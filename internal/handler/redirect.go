@@ -8,6 +8,8 @@ import (
 	"proxy-go/internal/service"
 	"proxy-go/internal/utils"
 	"strings"
+
+	"github.com/woodchen-ink/go-web-utils/iputil"
 )
 
 // RedirectHandler 处理302跳转逻辑
@@ -99,7 +101,7 @@ func (rh *RedirectHandler) performRedirect(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusFound)
 
 	// 记录跳转日志
-	clientIP := utils.GetClientIP(r)
+	clientIP := iputil.GetClientIP(r)
 	log.Printf("[Redirect] %s %s -> 302 %s (%s) from %s",
 		r.Method, r.URL.Path, targetURL, clientIP, utils.GetRequestSource(r))
 }

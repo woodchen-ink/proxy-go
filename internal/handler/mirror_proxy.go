@@ -11,6 +11,8 @@ import (
 	"proxy-go/internal/utils"
 	"strings"
 	"time"
+
+	"github.com/woodchen-ink/go-web-utils/iputil"
 )
 
 type MirrorProxyHandler struct {
@@ -56,7 +58,7 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | CORS Preflight",
 			r.Method, http.StatusOK, time.Since(startTime),
-			utils.GetClientIP(r), "-", r.URL.Path)
+			iputil.GetClientIP(r), "-", r.URL.Path)
 		return
 	}
 
@@ -66,7 +68,7 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid URL", http.StatusBadRequest)
 		log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | Invalid URL",
 			r.Method, http.StatusBadRequest, time.Since(startTime),
-			utils.GetClientIP(r), "-", r.URL.Path)
+			iputil.GetClientIP(r), "-", r.URL.Path)
 		return
 	}
 
@@ -80,7 +82,7 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid URL", http.StatusBadRequest)
 		log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | Parse URL error: %v",
 			r.Method, http.StatusBadRequest, time.Since(startTime),
-			utils.GetClientIP(r), "-", actualURL, err)
+			iputil.GetClientIP(r), "-", actualURL, err)
 		return
 	}
 
@@ -98,7 +100,7 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Error creating request", http.StatusInternalServerError)
 		log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | Error creating request: %v",
 			r.Method, http.StatusInternalServerError, time.Since(startTime),
-			utils.GetClientIP(r), "-", actualURL, err)
+			iputil.GetClientIP(r), "-", actualURL, err)
 		return
 	}
 
@@ -131,7 +133,7 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			http.ServeFile(w, r, item.FilePath)
-			collector.RecordRequest(r.URL.Path, http.StatusOK, time.Since(startTime), item.Size, utils.GetClientIP(r), r)
+			collector.RecordRequest(r.URL.Path, http.StatusOK, time.Since(startTime), item.Size, iputil.GetClientIP(r), r)
 			return
 		}
 	}
@@ -142,7 +144,7 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Error forwarding request", http.StatusBadGateway)
 		log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | Error forwarding request: %v",
 			r.Method, http.StatusBadGateway, time.Since(startTime),
-			utils.GetClientIP(r), "-", actualURL, err)
+			iputil.GetClientIP(r), "-", actualURL, err)
 		return
 	}
 	defer resp.Body.Close()
@@ -183,9 +185,9 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 记录访问日志
 	log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | %s",
 		r.Method, resp.StatusCode, time.Since(startTime),
-		utils.GetClientIP(r), utils.FormatBytes(written),
+		iputil.GetClientIP(r), utils.FormatBytes(written),
 		utils.GetRequestSource(r), actualURL)
 
 	// 记录统计信息
-	collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(startTime), written, utils.GetClientIP(r), r)
+	collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(startTime), written, iputil.GetClientIP(r), r)
 }
