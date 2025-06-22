@@ -6,6 +6,7 @@ services:
       - "3336:3336"
     volumes:
       - ./data:/app/data
+      - ./favicon:/app/favicon
     environment:
       - TZ=Asia/Shanghai
       - OAUTH_CLIENT_ID=your_client_id

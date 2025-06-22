@@ -129,6 +129,25 @@ func main() {
 		matcher func(*http.Request) bool
 		handler http.Handler
 	}{
+		// favicon.ico 处理器
+		{
+			matcher: func(r *http.Request) bool {
+				return r.URL.Path == "/favicon.ico"
+			},
+			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// 检查是否有自定义favicon文件
+				faviconPath := "favicon/favicon.ico"
+				if _, err := os.Stat(faviconPath); err == nil {
+					// 设置正确的Content-Type和缓存头
+					w.Header().Set("Content-Type", "image/x-icon")
+					w.Header().Set("Cache-Control", "public, max-age=31536000") // 1年缓存
+					http.ServeFile(w, r, faviconPath)
+				} else {
+					// 如果没有自定义favicon，返回404
+					http.NotFound(w, r)
+				}
+			}),
+		},
 		// 管理路由处理器
 		{
 			matcher: func(r *http.Request) bool {
