@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useToast } from "@/components/ui/use-toast"
 import { useRouter } from "next/navigation"
+import Link from "next/link"
 
 interface Metrics {
   uptime: string
@@ -396,7 +397,11 @@ export default function DashboardPage() {
                       </td>
                       <td className="p-2">{formatLatency(req.Latency)}</td>
                       <td className="p-2">{formatBytes(req.BytesSent)}</td>
-                      <td className="p-2">{req.ClientIP}</td>
+                      <td className="p-2">
+                        <Link href={`https://ipinfo.io/${req.ClientIP}`} target="_blank" rel="noopener noreferrer">
+                          {req.ClientIP}
+                        </Link>
+                        </td>
                     </tr>
                   ))}
               </tbody>
