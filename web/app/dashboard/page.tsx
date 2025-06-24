@@ -398,7 +398,7 @@ export default function DashboardPage() {
                       <td className="p-2">{formatLatency(req.Latency)}</td>
                       <td className="p-2">{formatBytes(req.BytesSent)}</td>
                       <td className="p-2">
-                        <Link href={`https://ipinfo.io/${req.ClientIP}`} target="_blank" rel="noopener noreferrer">
+                        <Link href={`https://ipinfo.io/${req.ClientIP}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 hover:underline">
                           {req.ClientIP}
                         </Link>
                         </td>
