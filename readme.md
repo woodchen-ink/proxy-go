@@ -2,7 +2,7 @@
 
 A 'simple' reverse proxy server written in Go.
 
-使用方法: https://www.q58.club/t/topic/165
+使用方法: https://www.sunai.net/t/topic/165
 
 最新镜像地址: woodchen/proxy-go:latest
 
