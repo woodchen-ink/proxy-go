@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-// 文件大小缓存项	
+// 文件大小缓存项
 type fileSizeCache struct {
 	size      int64
 	timestamp time.Time
@@ -375,3 +375,4 @@ func ClearFileSizeCache() {
 	if count > 0 {
 		log.Printf("[FileSizeCache] 清理了 %d 个文件大小缓存项", count)
 	}
+}
