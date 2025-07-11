@@ -102,9 +102,6 @@ func (ms *MetricsStorage) SaveMetrics() error {
 	// 获取当前指标数据
 	stats := ms.collector.GetStats()
 
-	// 不再持久化 basicMetrics（metrics.json），只在内存中维护
-	// 只持久化累计型数据
-
 	// 保存状态码统计
 	if err := saveJSONToFile(ms.statusCodeFile, stats["status_code_stats"]); err != nil {
 		return fmt.Errorf("保存状态码统计失败: %v", err)
@@ -124,10 +121,6 @@ func (ms *MetricsStorage) SaveMetrics() error {
 			}
 		}
 	}
-
-	ms.mutex.Lock()
-	ms.lastSaveTime = time.Now()
-	ms.mutex.Unlock()
 
 	// 强制进行一次GC
 	runtime.GC()
@@ -233,11 +226,6 @@ func (ms *MetricsStorage) LoadMetrics() error {
 			log.Printf("[MetricsStorage] 加载了延迟分布数据")
 		}
 	}
-
-	ms.mutex.Lock()
-	// 不再恢复 lastSaveTime（metrics.json 里才有）
-	ms.mutex.Unlock()
-
 	// 强制进行一次GC
 	runtime.GC()
 
