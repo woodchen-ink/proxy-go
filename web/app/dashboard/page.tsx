@@ -188,7 +188,10 @@ export default function DashboardPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>状态码统计</CardTitle>
+          <CardTitle>
+            状态码统计
+            <span className="ml-2 text-sm font-normal text-gray-500 align-middle">(总请求数: {Object.values(metrics.status_code_stats || {}).reduce((a, b) => a + (b as number), 0)})</span>
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">

@@ -23,7 +23,6 @@ type MetricsStorage struct {
 	wg               sync.WaitGroup
 	lastSaveTime     time.Time
 	mutex            sync.RWMutex
-	metricsFile      string
 	statusCodeFile   string
 	refererStatsFile string
 }
@@ -39,7 +38,6 @@ func NewMetricsStorage(collector *Collector, dataDir string, saveInterval time.D
 		saveInterval:     saveInterval,
 		dataDir:          dataDir,
 		stopChan:         make(chan struct{}),
-		metricsFile:      filepath.Join(dataDir, "metrics.json"),
 		statusCodeFile:   filepath.Join(dataDir, "status_codes.json"),
 		refererStatsFile: filepath.Join(dataDir, "referer_stats.json"),
 	}
@@ -104,23 +102,8 @@ func (ms *MetricsStorage) SaveMetrics() error {
 	// 获取当前指标数据
 	stats := ms.collector.GetStats()
 
-	// 保存基本指标 - 只保存必要的字段
-	basicMetrics := map[string]interface{}{
-		"uptime":            stats["uptime"],
-		"total_bytes":       stats["total_bytes"],
-		"avg_response_time": stats["avg_response_time"],
-		"save_time":         time.Now().Format(time.RFC3339),
-	}
-
-	// 单独保存延迟统计，避免嵌套结构导致的内存占用
-	if latencyStats, ok := stats["latency_stats"].(map[string]interface{}); ok {
-		basicMetrics["latency_min"] = latencyStats["min"]
-		basicMetrics["latency_max"] = latencyStats["max"]
-	}
-
-	if err := saveJSONToFile(ms.metricsFile, basicMetrics); err != nil {
-		return fmt.Errorf("保存基本指标失败: %v", err)
-	}
+	// 不再持久化 basicMetrics（metrics.json），只在内存中维护
+	// 只持久化累计型数据
 
 	// 保存状态码统计
 	if err := saveJSONToFile(ms.statusCodeFile, stats["status_code_stats"]); err != nil {
@@ -163,24 +146,9 @@ func (ms *MetricsStorage) LoadMetrics() error {
 	start := time.Now()
 	log.Printf("[MetricsStorage] 开始加载指标数据...")
 
-	// 检查文件是否存在
-	if !fileExists(ms.metricsFile) {
-		return fmt.Errorf("指标数据文件不存在")
-	}
+	// 不再加载 basicMetrics（metrics.json）
 
-	// 加载基本指标
-	var basicMetrics map[string]interface{}
-	if err := loadJSONFromFile(ms.metricsFile, &basicMetrics); err != nil {
-		return fmt.Errorf("加载基本指标失败: %v", err)
-	}
-
-	// 将加载的数据应用到收集器
-	// 1. 应用总字节数
-	if totalBytes, ok := basicMetrics["total_bytes"].(float64); ok {
-		atomic.StoreInt64(&ms.collector.totalBytes, int64(totalBytes))
-	}
-
-	// 2. 加载状态码统计（如果文件存在）
+	// 1. 加载状态码统计（如果文件存在）
 	if fileExists(ms.statusCodeFile) {
 		var statusCodeStats map[string]interface{}
 		if err := loadJSONFromFile(ms.statusCodeFile, &statusCodeStats); err != nil {
@@ -205,7 +173,7 @@ func (ms *MetricsStorage) LoadMetrics() error {
 		}
 	}
 
-	// 3. 加载引用来源统计（如果文件存在）
+	// 2. 加载引用来源统计（如果文件存在）
 	if fileExists(ms.refererStatsFile) {
 		var refererStats []map[string]interface{}
 		if err := loadJSONFromFile(ms.refererStatsFile, &refererStats); err != nil {
@@ -245,7 +213,7 @@ func (ms *MetricsStorage) LoadMetrics() error {
 		}
 	}
 
-	// 5. 加载延迟分布（如果文件存在）
+	// 3. 加载延迟分布（如果文件存在）
 	latencyDistributionFile := filepath.Join(ms.dataDir, "latency_distribution.json")
 	if fileExists(latencyDistributionFile) {
 		var distribution map[string]interface{}
@@ -267,11 +235,7 @@ func (ms *MetricsStorage) LoadMetrics() error {
 	}
 
 	ms.mutex.Lock()
-	if saveTime, ok := basicMetrics["save_time"].(string); ok {
-		if t, err := time.Parse(time.RFC3339, saveTime); err == nil {
-			ms.lastSaveTime = t
-		}
-	}
+	// 不再恢复 lastSaveTime（metrics.json 里才有）
 	ms.mutex.Unlock()
 
 	// 强制进行一次GC
