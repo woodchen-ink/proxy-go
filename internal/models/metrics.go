@@ -79,7 +79,8 @@ func (p *PathMetrics) ToJSON() PathMetricsJSON {
 		RequestCount:     p.RequestCount.Load(),
 		ErrorCount:       p.ErrorCount.Load(),
 		BytesTransferred: p.BytesTransferred.Load(),
-		AvgLatency:       p.AvgLatency,
+		AvgLatency:      p.AvgLatency,
+		LastAccessTime:   p.LastAccessTime.Load(),
 	}
 }
 
