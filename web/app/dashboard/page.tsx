@@ -40,6 +40,7 @@ interface Metrics {
     error_count: number
     avg_latency: string
     bytes_transferred: number
+    last_access_time: number  // 添加最后访问时间字段
   }>
 }
 
@@ -321,7 +322,12 @@ export default function DashboardPage() {
       {metrics.top_referers && metrics.top_referers.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>引用来源统计 (Top {metrics.top_referers.length})</CardTitle>
+            <CardTitle>
+              引用来源统计
+              <span className="ml-2 text-sm font-normal text-gray-500 align-middle">
+                (近24小时, 共 {metrics.top_referers.length} 条记录)
+              </span>
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
@@ -331,24 +337,49 @@ export default function DashboardPage() {
                     <th className="text-left p-2">来源域名</th>
                     <th className="text-left p-2">请求数</th>
                     <th className="text-left p-2">错误数</th>
+                    <th className="text-left p-2">错误率</th>
                     <th className="text-left p-2">平均延迟</th>
                     <th className="text-left p-2">传输大小</th>
+                    <th className="text-left p-2">最后访问</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {metrics.top_referers.map((referer, index) => (
-                    <tr key={index} className="border-b">
-                      <td className="p-2 max-w-xs truncate">
-                        <span className="text-blue-600">
-                          {referer.path}
-                        </span>
-                      </td>
-                      <td className="p-2">{referer.request_count}</td>
-                      <td className="p-2">{referer.error_count}</td>
-                      <td className="p-2">{referer.avg_latency}</td>
-                      <td className="p-2">{formatBytes(referer.bytes_transferred)}</td>
-                    </tr>
-                  ))}
+                  {metrics.top_referers
+                    .sort((a, b) => b.request_count - a.request_count)
+                    .map((referer, index) => {
+                      const errorRate = ((referer.error_count / referer.request_count) * 100).toFixed(1);
+                      const lastAccessTime = new Date(referer.last_access_time * 1000);
+                      const timeAgo = getTimeAgo(lastAccessTime);
+                      
+                      return (
+                        <tr key={index} className="border-b hover:bg-gray-50">
+                          <td className="p-2 max-w-xs truncate">
+                            <a
+                              href={referer.path}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:text-blue-800 hover:underline"
+                            >
+                              {referer.path}
+                            </a>
+                          </td>
+                          <td className="p-2">{referer.request_count}</td>
+                          <td className="p-2">{referer.error_count}</td>
+                          <td className="p-2">
+                            <span className={errorRate === "0.0" ? "text-green-600" : "text-red-600"}>
+                              {errorRate}%
+                            </span>
+                          </td>
+                          <td className="p-2">{referer.avg_latency}</td>
+                          <td className="p-2">{formatBytes(referer.bytes_transferred)}</td>
+                          <td className="p-2">
+                            <span title={lastAccessTime.toLocaleString()}>
+                              {timeAgo}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
                 </tbody>
               </table>
             </div>
@@ -444,9 +475,30 @@ function formatLatency(nanoseconds: number) {
   }
 }
 
+function getTimeAgo(date: Date) {
+  const now = new Date();
+  const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+  if (diffInSeconds < 60) {
+    return `${diffInSeconds}秒前`;
+  }
+  
+  const diffInMinutes = Math.floor(diffInSeconds / 60);
+  if (diffInMinutes < 60) {
+    return `${diffInMinutes}分钟前`;
+  }
+
+  const diffInHours = Math.floor(diffInMinutes / 60);
+  if (diffInHours < 24) {
+    return `${diffInHours}小时前`;
+  }
+
+  return date.toLocaleString();
+}
+
 function getStatusColor(status: number) {
   if (status >= 500) return "bg-red-100 text-red-800"
   if (status >= 400) return "bg-yellow-100 text-yellow-800"
   if (status >= 300) return "bg-blue-100 text-blue-800"
   return "bg-green-100 text-green-800"
-} 
+}

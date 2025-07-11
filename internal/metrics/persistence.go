@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"proxy-go/internal/models"
 	"proxy-go/internal/utils"
 	"runtime"
 	"sync"
@@ -16,15 +15,14 @@ import (
 
 // MetricsStorage 指标存储结构
 type MetricsStorage struct {
-	collector        *Collector
-	saveInterval     time.Duration
-	dataDir          string
-	stopChan         chan struct{}
-	wg               sync.WaitGroup
-	lastSaveTime     time.Time
-	mutex            sync.RWMutex
-	statusCodeFile   string
-	refererStatsFile string
+	collector      *Collector
+	saveInterval   time.Duration
+	dataDir        string
+	stopChan       chan struct{}
+	wg             sync.WaitGroup
+	lastSaveTime   time.Time
+	mutex          sync.RWMutex
+	statusCodeFile string
 }
 
 // NewMetricsStorage 创建新的指标存储
@@ -34,12 +32,11 @@ func NewMetricsStorage(collector *Collector, dataDir string, saveInterval time.D
 	}
 
 	return &MetricsStorage{
-		collector:        collector,
-		saveInterval:     saveInterval,
-		dataDir:          dataDir,
-		stopChan:         make(chan struct{}),
-		statusCodeFile:   filepath.Join(dataDir, "status_codes.json"),
-		refererStatsFile: filepath.Join(dataDir, "referer_stats.json"),
+		collector:      collector,
+		saveInterval:   saveInterval,
+		dataDir:        dataDir,
+		stopChan:       make(chan struct{}),
+		statusCodeFile: filepath.Join(dataDir, "status_codes.json"),
 	}
 }
 
@@ -107,11 +104,7 @@ func (ms *MetricsStorage) SaveMetrics() error {
 		return fmt.Errorf("保存状态码统计失败: %v", err)
 	}
 
-	// 保存引用来源统计 - 限制数量
-	topReferers := stats["top_referers"]
-	if err := saveJSONToFile(ms.refererStatsFile, topReferers); err != nil {
-		return fmt.Errorf("保存引用来源统计失败: %v", err)
-	}
+	// 不再保存引用来源统计，因为它现在只保存在内存中
 
 	// 单独保存延迟分布
 	if latencyStats, ok := stats["latency_stats"].(map[string]interface{}); ok {
@@ -166,45 +159,7 @@ func (ms *MetricsStorage) LoadMetrics() error {
 		}
 	}
 
-	// 2. 加载引用来源统计（如果文件存在）
-	if fileExists(ms.refererStatsFile) {
-		var refererStats []map[string]interface{}
-		if err := loadJSONFromFile(ms.refererStatsFile, &refererStats); err != nil {
-			log.Printf("[MetricsStorage] 加载引用来源统计失败: %v", err)
-		} else {
-			// 只加载前20个引用来源统计
-			maxReferers := 20
-			if len(refererStats) > maxReferers {
-				refererStats = refererStats[:maxReferers]
-			}
-
-			for _, refererStat := range refererStats {
-				referer, ok := refererStat["path"].(string)
-				if !ok {
-					continue
-				}
-
-				requestCount, _ := refererStat["request_count"].(float64)
-				errorCount, _ := refererStat["error_count"].(float64)
-				bytesTransferred, _ := refererStat["bytes_transferred"].(float64)
-
-				// 创建或更新引用来源统计
-				var refererMetrics *models.PathMetrics
-				if existingMetrics, ok := ms.collector.refererStats.Load(referer); ok {
-					refererMetrics = existingMetrics.(*models.PathMetrics)
-				} else {
-					refererMetrics = &models.PathMetrics{Path: referer}
-					ms.collector.refererStats.Store(referer, refererMetrics)
-				}
-
-				// 设置统计值
-				refererMetrics.RequestCount.Store(int64(requestCount))
-				refererMetrics.ErrorCount.Store(int64(errorCount))
-				refererMetrics.BytesTransferred.Store(int64(bytesTransferred))
-			}
-			log.Printf("[MetricsStorage] 加载了 %d 条引用来源统计", len(refererStats))
-		}
-	}
+	// 不再加载引用来源统计，因为它现在只保存在内存中
 
 	// 3. 加载延迟分布（如果文件存在）
 	latencyDistributionFile := filepath.Join(ms.dataDir, "latency_distribution.json")

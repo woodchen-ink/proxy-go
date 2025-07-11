@@ -10,7 +10,6 @@ import (
 	"proxy-go/internal/utils"
 	"runtime"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -152,34 +151,24 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 		c.latencyBuckets.Store(bucketKey, counter)
 	}
 
-	// 更新引用来源统计
-	if r != nil {
-		referer := r.Header.Get("Referer")
-		if referer != "" {
-			// 简化引用来源，只保留域名部分
-			referer = simplifyReferer(referer)
-
-			if value, ok := c.refererStats.Load(referer); ok {
-				stat := value.(*models.PathMetrics)
-				stat.AddRequest()
-				if status >= 400 {
-					stat.AddError()
-				}
-				stat.AddLatency(int64(latency))
-				stat.AddBytes(bytes)
-			} else {
-				newStat := &models.PathMetrics{
-					Path: referer,
-				}
-				newStat.RequestCount.Store(1)
-				if status >= 400 {
-					newStat.ErrorCount.Store(1)
-				}
-				newStat.TotalLatency.Store(int64(latency))
-				newStat.BytesTransferred.Store(bytes)
-				c.refererStats.Store(referer, newStat)
-			}
+	// 记录引用来源
+	if referer := r.Referer(); referer != "" {
+		var refererMetrics *models.PathMetrics
+		if existingMetrics, ok := c.refererStats.Load(referer); ok {
+			refererMetrics = existingMetrics.(*models.PathMetrics)
+		} else {
+			refererMetrics = &models.PathMetrics{Path: referer}
+			c.refererStats.Store(referer, refererMetrics)
 		}
+
+		refererMetrics.AddRequest()
+		if status >= 400 {
+			refererMetrics.AddError()
+		}
+		refererMetrics.AddBytes(bytes)
+		refererMetrics.AddLatency(latency.Nanoseconds())
+		// 更新最后访问时间
+		refererMetrics.LastAccessTime.Store(time.Now().Unix())
 	}
 
 	// 更新最近请求记录
@@ -478,126 +467,36 @@ func (c *Collector) getBandwidthHistory() map[string]string {
 	return history
 }
 
-// simplifyReferer 简化引用来源URL，只保留域名部分
-func simplifyReferer(referer string) string {
-	// 移除协议部分
-	if idx := strings.Index(referer, "://"); idx != -1 {
-		referer = referer[idx+3:]
-	}
-
-	// 只保留域名部分
-	if idx := strings.Index(referer, "/"); idx != -1 {
-		referer = referer[:idx]
-	}
-
-	return referer
-}
-
 // startCleanupTask 启动定期清理任务
 func (c *Collector) startCleanupTask() {
 	go func() {
-		// 先立即执行一次清理
-		c.cleanupOldData()
-
-		ticker := time.NewTicker(15 * time.Minute) // 每15分钟清理一次
+		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
 
-		for range ticker.C {
-			c.cleanupOldData()
+		for {
+			<-ticker.C
+			oneDayAgo := time.Now().Add(-24 * time.Hour).Unix()
+
+			// 清理超过24小时的引用来源统计
+			var keysToDelete []interface{}
+			c.refererStats.Range(func(key, value interface{}) bool {
+				metrics := value.(*models.PathMetrics)
+				if metrics.LastAccessTime.Load() < oneDayAgo {
+					keysToDelete = append(keysToDelete, key)
+				}
+				return true
+			})
+
+			for _, key := range keysToDelete {
+				c.refererStats.Delete(key)
+			}
+
+			if len(keysToDelete) > 0 {
+				log.Printf("[Collector] 已清理 %d 条过期的引用来源统计", len(keysToDelete))
+			}
+
+			// 强制GC
+			runtime.GC()
 		}
 	}()
-}
-
-// cleanupOldData 清理旧数据
-func (c *Collector) cleanupOldData() {
-	log.Printf("[Metrics] 开始清理旧数据...")
-
-	// 清理引用来源统计 - 类似地处理
-	var referersToRemove []string
-	var referersCount int
-	var totalRefererRequests int64
-
-	// 先收集所有引用来源及其请求数
-	type refererInfo struct {
-		referer string
-		count   int64
-	}
-	var referers []refererInfo
-
-	c.refererStats.Range(func(key, value interface{}) bool {
-		referer := key.(string)
-		stats := value.(*models.PathMetrics)
-		count := stats.GetRequestCount()
-		referersCount++
-		totalRefererRequests += count
-		referers = append(referers, refererInfo{referer, count})
-		return true
-	})
-
-	// 按请求数排序
-	sort.Slice(referers, func(i, j int) bool {
-		return referers[i].count > referers[j].count
-	})
-
-	// 只保留前50个请求数最多的引用来源，或者请求数占总请求数2%以上的引用来源
-	refThreshold := totalRefererRequests / 50 // 2%的阈值
-	if refThreshold < 5 {
-		refThreshold = 5 // 至少保留请求数>=5的引用来源
-	}
-
-	// 标记要删除的引用来源
-	for _, ri := range referers {
-		if len(referers)-len(referersToRemove) <= 50 {
-			// 已经只剩下50个引用来源了，不再删除
-			break
-		}
-
-		if ri.count < refThreshold {
-			referersToRemove = append(referersToRemove, ri.referer)
-		}
-	}
-
-	// 删除标记的引用来源
-	for _, referer := range referersToRemove {
-		c.refererStats.Delete(referer)
-	}
-
-	// 清理带宽历史 - 只保留最近的记录
-	c.bandwidthStats.Lock()
-	if len(c.bandwidthStats.history) > 10 {
-		// 找出最旧的记录并删除
-		var oldestKeys []string
-		var oldestTimes []time.Time
-
-		for k := range c.bandwidthStats.history {
-			t, err := time.Parse("01-02 15:04", k)
-			if err != nil {
-				continue
-			}
-			oldestTimes = append(oldestTimes, t)
-			oldestKeys = append(oldestKeys, k)
-		}
-
-		// 按时间排序
-		sort.Slice(oldestKeys, func(i, j int) bool {
-			return oldestTimes[i].Before(oldestTimes[j])
-		})
-
-		// 删除最旧的记录，只保留最近10条
-		for i := 0; i < len(oldestKeys)-10; i++ {
-			delete(c.bandwidthStats.history, oldestKeys[i])
-		}
-	}
-	c.bandwidthStats.Unlock()
-
-	// 强制进行一次GC
-	runtime.GC()
-
-	// 打印内存使用情况
-	var mem runtime.MemStats
-	runtime.ReadMemStats(&mem)
-
-	log.Printf("[Metrics] 清理完成: 删除了 %d/%d 个引用来源, 当前内存使用: %s",
-		len(referersToRemove), referersCount,
-		utils.FormatBytes(int64(mem.Alloc)))
 }

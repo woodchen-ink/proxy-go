@@ -19,6 +19,7 @@ type PathMetrics struct {
 	TotalLatency     atomic.Int64 `json:"-"`
 	BytesTransferred atomic.Int64 `json:"bytes_transferred"`
 	AvgLatency       string       `json:"avg_latency"`
+	LastAccessTime   atomic.Int64 `json:"last_access_time"` // 最后访问时间戳
 }
 
 // PathMetricsJSON 用于 JSON 序列化的路径统计信息
@@ -28,6 +29,7 @@ type PathMetricsJSON struct {
 	ErrorCount       int64  `json:"error_count"`
 	BytesTransferred int64  `json:"bytes_transferred"`
 	AvgLatency       string `json:"avg_latency"`
+	LastAccessTime   int64  `json:"last_access_time"` // 最后访问时间戳
 }
 
 // GetRequestCount 获取请求数
