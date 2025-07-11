@@ -230,7 +230,11 @@ func (cm *CacheManager) Put(key CacheKey, resp *http.Response, body []byte) (*Ca
 	}
 
 	cm.items.Store(key, item)
-	log.Printf("[Cache] NEW %s %s (%s) from %s", resp.Request.Method, key.URL, formatBytes(item.Size), utils.GetRequestSource(resp.Request))
+	method := "GET"
+	if resp.Request != nil {
+		method = resp.Request.Method
+	}
+	log.Printf("[Cache] NEW %s %s (%s) from %s", method, key.URL, formatBytes(item.Size), utils.GetRequestSource(resp.Request))
 	return item, nil
 }
 

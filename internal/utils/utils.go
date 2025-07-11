@@ -94,6 +94,9 @@ func GenerateRequestID() string {
 
 // 获取请求来源
 func GetRequestSource(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
 	referer := r.Header.Get("Referer")
 	if referer != "" {
 		return fmt.Sprintf(" (from: %s)", referer)
