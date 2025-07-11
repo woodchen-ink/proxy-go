@@ -43,6 +43,21 @@ var hopHeadersBase = map[string]bool{
 	"Upgrade":             true,
 }
 
+// 优化后的连接池配置常量
+const (
+	// 连接池配置
+	maxIdleConns        = 5000 // 全局最大空闲连接数（增加）
+	maxIdleConnsPerHost = 500  // 每个主机最大空闲连接数（增加）
+	maxConnsPerHost     = 1000 // 每个主机最大连接数（增加）
+
+	// 缓冲区大小优化
+	writeBufferSize = 256 * 1024 // 写缓冲区（增加）
+	readBufferSize  = 256 * 1024 // 读缓冲区（增加）
+
+	// HTTP/2 配置
+	maxReadFrameSize = 64 * 1024 // HTTP/2 最大读帧大小（增加）
+)
+
 // ErrorHandler 定义错误处理函数类型
 type ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)
 
@@ -126,29 +141,30 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 
 	transport := &http.Transport{
 		DialContext:            dialer.DialContext,
-		MaxIdleConns:           2000,
-		MaxIdleConnsPerHost:    200,
+		MaxIdleConns:           maxIdleConns,
+		MaxIdleConnsPerHost:    maxIdleConnsPerHost,
 		IdleConnTimeout:        idleConnTimeout,
 		TLSHandshakeTimeout:    tlsHandshakeTimeout,
 		ExpectContinueTimeout:  1 * time.Second,
-		MaxConnsPerHost:        400,
+		MaxConnsPerHost:        maxConnsPerHost,
 		DisableKeepAlives:      false,
 		DisableCompression:     false,
 		ForceAttemptHTTP2:      true,
-		WriteBufferSize:        128 * 1024,
-		ReadBufferSize:         128 * 1024,
+		WriteBufferSize:        writeBufferSize,
+		ReadBufferSize:         readBufferSize,
 		ResponseHeaderTimeout:  backendServTimeout,
-		MaxResponseHeaderBytes: 64 * 1024,
+		MaxResponseHeaderBytes: 128 * 1024, // 增加响应头缓冲区
 	}
 
 	// 设置HTTP/2传输配置
 	http2Transport, err := http2.ConfigureTransports(transport)
 	if err == nil && http2Transport != nil {
-		http2Transport.ReadIdleTimeout = 10 * time.Second
-		http2Transport.PingTimeout = 5 * time.Second
+		http2Transport.ReadIdleTimeout = 30 * time.Second // 增加读空闲超时
+		http2Transport.PingTimeout = 10 * time.Second     // 增加ping超时
 		http2Transport.AllowHTTP = false
-		http2Transport.MaxReadFrameSize = 32 * 1024
+		http2Transport.MaxReadFrameSize = maxReadFrameSize // 使用常量
 		http2Transport.StrictMaxConcurrentStreams = true
+
 	}
 
 	// 初始化缓存管理器

@@ -67,11 +67,38 @@ func (rs *RuleService) SelectBestRule(client *http.Client, pathConfig config.Pat
 		return nil, false, false
 	}
 
-	// 获取文件大小
+	// 检查是否需要获取文件大小
+	// 如果所有匹配的规则都没有设置大小阈值（都是默认值），则跳过文件大小检查
+	needSizeCheck := false
+	for _, rule := range domainMatchingRules {
+		if rule.SizeThreshold > 0 || rule.MaxSize < (1<<63-1) {
+			needSizeCheck = true
+			break
+		}
+	}
+
+	if !needSizeCheck {
+		// 不需要检查文件大小，直接使用第一个匹配的规则
+		for _, rule := range domainMatchingRules {
+			if utils.IsTargetAccessible(client, rule.Target+path) {
+				log.Printf("[SelectRule] %s -> 选中规则 (域名: %s, 跳过大小检查)", path, requestHost)
+				return rule, true, true
+			}
+		}
+		return nil, false, false
+	}
+
+	// 获取文件大小（使用同步检查）
 	contentLength, err := utils.GetFileSize(client, pathConfig.DefaultTarget+path)
 	if err != nil {
-		log.Printf("[SelectRule] %s -> 获取文件大小出错: %v，严格模式下不使用扩展名规则", path, err)
-		// 严格模式：如果无法获取文件大小，不使用扩展名规则
+		log.Printf("[SelectRule] %s -> 获取文件大小出错: %v，使用宽松模式回退", path, err)
+		// 宽松模式：如果无法获取文件大小，尝试使用第一个匹配的规则
+		for _, rule := range domainMatchingRules {
+			if utils.IsTargetAccessible(client, rule.Target+path) {
+				log.Printf("[SelectRule] %s -> 使用宽松模式选中规则 (域名: %s, 跳过大小检查)", path, requestHost)
+				return rule, true, true
+			}
+		}
 		return nil, false, false
 	}
 

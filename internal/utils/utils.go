@@ -10,76 +10,207 @@ import (
 	neturl "net/url"
 	"path/filepath"
 	"proxy-go/internal/config"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// 文件大小缓存项
+// Goroutine 池相关结构
+type GoroutinePool struct {
+	maxWorkers int
+	taskQueue  chan func()
+	wg         sync.WaitGroup
+	once       sync.Once
+	stopped    int32
+}
+
+// 全局 goroutine 池
+var (
+	globalPool     *GoroutinePool
+	poolOnce       sync.Once
+	defaultWorkers = runtime.NumCPU() * 4 // 默认工作协程数量
+)
+
+// GetGoroutinePool 获取全局 goroutine 池
+func GetGoroutinePool() *GoroutinePool {
+	poolOnce.Do(func() {
+		globalPool = NewGoroutinePool(defaultWorkers)
+	})
+	return globalPool
+}
+
+// NewGoroutinePool 创建新的 goroutine 池
+func NewGoroutinePool(maxWorkers int) *GoroutinePool {
+	if maxWorkers <= 0 {
+		maxWorkers = runtime.NumCPU() * 2
+	}
+
+	pool := &GoroutinePool{
+		maxWorkers: maxWorkers,
+		taskQueue:  make(chan func(), maxWorkers*10), // 缓冲区为工作协程数的10倍
+	}
+
+	// 启动工作协程
+	for i := 0; i < maxWorkers; i++ {
+		pool.wg.Add(1)
+		go pool.worker()
+	}
+
+	return pool
+}
+
+// worker 工作协程
+func (p *GoroutinePool) worker() {
+	defer p.wg.Done()
+
+	for {
+		select {
+		case task, ok := <-p.taskQueue:
+			if !ok {
+				return // 通道关闭，退出
+			}
+
+			// 执行任务，捕获 panic
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Printf("[GoroutinePool] Worker panic: %v\n", r)
+					}
+				}()
+				task()
+			}()
+		}
+	}
+}
+
+// Submit 提交任务到池中
+func (p *GoroutinePool) Submit(task func()) error {
+	if atomic.LoadInt32(&p.stopped) == 1 {
+		return fmt.Errorf("goroutine pool is stopped")
+	}
+
+	select {
+	case p.taskQueue <- task:
+		return nil
+	case <-time.After(100 * time.Millisecond): // 100ms 超时
+		return fmt.Errorf("goroutine pool is busy")
+	}
+}
+
+// SubmitWithTimeout 提交任务到池中，带超时
+func (p *GoroutinePool) SubmitWithTimeout(task func(), timeout time.Duration) error {
+	if atomic.LoadInt32(&p.stopped) == 1 {
+		return fmt.Errorf("goroutine pool is stopped")
+	}
+
+	select {
+	case p.taskQueue <- task:
+		return nil
+	case <-time.After(timeout):
+		return fmt.Errorf("goroutine pool submit timeout")
+	}
+}
+
+// Stop 停止 goroutine 池
+func (p *GoroutinePool) Stop() {
+	p.once.Do(func() {
+		atomic.StoreInt32(&p.stopped, 1)
+		close(p.taskQueue)
+		p.wg.Wait()
+	})
+}
+
+// Size 返回池中工作协程数量
+func (p *GoroutinePool) Size() int {
+	return p.maxWorkers
+}
+
+// QueueSize 返回当前任务队列大小
+func (p *GoroutinePool) QueueSize() int {
+	return len(p.taskQueue)
+}
+
+// 异步执行函数的包装器
+func GoSafe(fn func()) {
+	pool := GetGoroutinePool()
+	err := pool.Submit(fn)
+	if err != nil {
+		// 如果池满了，直接启动 goroutine（降级处理）
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Printf("[GoSafe] Panic: %v\n", r)
+				}
+			}()
+			fn()
+		}()
+	}
+}
+
+// 带超时的异步执行
+func GoSafeWithTimeout(fn func(), timeout time.Duration) error {
+	pool := GetGoroutinePool()
+	return pool.SubmitWithTimeout(fn, timeout)
+}
+
+// 文件大小缓存相关
 type fileSizeCache struct {
 	size      int64
 	timestamp time.Time
 }
 
-// 可访问性缓存项
 type accessibilityCache struct {
 	accessible bool
 	timestamp  time.Time
 }
 
+// 全局缓存
 var (
-	// 文件大小缓存，过期时间5分钟
-	sizeCache sync.Map
-	// 可访问性缓存，过期时间30秒
-	accessCache  sync.Map
-	cacheTTL     = 5 * time.Minute
-	accessTTL    = 30 * time.Second
-	maxCacheSize = 10000 // 最大缓存条目数
+	sizeCache   sync.Map
+	accessCache sync.Map
+	cacheTTL    = 5 * time.Minute
+	accessTTL   = 2 * time.Minute
 )
 
-// 清理过期缓存
+// 初始化函数
 func init() {
-	go func() {
-		ticker := time.NewTicker(time.Minute)
-		for range ticker.C {
-			now := time.Now()
-			// 清理文件大小缓存
-			var items []struct {
-				key       interface{}
-				timestamp time.Time
-			}
-			sizeCache.Range(func(key, value interface{}) bool {
-				cache := value.(fileSizeCache)
-				if now.Sub(cache.timestamp) > cacheTTL {
-					sizeCache.Delete(key)
-				} else {
-					items = append(items, struct {
-						key       interface{}
-						timestamp time.Time
-					}{key, cache.timestamp})
-				}
-				return true
-			})
-			if len(items) > maxCacheSize {
-				sort.Slice(items, func(i, j int) bool {
-					return items[i].timestamp.Before(items[j].timestamp)
-				})
-				for i := 0; i < len(items)/2; i++ {
-					sizeCache.Delete(items[i].key)
-				}
-			}
+	// 启动定期清理缓存的协程
+	GoSafe(func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
 
-			// 清理可访问性缓存
-			accessCache.Range(func(key, value interface{}) bool {
-				cache := value.(accessibilityCache)
-				if now.Sub(cache.timestamp) > accessTTL {
-					accessCache.Delete(key)
-				}
-				return true
-			})
+		for range ticker.C {
+			cleanExpiredCache()
 		}
-	}()
+	})
+}
+
+// 清理过期缓存
+func cleanExpiredCache() {
+	now := time.Now()
+
+	// 清理文件大小缓存
+	sizeCache.Range(func(key, value interface{}) bool {
+		if cache, ok := value.(fileSizeCache); ok {
+			if now.Sub(cache.timestamp) > cacheTTL {
+				sizeCache.Delete(key)
+			}
+		}
+		return true
+	})
+
+	// 清理可访问性缓存
+	accessCache.Range(func(key, value interface{}) bool {
+		if cache, ok := value.(accessibilityCache); ok {
+			if now.Sub(cache.timestamp) > accessTTL {
+				accessCache.Delete(key)
+			}
+		}
+		return true
+	})
 }
 
 // GenerateRequestID 生成唯一的请求ID
@@ -134,7 +265,7 @@ func IsImageRequest(path string) bool {
 	return imageExts[ext]
 }
 
-// GetFileSize 发送HEAD请求获取文件大小
+// GetFileSize 发送HEAD请求获取文件大小（保持向后兼容）
 func GetFileSize(client *http.Client, url string) (int64, error) {
 	// 先查缓存
 	if cache, ok := sizeCache.Load(url); ok {

@@ -19,6 +19,174 @@ import (
 	"time"
 )
 
+// 内存池用于复用缓冲区
+var (
+	bufferPool = sync.Pool{
+		New: func() interface{} {
+			return make([]byte, 32*1024) // 32KB 缓冲区
+		},
+	}
+
+	// 大缓冲区池（用于大文件）
+	largeBufPool = sync.Pool{
+		New: func() interface{} {
+			return make([]byte, 1024*1024) // 1MB 缓冲区
+		},
+	}
+)
+
+// GetBuffer 从池中获取缓冲区
+func GetBuffer(size int) []byte {
+	if size <= 32*1024 {
+		buf := bufferPool.Get().([]byte)
+		if cap(buf) >= size {
+			return buf[:size]
+		}
+		bufferPool.Put(buf)
+	} else if size <= 1024*1024 {
+		buf := largeBufPool.Get().([]byte)
+		if cap(buf) >= size {
+			return buf[:size]
+		}
+		largeBufPool.Put(buf)
+	}
+	// 如果池中的缓冲区不够大，创建新的
+	return make([]byte, size)
+}
+
+// PutBuffer 将缓冲区放回池中
+func PutBuffer(buf []byte) {
+	if cap(buf) == 32*1024 {
+		bufferPool.Put(buf)
+	} else if cap(buf) == 1024*1024 {
+		largeBufPool.Put(buf)
+	}
+	// 其他大小的缓冲区让GC处理
+}
+
+// LRU 缓存节点
+type LRUNode struct {
+	key   CacheKey
+	value *CacheItem
+	prev  *LRUNode
+	next  *LRUNode
+}
+
+// LRU 缓存实现
+type LRUCache struct {
+	capacity int
+	size     int
+	head     *LRUNode
+	tail     *LRUNode
+	cache    map[CacheKey]*LRUNode
+	mu       sync.RWMutex
+}
+
+// NewLRUCache 创建LRU缓存
+func NewLRUCache(capacity int) *LRUCache {
+	lru := &LRUCache{
+		capacity: capacity,
+		cache:    make(map[CacheKey]*LRUNode),
+		head:     &LRUNode{},
+		tail:     &LRUNode{},
+	}
+	lru.head.next = lru.tail
+	lru.tail.prev = lru.head
+	return lru
+}
+
+// Get 从LRU缓存中获取
+func (lru *LRUCache) Get(key CacheKey) (*CacheItem, bool) {
+	lru.mu.Lock()
+	defer lru.mu.Unlock()
+
+	if node, exists := lru.cache[key]; exists {
+		lru.moveToHead(node)
+		return node.value, true
+	}
+	return nil, false
+}
+
+// Put 向LRU缓存中添加
+func (lru *LRUCache) Put(key CacheKey, value *CacheItem) {
+	lru.mu.Lock()
+	defer lru.mu.Unlock()
+
+	if node, exists := lru.cache[key]; exists {
+		node.value = value
+		lru.moveToHead(node)
+	} else {
+		newNode := &LRUNode{key: key, value: value}
+		lru.cache[key] = newNode
+		lru.addToHead(newNode)
+		lru.size++
+
+		if lru.size > lru.capacity {
+			tail := lru.removeTail()
+			delete(lru.cache, tail.key)
+			lru.size--
+		}
+	}
+}
+
+// Delete 从LRU缓存中删除
+func (lru *LRUCache) Delete(key CacheKey) {
+	lru.mu.Lock()
+	defer lru.mu.Unlock()
+
+	if node, exists := lru.cache[key]; exists {
+		lru.removeNode(node)
+		delete(lru.cache, key)
+		lru.size--
+	}
+}
+
+// moveToHead 将节点移到头部
+func (lru *LRUCache) moveToHead(node *LRUNode) {
+	lru.removeNode(node)
+	lru.addToHead(node)
+}
+
+// addToHead 添加到头部
+func (lru *LRUCache) addToHead(node *LRUNode) {
+	node.prev = lru.head
+	node.next = lru.head.next
+	lru.head.next.prev = node
+	lru.head.next = node
+}
+
+// removeNode 移除节点
+func (lru *LRUCache) removeNode(node *LRUNode) {
+	node.prev.next = node.next
+	node.next.prev = node.prev
+}
+
+// removeTail 移除尾部节点
+func (lru *LRUCache) removeTail() *LRUNode {
+	lastNode := lru.tail.prev
+	lru.removeNode(lastNode)
+	return lastNode
+}
+
+// Range 遍历所有缓存项
+func (lru *LRUCache) Range(fn func(key CacheKey, value *CacheItem) bool) {
+	lru.mu.RLock()
+	defer lru.mu.RUnlock()
+
+	for key, node := range lru.cache {
+		if !fn(key, node.value) {
+			break
+		}
+	}
+}
+
+// Size 返回缓存大小
+func (lru *LRUCache) Size() int {
+	lru.mu.RLock()
+	defer lru.mu.RUnlock()
+	return lru.size
+}
+
 // CacheKey 用于标识缓存项的唯一键
 type CacheKey struct {
 	URL           string
@@ -55,6 +223,7 @@ type CacheItem struct {
 	Hash            string
 	CreatedAt       time.Time
 	AccessCount     int64
+	Priority        int // 缓存优先级
 }
 
 // CacheStats 缓存统计信息
@@ -71,7 +240,8 @@ type CacheStats struct {
 // CacheManager 缓存管理器
 type CacheManager struct {
 	cacheDir     string
-	items        sync.Map
+	items        sync.Map  // 保持原有的 sync.Map 用于文件缓存
+	lruCache     *LRUCache // 新增LRU缓存用于热点数据
 	maxAge       time.Duration
 	cleanupTick  time.Duration
 	maxCacheSize int64
@@ -84,6 +254,9 @@ type CacheManager struct {
 
 	// ExtensionMatcher缓存
 	extensionMatcherCache *ExtensionMatcherCache
+
+	// 缓存预热
+	prewarming atomic.Bool
 }
 
 // NewCacheManager 创建新的缓存管理器
@@ -94,6 +267,7 @@ func NewCacheManager(cacheDir string) (*CacheManager, error) {
 
 	cm := &CacheManager{
 		cacheDir:     cacheDir,
+		lruCache:     NewLRUCache(10000), // 10000个热点缓存项
 		maxAge:       30 * time.Minute,
 		cleanupTick:  5 * time.Minute,
 		maxCacheSize: 10 * 1024 * 1024 * 1024, // 10GB
@@ -117,6 +291,9 @@ func NewCacheManager(cacheDir string) (*CacheManager, error) {
 
 	// 启动清理协程
 	cm.startCleanup()
+
+	// 启动缓存预热
+	go cm.prewarmCache()
 
 	return cm, nil
 }
@@ -147,7 +324,22 @@ func (cm *CacheManager) Get(key CacheKey, r *http.Request) (*CacheItem, bool, bo
 		return nil, false, false
 	}
 
-	// 检查缓存项是否存在
+	// 检查LRU缓存
+	if item, found := cm.lruCache.Get(key); found {
+		// 检查LRU缓存项是否过期
+		if time.Since(item.LastAccess) > cm.maxAge {
+			cm.lruCache.Delete(key)
+			cm.missCount.Add(1)
+			return nil, false, false
+		}
+		// 更新访问时间
+		item.LastAccess = time.Now()
+		atomic.AddInt64(&item.AccessCount, 1)
+		cm.hitCount.Add(1)
+		return item, true, false
+	}
+
+	// 检查文件缓存
 	value, ok := cm.items.Load(key)
 	if !ok {
 		cm.missCount.Add(1)
@@ -176,6 +368,9 @@ func (cm *CacheManager) Get(key CacheKey, r *http.Request) (*CacheItem, bool, bo
 	atomic.AddInt64(&item.AccessCount, 1)
 	cm.hitCount.Add(1)
 	cm.bytesSaved.Add(item.Size)
+
+	// 将缓存项添加到LRU缓存
+	cm.lruCache.Put(key, item)
 
 	return item, true, false
 }
@@ -651,5 +846,81 @@ func (cm *CacheManager) Stop() {
 	// 停止ExtensionMatcher缓存
 	if cm.extensionMatcherCache != nil {
 		cm.extensionMatcherCache.Stop()
+	}
+}
+
+// prewarmCache 启动缓存预热
+func (cm *CacheManager) prewarmCache() {
+	// 模拟一些请求来预热缓存
+	// 实际应用中，这里会从数据库或外部服务加载热点数据
+	// 例如，从数据库加载最近访问频率高的URL
+	// 或者从外部API获取热门资源
+
+	// 示例：加载最近访问的URL
+	// 假设我们有一个数据库或文件，记录最近访问的URL和它们的哈希
+	// 这里我们简单地加载一些示例URL
+	exampleUrls := []string{
+		"https://example.com/api/data",
+		"https://api.github.com/repos/golang/go/releases",
+		"https://api.openai.com/v1/models",
+		"https://api.openai.com/v1/chat/completions",
+	}
+
+	for _, url := range exampleUrls {
+		// 生成一个随机的Accept Headers和UserAgent
+		acceptHeaders := "application/json"
+		userAgent := "Mozilla/5.0 (compatible; ProxyGo/1.0)"
+
+		// 模拟一个HTTP请求
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			log.Printf("[Cache] ERR Failed to create request for prewarming: %v", err)
+			continue
+		}
+		req.Header.Set("Accept", acceptHeaders)
+		req.Header.Set("User-Agent", userAgent)
+
+		// 生成缓存键
+		cacheKey := cm.GenerateCacheKey(req)
+
+		// 尝试从LRU缓存获取
+		if _, found := cm.lruCache.Get(cacheKey); found {
+			log.Printf("[Cache] WARN %s (prewarmed)", cacheKey.URL)
+			continue
+		}
+
+		// 尝试从文件缓存获取
+		if _, ok := cm.items.Load(cacheKey); ok {
+			log.Printf("[Cache] WARN %s (prewarmed)", cacheKey.URL)
+			continue
+		}
+
+		// 模拟一个HTTP响应
+		resp := &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Request:    req,
+		}
+		resp.Header.Set("Content-Type", "application/json")
+		resp.Header.Set("Content-Encoding", "gzip")
+		resp.Header.Set("X-Cache", "HIT") // 模拟缓存命中
+
+		// 模拟一个HTTP请求体
+		body := []byte(`{"message": "Hello from prewarmed cache"}`)
+
+		// 添加到LRU缓存
+		contentHash := sha256.Sum256(body)
+		cm.lruCache.Put(cacheKey, &CacheItem{
+			FilePath:        "", // 文件缓存，这里不需要
+			ContentType:     "application/json",
+			ContentEncoding: "gzip",
+			Size:            int64(len(body)),
+			LastAccess:      time.Now(),
+			Hash:            hex.EncodeToString(contentHash[:]),
+			CreatedAt:       time.Now(),
+			AccessCount:     1,
+		})
+
+		log.Printf("[Cache] PREWARM %s", cacheKey.URL)
 	}
 }

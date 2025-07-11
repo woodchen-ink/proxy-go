@@ -15,6 +15,157 @@ import (
 	"time"
 )
 
+// 优化的状态码统计结构
+type StatusCodeStats struct {
+	mu    sync.RWMutex
+	stats map[int]*int64 // 预分配常见状态码
+}
+
+// 优化的延迟分布统计
+type LatencyBuckets struct {
+	lt10ms     int64
+	ms10_50    int64
+	ms50_200   int64
+	ms200_1000 int64
+	gt1s       int64
+}
+
+// 优化的引用来源统计（使用分片减少锁竞争）
+type RefererStats struct {
+	shards []*RefererShard
+	mask   uint64
+}
+
+type RefererShard struct {
+	mu   sync.RWMutex
+	data map[string]*models.PathMetrics
+}
+
+const (
+	refererShardCount = 32 // 分片数量，必须是2的幂
+)
+
+func NewRefererStats() *RefererStats {
+	rs := &RefererStats{
+		shards: make([]*RefererShard, refererShardCount),
+		mask:   refererShardCount - 1,
+	}
+	for i := 0; i < refererShardCount; i++ {
+		rs.shards[i] = &RefererShard{
+			data: make(map[string]*models.PathMetrics),
+		}
+	}
+	return rs
+}
+
+func (rs *RefererStats) hash(key string) uint64 {
+	// 简单的字符串哈希函数
+	var h uint64 = 14695981039346656037
+	for _, b := range []byte(key) {
+		h ^= uint64(b)
+		h *= 1099511628211
+	}
+	return h
+}
+
+func (rs *RefererStats) getShard(key string) *RefererShard {
+	return rs.shards[rs.hash(key)&rs.mask]
+}
+
+func (rs *RefererStats) Load(key string) (*models.PathMetrics, bool) {
+	shard := rs.getShard(key)
+	shard.mu.RLock()
+	defer shard.mu.RUnlock()
+	val, ok := shard.data[key]
+	return val, ok
+}
+
+func (rs *RefererStats) Store(key string, value *models.PathMetrics) {
+	shard := rs.getShard(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	shard.data[key] = value
+}
+
+func (rs *RefererStats) Delete(key string) {
+	shard := rs.getShard(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	delete(shard.data, key)
+}
+
+func (rs *RefererStats) Range(f func(key string, value *models.PathMetrics) bool) {
+	for _, shard := range rs.shards {
+		shard.mu.RLock()
+		for k, v := range shard.data {
+			if !f(k, v) {
+				shard.mu.RUnlock()
+				return
+			}
+		}
+		shard.mu.RUnlock()
+	}
+}
+
+func (rs *RefererStats) Cleanup(cutoff int64) int {
+	deleted := 0
+	for _, shard := range rs.shards {
+		shard.mu.Lock()
+		for k, v := range shard.data {
+			if v.LastAccessTime.Load() < cutoff {
+				delete(shard.data, k)
+				deleted++
+			}
+		}
+		shard.mu.Unlock()
+	}
+	return deleted
+}
+
+func NewStatusCodeStats() *StatusCodeStats {
+	s := &StatusCodeStats{
+		stats: make(map[int]*int64),
+	}
+	// 预分配常见状态码
+	commonCodes := []int{200, 201, 204, 301, 302, 304, 400, 401, 403, 404, 429, 500, 502, 503, 504}
+	for _, code := range commonCodes {
+		counter := new(int64)
+		s.stats[code] = counter
+	}
+	return s
+}
+
+func (s *StatusCodeStats) Increment(code int) {
+	s.mu.RLock()
+	if counter, exists := s.stats[code]; exists {
+		s.mu.RUnlock()
+		atomic.AddInt64(counter, 1)
+		return
+	}
+	s.mu.RUnlock()
+
+	// 需要创建新的计数器
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if counter, exists := s.stats[code]; exists {
+		atomic.AddInt64(counter, 1)
+	} else {
+		counter := new(int64)
+		*counter = 1
+		s.stats[code] = counter
+	}
+}
+
+func (s *StatusCodeStats) GetStats() map[string]int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make(map[string]int64)
+	for code, counter := range s.stats {
+		result[fmt.Sprintf("%d", code)] = atomic.LoadInt64(counter)
+	}
+	return result
+}
+
 // Collector 指标收集器
 type Collector struct {
 	startTime       time.Time
@@ -23,9 +174,9 @@ type Collector struct {
 	latencySum      int64
 	maxLatency      int64 // 最大响应时间
 	minLatency      int64 // 最小响应时间
-	statusCodeStats sync.Map
-	latencyBuckets  sync.Map // 响应时间分布
-	refererStats    sync.Map // 引用来源统计
+	statusCodeStats *StatusCodeStats
+	latencyBuckets  *LatencyBuckets // 使用结构体替代 sync.Map
+	refererStats    *RefererStats   // 使用分片哈希表
 	bandwidthStats  struct {
 		sync.RWMutex
 		window     time.Duration
@@ -57,10 +208,13 @@ var (
 func InitCollector(cfg *config.Config) error {
 	once.Do(func() {
 		instance = &Collector{
-			startTime:      time.Now(),
-			recentRequests: models.NewRequestQueue(100),
-			config:         cfg,
-			minLatency:     math.MaxInt64,
+			startTime:       time.Now(),
+			recentRequests:  models.NewRequestQueue(100),
+			config:          cfg,
+			minLatency:      math.MaxInt64,
+			statusCodeStats: NewStatusCodeStats(),
+			latencyBuckets:  &LatencyBuckets{},
+			refererStats:    NewRefererStats(),
 		}
 
 		// 初始化带宽统计
@@ -73,7 +227,19 @@ func InitCollector(cfg *config.Config) error {
 		for _, bucket := range buckets {
 			counter := new(int64)
 			*counter = 0
-			instance.latencyBuckets.Store(bucket, counter)
+			// 根据 bucket 名称设置对应的桶计数器
+			switch bucket {
+			case "lt10ms":
+				instance.latencyBuckets.lt10ms = atomic.LoadInt64(counter)
+			case "10-50ms":
+				instance.latencyBuckets.ms10_50 = atomic.LoadInt64(counter)
+			case "50-200ms":
+				instance.latencyBuckets.ms50_200 = atomic.LoadInt64(counter)
+			case "200-1000ms":
+				instance.latencyBuckets.ms200_1000 = atomic.LoadInt64(counter)
+			case "gt1s":
+				instance.latencyBuckets.gt1s = atomic.LoadInt64(counter)
+			}
 		}
 
 		// 初始化异步指标收集通道
@@ -152,14 +318,10 @@ func (c *Collector) GetStats() map[string]interface{} {
 
 	// 计算总请求数和平均延迟
 	var totalRequests int64
-	c.statusCodeStats.Range(func(key, value interface{}) bool {
-		if counter, ok := value.(*int64); ok {
-			totalRequests += atomic.LoadInt64(counter)
-		} else {
-			totalRequests += value.(int64)
-		}
-		return true
-	})
+	statusCodeStats := c.statusCodeStats.GetStats()
+	for _, count := range statusCodeStats {
+		totalRequests += count
+	}
 
 	avgLatency := float64(0)
 	if totalRequests > 0 {
@@ -169,22 +331,13 @@ func (c *Collector) GetStats() map[string]interface{} {
 	// 计算总体平均每秒请求数
 	requestsPerSecond := float64(totalRequests) / totalRuntime.Seconds()
 
-	// 收集状态码统计
-	statusCodeStats := make(map[string]int64)
-	c.statusCodeStats.Range(func(key, value interface{}) bool {
-		if counter, ok := value.(*int64); ok {
-			statusCodeStats[key.(string)] = atomic.LoadInt64(counter)
-		} else {
-			statusCodeStats[key.(string)] = value.(int64)
-		}
-		return true
-	})
+	// 收集状态码统计（已经在上面获取了）
 
 	// 收集引用来源统计
 	var refererMetrics []*models.PathMetrics
 	refererCount := 0
-	c.refererStats.Range(func(key, value interface{}) bool {
-		stats := value.(*models.PathMetrics)
+	c.refererStats.Range(func(key string, value *models.PathMetrics) bool {
+		stats := value
 		requestCount := stats.GetRequestCount()
 		if requestCount > 0 {
 			totalLatency := stats.GetTotalLatency()
@@ -221,21 +374,11 @@ func (c *Collector) GetStats() map[string]interface{} {
 
 	// 收集延迟分布
 	latencyDistribution := make(map[string]int64)
-
-	// 确保所有桶都存在，即使计数为0
-	buckets := []string{"lt10ms", "10-50ms", "50-200ms", "200-1000ms", "gt1s"}
-	for _, bucket := range buckets {
-		if counter, ok := c.latencyBuckets.Load(bucket); ok {
-			if counter != nil {
-				value := atomic.LoadInt64(counter.(*int64))
-				latencyDistribution[bucket] = value
-			} else {
-				latencyDistribution[bucket] = 0
-			}
-		} else {
-			latencyDistribution[bucket] = 0
-		}
-	}
+	latencyDistribution["lt10ms"] = atomic.LoadInt64(&c.latencyBuckets.lt10ms)
+	latencyDistribution["10-50ms"] = atomic.LoadInt64(&c.latencyBuckets.ms10_50)
+	latencyDistribution["50-200ms"] = atomic.LoadInt64(&c.latencyBuckets.ms50_200)
+	latencyDistribution["200-1000ms"] = atomic.LoadInt64(&c.latencyBuckets.ms200_1000)
+	latencyDistribution["gt1s"] = atomic.LoadInt64(&c.latencyBuckets.gt1s)
 
 	// 获取最近请求记录（使用读锁）
 	recentRequests := c.recentRequests.GetAll()
@@ -306,14 +449,13 @@ func (c *Collector) validateLoadedData() error {
 
 	// 验证状态码统计
 	var statusCodeTotal int64
-	c.statusCodeStats.Range(func(key, value interface{}) bool {
-		count := atomic.LoadInt64(value.(*int64))
+	statusStats := c.statusCodeStats.GetStats()
+	for _, count := range statusStats {
 		if count < 0 {
-			return false
+			return fmt.Errorf("invalid negative status code count")
 		}
 		statusCodeTotal += count
-		return true
-	})
+	}
 
 	return nil
 }
@@ -418,21 +560,10 @@ func (c *Collector) startCleanupTask() {
 			oneDayAgo := time.Now().Add(-24 * time.Hour).Unix()
 
 			// 清理超过24小时的引用来源统计
-			var keysToDelete []interface{}
-			c.refererStats.Range(func(key, value interface{}) bool {
-				metrics := value.(*models.PathMetrics)
-				if metrics.LastAccessTime.Load() < oneDayAgo {
-					keysToDelete = append(keysToDelete, key)
-				}
-				return true
-			})
+			deletedCount := c.refererStats.Cleanup(oneDayAgo)
 
-			for _, key := range keysToDelete {
-				c.refererStats.Delete(key)
-			}
-
-			if len(keysToDelete) > 0 {
-				log.Printf("[Collector] 已清理 %d 条过期的引用来源统计", len(keysToDelete))
+			if deletedCount > 0 {
+				log.Printf("[Collector] 已清理 %d 条过期的引用来源统计", deletedCount)
 			}
 
 			// 强制GC
@@ -469,14 +600,7 @@ func (c *Collector) startAsyncMetricsUpdater() {
 func (c *Collector) updateMetricsBatch(batch []RequestMetric) {
 	for _, m := range batch {
 		// 更新状态码统计
-		statusKey := fmt.Sprintf("%d", m.Status)
-		if counter, ok := c.statusCodeStats.Load(statusKey); ok {
-			atomic.AddInt64(counter.(*int64), 1)
-		} else {
-			counter := new(int64)
-			*counter = 1
-			c.statusCodeStats.Store(statusKey, counter)
-		}
+		c.statusCodeStats.Increment(m.Status)
 
 		// 更新总字节数和带宽统计
 		atomic.AddInt64(&c.totalBytes, m.Bytes)
@@ -506,26 +630,17 @@ func (c *Collector) updateMetricsBatch(batch []RequestMetric) {
 
 		// 更新延迟分布
 		latencyMs := m.Latency.Milliseconds()
-		var bucketKey string
 		switch {
 		case latencyMs < 10:
-			bucketKey = "lt10ms"
+			atomic.AddInt64(&c.latencyBuckets.lt10ms, 1)
 		case latencyMs < 50:
-			bucketKey = "10-50ms"
+			atomic.AddInt64(&c.latencyBuckets.ms10_50, 1)
 		case latencyMs < 200:
-			bucketKey = "50-200ms"
+			atomic.AddInt64(&c.latencyBuckets.ms50_200, 1)
 		case latencyMs < 1000:
-			bucketKey = "200-1000ms"
+			atomic.AddInt64(&c.latencyBuckets.ms200_1000, 1)
 		default:
-			bucketKey = "gt1s"
-		}
-
-		if counter, ok := c.latencyBuckets.Load(bucketKey); ok {
-			atomic.AddInt64(counter.(*int64), 1)
-		} else {
-			counter := new(int64)
-			*counter = 1
-			c.latencyBuckets.Store(bucketKey, counter)
+			atomic.AddInt64(&c.latencyBuckets.gt1s, 1)
 		}
 
 		// 记录引用来源
@@ -534,7 +649,7 @@ func (c *Collector) updateMetricsBatch(batch []RequestMetric) {
 			if referer != "" {
 				var refererMetrics *models.PathMetrics
 				if existingMetrics, ok := c.refererStats.Load(referer); ok {
-					refererMetrics = existingMetrics.(*models.PathMetrics)
+					refererMetrics = existingMetrics
 				} else {
 					refererMetrics = &models.PathMetrics{Path: referer}
 					c.refererStats.Store(referer, refererMetrics)

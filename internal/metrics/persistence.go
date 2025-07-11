@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"proxy-go/internal/utils"
 	"runtime"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -140,22 +141,35 @@ func (ms *MetricsStorage) LoadMetrics() error {
 		if err := loadJSONFromFile(ms.statusCodeFile, &statusCodeStats); err != nil {
 			log.Printf("[MetricsStorage] 加载状态码统计失败: %v", err)
 		} else {
-			for statusCode, count := range statusCodeStats {
-				countValue, ok := count.(float64)
-				if !ok {
-					continue
-				}
+			// 由于新的 StatusCodeStats 结构，我们需要手动设置值
+			loadedCount := 0
+			for codeStr, countValue := range statusCodeStats {
+				// 解析状态码
+				if code, err := strconv.Atoi(codeStr); err == nil {
+					// 解析计数值
+					var count int64
+					switch v := countValue.(type) {
+					case float64:
+						count = int64(v)
+					case int64:
+						count = v
+					case int:
+						count = int64(v)
+					default:
+						continue
+					}
 
-				// 创建或更新状态码统计
-				if counter, ok := ms.collector.statusCodeStats.Load(statusCode); ok {
-					atomic.StoreInt64(counter.(*int64), int64(countValue))
-				} else {
-					counter := new(int64)
-					*counter = int64(countValue)
-					ms.collector.statusCodeStats.Store(statusCode, counter)
+					// 手动设置到新的 StatusCodeStats 结构中
+					ms.collector.statusCodeStats.mu.Lock()
+					if _, exists := ms.collector.statusCodeStats.stats[code]; !exists {
+						ms.collector.statusCodeStats.stats[code] = new(int64)
+					}
+					atomic.StoreInt64(ms.collector.statusCodeStats.stats[code], count)
+					ms.collector.statusCodeStats.mu.Unlock()
+					loadedCount++
 				}
 			}
-			log.Printf("[MetricsStorage] 加载了 %d 条状态码统计", len(statusCodeStats))
+			log.Printf("[MetricsStorage] 成功加载了 %d 条状态码统计", loadedCount)
 		}
 	}
 
@@ -168,14 +182,25 @@ func (ms *MetricsStorage) LoadMetrics() error {
 		if err := loadJSONFromFile(latencyDistributionFile, &distribution); err != nil {
 			log.Printf("[MetricsStorage] 加载延迟分布失败: %v", err)
 		} else {
+			// 由于新的 LatencyBuckets 结构，我们需要手动设置值
 			for bucket, count := range distribution {
 				countValue, ok := count.(float64)
 				if !ok {
 					continue
 				}
 
-				if counter, ok := ms.collector.latencyBuckets.Load(bucket); ok {
-					atomic.StoreInt64(counter.(*int64), int64(countValue))
+				// 根据桶名称设置对应的值
+				switch bucket {
+				case "lt10ms":
+					atomic.StoreInt64(&ms.collector.latencyBuckets.lt10ms, int64(countValue))
+				case "10-50ms":
+					atomic.StoreInt64(&ms.collector.latencyBuckets.ms10_50, int64(countValue))
+				case "50-200ms":
+					atomic.StoreInt64(&ms.collector.latencyBuckets.ms50_200, int64(countValue))
+				case "200-1000ms":
+					atomic.StoreInt64(&ms.collector.latencyBuckets.ms200_1000, int64(countValue))
+				case "gt1s":
+					atomic.StoreInt64(&ms.collector.latencyBuckets.gt1s, int64(countValue))
 				}
 			}
 			log.Printf("[MetricsStorage] 加载了延迟分布数据")

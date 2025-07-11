@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"proxy-go/internal/cache"
@@ -13,6 +14,15 @@ import (
 	"time"
 
 	"github.com/woodchen-ink/go-web-utils/iputil"
+	"golang.org/x/net/http2"
+)
+
+// 镜像代理专用配置常量
+const (
+	mirrorMaxIdleConns        = 2000             // 镜像代理全局最大空闲连接
+	mirrorMaxIdleConnsPerHost = 200              // 镜像代理每个主机最大空闲连接
+	mirrorMaxConnsPerHost     = 500              // 镜像代理每个主机最大连接数
+	mirrorTimeout             = 60 * time.Second // 镜像代理超时时间
 )
 
 type MirrorProxyHandler struct {
@@ -21,10 +31,38 @@ type MirrorProxyHandler struct {
 }
 
 func NewMirrorProxyHandler() *MirrorProxyHandler {
+	// 创建优化的拨号器
+	dialer := &net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+
+	// 创建优化的传输层
 	transport := &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     90 * time.Second,
+		DialContext:            dialer.DialContext,
+		MaxIdleConns:           mirrorMaxIdleConns,
+		MaxIdleConnsPerHost:    mirrorMaxIdleConnsPerHost,
+		MaxConnsPerHost:        mirrorMaxConnsPerHost,
+		IdleConnTimeout:        90 * time.Second,
+		TLSHandshakeTimeout:    5 * time.Second,
+		ExpectContinueTimeout:  1 * time.Second,
+		DisableKeepAlives:      false,
+		DisableCompression:     false,
+		ForceAttemptHTTP2:      true,
+		WriteBufferSize:        128 * 1024,
+		ReadBufferSize:         128 * 1024,
+		ResponseHeaderTimeout:  30 * time.Second,
+		MaxResponseHeaderBytes: 64 * 1024,
+	}
+
+	// 配置 HTTP/2
+	http2Transport, err := http2.ConfigureTransports(transport)
+	if err == nil && http2Transport != nil {
+		http2Transport.ReadIdleTimeout = 30 * time.Second
+		http2Transport.PingTimeout = 10 * time.Second
+		http2Transport.AllowHTTP = false
+		http2Transport.MaxReadFrameSize = 32 * 1024
+		http2Transport.StrictMaxConcurrentStreams = true
 	}
 
 	// 初始化缓存管理器
@@ -36,7 +74,13 @@ func NewMirrorProxyHandler() *MirrorProxyHandler {
 	return &MirrorProxyHandler{
 		client: &http.Client{
 			Transport: transport,
-			Timeout:   30 * time.Second,
+			Timeout:   mirrorTimeout,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 10 {
+					return fmt.Errorf("stopped after 10 redirects")
+				}
+				return nil
+			},
 		},
 		Cache: cacheManager,
 	}
