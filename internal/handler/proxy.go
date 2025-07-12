@@ -497,9 +497,17 @@ func copyHeader(dst, src http.Header) {
 		}
 	}
 
-	// 使用局部 map 快速查找，跳过 hop-by-hop 头部
+	// 添加需要过滤的安全头部
+	securityHeaders := map[string]bool{
+		"Content-Security-Policy":             true,
+		"Content-Security-Policy-Report-Only": true,
+		"X-Content-Security-Policy":           true,
+		"X-WebKit-CSP":                        true,
+	}
+
+	// 使用局部 map 快速查找，跳过 hop-by-hop 头部和安全头部
 	for k, vv := range src {
-		if !hopHeaders[k] {
+		if !hopHeaders[k] && !securityHeaders[k] {
 			for _, v := range vv {
 				dst.Add(k, v)
 			}
