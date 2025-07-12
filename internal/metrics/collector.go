@@ -583,44 +583,39 @@ func (c *Collector) updateRequestsWindow(count int64) {
 
 	now := time.Now()
 
-	// 计算当前应该在哪个桶
+	// 如果是第一次调用，初始化时间
+	if c.requestsWindow.lastUpdate.IsZero() {
+		c.requestsWindow.lastUpdate = now
+	}
+
+	// 计算当前时间桶的索引
 	timeSinceLastUpdate := now.Sub(c.requestsWindow.lastUpdate)
 
 	// 如果时间跨度超过桶大小，需要移动到新桶
 	if timeSinceLastUpdate >= c.requestsWindow.bucketSize {
-		// 保存当前桶的数据
-		if len(c.requestsWindow.buckets) > 0 {
-			// 向前移动桶（最新的在前面）
-			bucketsToMove := int(timeSinceLastUpdate / c.requestsWindow.bucketSize)
-			if bucketsToMove >= len(c.requestsWindow.buckets) {
-				// 如果移动的桶数超过总桶数，清空所有桶
-				for i := range c.requestsWindow.buckets {
-					c.requestsWindow.buckets[i] = 0
-				}
-			} else {
-				// 移动桶数据
-				copy(c.requestsWindow.buckets[bucketsToMove:], c.requestsWindow.buckets[:len(c.requestsWindow.buckets)-bucketsToMove])
-				// 清空前面的桶
-				for i := 0; i < bucketsToMove; i++ {
-					c.requestsWindow.buckets[i] = 0
-				}
+		bucketsToMove := int(timeSinceLastUpdate / c.requestsWindow.bucketSize)
+
+		if bucketsToMove >= len(c.requestsWindow.buckets) {
+			// 如果移动的桶数超过总桶数，清空所有桶
+			for i := range c.requestsWindow.buckets {
+				c.requestsWindow.buckets[i] = 0
+			}
+		} else {
+			// 向右移动桶数据（新数据在索引0）
+			copy(c.requestsWindow.buckets[bucketsToMove:], c.requestsWindow.buckets[:len(c.requestsWindow.buckets)-bucketsToMove])
+			// 清空前面的桶
+			for i := 0; i < bucketsToMove; i++ {
+				c.requestsWindow.buckets[i] = 0
 			}
 		}
 
-		// 更新当前桶为新请求数
-		c.requestsWindow.current = count
-		c.requestsWindow.lastUpdate = now
+		// 更新时间为当前桶的开始时间
+		c.requestsWindow.lastUpdate = now.Truncate(c.requestsWindow.bucketSize)
+	}
 
-		// 将当前请求数加到第一个桶
-		if len(c.requestsWindow.buckets) > 0 {
-			c.requestsWindow.buckets[0] = count
-		}
-	} else {
-		// 在同一个桶内，累加请求数
-		c.requestsWindow.current += count
-		if len(c.requestsWindow.buckets) > 0 {
-			c.requestsWindow.buckets[0] += count
-		}
+	// 将请求数加到第一个桶（当前时间桶）
+	if len(c.requestsWindow.buckets) > 0 {
+		c.requestsWindow.buckets[0] += count
 	}
 }
 
@@ -640,7 +635,7 @@ func (c *Collector) getRecentRequestsPerSecond() float64 {
 	actualWindow := c.requestsWindow.window
 
 	// 如果程序运行时间不足5分钟，使用实际运行时间
-	if runTime := now.Sub(c.requestsWindow.lastUpdate); runTime < c.requestsWindow.window {
+	if runTime := now.Sub(c.startTime); runTime < c.requestsWindow.window {
 		actualWindow = runTime
 	}
 

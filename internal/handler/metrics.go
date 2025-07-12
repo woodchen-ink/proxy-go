@@ -25,8 +25,9 @@ type Metrics struct {
 	MemoryUsage  string `json:"memory_usage"`
 
 	// 性能指标
-	AverageResponseTime string  `json:"avg_response_time"`
-	RequestsPerSecond   float64 `json:"requests_per_second"`
+	AverageResponseTime    string  `json:"avg_response_time"`
+	RequestsPerSecond      float64 `json:"requests_per_second"`
+	CurrentSessionRequests int64   `json:"current_session_requests"`
 
 	// 传输指标
 	TotalBytes     int64   `json:"total_bytes"`
@@ -61,20 +62,21 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 
 	if stats == nil {
 		stats = map[string]interface{}{
-			"uptime":              metrics.FormatUptime(uptime),
-			"active_requests":     int64(0),
-			"total_requests":      int64(0),
-			"total_errors":        int64(0),
-			"error_rate":          float64(0),
-			"num_goroutine":       runtime.NumGoroutine(),
-			"memory_usage":        "0 B",
-			"avg_response_time":   "0 ms",
-			"total_bytes":         int64(0),
-			"bytes_per_second":    float64(0),
-			"requests_per_second": float64(0),
-			"status_code_stats":   make(map[string]int64),
-			"recent_requests":     make([]models.RequestLog, 0),
-			"top_referers":        make([]models.PathMetrics, 0),
+			"uptime":                   metrics.FormatUptime(uptime),
+			"active_requests":          int64(0),
+			"total_requests":           int64(0),
+			"total_errors":             int64(0),
+			"error_rate":               float64(0),
+			"num_goroutine":            runtime.NumGoroutine(),
+			"memory_usage":             "0 B",
+			"avg_response_time":        "0 ms",
+			"total_bytes":              int64(0),
+			"bytes_per_second":         float64(0),
+			"requests_per_second":      float64(0),
+			"current_session_requests": int64(0),
+			"status_code_stats":        make(map[string]int64),
+			"recent_requests":          make([]models.RequestLog, 0),
+			"top_referers":             make([]models.PathMetrics, 0),
 			"latency_stats": map[string]interface{}{
 				"min":          "0ms",
 				"max":          "0ms",
@@ -108,22 +110,23 @@ func (h *ProxyHandler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 	statusCodeStats := models.SafeStatusCodeStats(stats["status_code_stats"])
 
 	metrics := Metrics{
-		Uptime:              metrics.FormatUptime(uptime),
-		ActiveRequests:      utils.SafeInt64(stats["active_requests"]),
-		TotalRequests:       totalRequests,
-		TotalErrors:         totalErrors,
-		ErrorRate:           float64(totalErrors) / float64(utils.Max(totalRequests, 1)),
-		NumGoroutine:        utils.SafeInt(stats["num_goroutine"]),
-		MemoryUsage:         utils.SafeString(stats["memory_usage"], "0 B"),
-		AverageResponseTime: utils.SafeString(stats["avg_response_time"], "0 ms"),
-		TotalBytes:          totalBytes,
-		BytesPerSecond:      float64(totalBytes) / utils.MaxFloat64(uptimeSeconds, 1),
-		RequestsPerSecond:   float64(totalRequests) / utils.MaxFloat64(uptimeSeconds, 1),
-		StatusCodeStats:     statusCodeStats,
-		RecentRequests:      models.SafeRequestLogs(stats["recent_requests"]),
-		TopReferers:         models.SafePathMetrics(stats["top_referers"]),
-		BandwidthHistory:    bandwidthHistory,
-		CurrentBandwidth:    utils.SafeString(stats["current_bandwidth"], "0 B/s"),
+		Uptime:                 metrics.FormatUptime(uptime),
+		ActiveRequests:         utils.SafeInt64(stats["active_requests"]),
+		TotalRequests:          totalRequests,
+		TotalErrors:            totalErrors,
+		ErrorRate:              float64(totalErrors) / float64(utils.Max(totalRequests, 1)),
+		NumGoroutine:           utils.SafeInt(stats["num_goroutine"]),
+		MemoryUsage:            utils.SafeString(stats["memory_usage"], "0 B"),
+		AverageResponseTime:    utils.SafeString(stats["avg_response_time"], "0 ms"),
+		TotalBytes:             totalBytes,
+		BytesPerSecond:         float64(totalBytes) / utils.MaxFloat64(uptimeSeconds, 1),
+		RequestsPerSecond:      utils.SafeFloat64(stats["requests_per_second"]),
+		CurrentSessionRequests: utils.SafeInt64(stats["current_session_requests"]),
+		StatusCodeStats:        statusCodeStats,
+		RecentRequests:         models.SafeRequestLogs(stats["recent_requests"]),
+		TopReferers:            models.SafePathMetrics(stats["top_referers"]),
+		BandwidthHistory:       bandwidthHistory,
+		CurrentBandwidth:       utils.SafeString(stats["current_bandwidth"], "0 B/s"),
 	}
 
 	// 填充延迟统计数据

@@ -459,6 +459,26 @@ func SafeString(v interface{}, defaultValue string) string {
 	return defaultValue
 }
 
+func SafeFloat64(v interface{}) float64 {
+	if v == nil {
+		return 0
+	}
+	switch val := v.(type) {
+	case float64:
+		return val
+	case float32:
+		return float64(val)
+	case int64:
+		return float64(val)
+	case int:
+		return float64(val)
+	case int32:
+		return float64(val)
+	default:
+		return 0
+	}
+}
+
 // Max 返回两个 int64 中的较大值
 func Max(a, b int64) int64 {
 	if a > b {
