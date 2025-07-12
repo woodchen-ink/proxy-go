@@ -187,6 +187,19 @@ type Collector struct {
 	}
 	recentRequests *models.RequestQueue
 	config         *config.Config
+
+	// 新增：当前会话统计
+	sessionRequests int64 // 当前会话的请求数（不包含历史数据）
+
+	// 新增：基于时间窗口的请求统计
+	requestsWindow struct {
+		sync.RWMutex
+		window     time.Duration // 时间窗口大小（5分钟）
+		buckets    []int64       // 时间桶，每个桶统计10秒内的请求数
+		bucketSize time.Duration // 每个桶的时间长度（10秒）
+		lastUpdate time.Time     // 最后更新时间
+		current    int64         // 当前桶的请求数
+	}
 }
 
 type RequestMetric struct {
@@ -222,6 +235,13 @@ func InitCollector(cfg *config.Config) error {
 		instance.bandwidthStats.window = time.Minute
 		instance.bandwidthStats.lastUpdate = time.Now()
 		instance.bandwidthStats.history = make(map[string]int64)
+
+		// 初始化请求窗口统计（5分钟窗口，10秒一个桶，共30个桶）
+		instance.requestsWindow.window = 5 * time.Minute
+		instance.requestsWindow.bucketSize = 10 * time.Second
+		bucketCount := int(instance.requestsWindow.window / instance.requestsWindow.bucketSize)
+		instance.requestsWindow.buckets = make([]int64, bucketCount)
+		instance.requestsWindow.lastUpdate = time.Now()
 
 		// 初始化延迟分布桶
 		buckets := []string{"lt10ms", "10-50ms", "50-200ms", "200-1000ms", "gt1s"}
@@ -340,8 +360,11 @@ func (c *Collector) GetStats() map[string]interface{} {
 		errorRate = float64(totalErrors) / float64(totalRequests)
 	}
 
-	// 计算总体平均每秒请求数
-	requestsPerSecond := float64(totalRequests) / totalRuntime.Seconds()
+	// 计算当前会话的请求数（基于本次启动后的实际请求）
+	sessionRequests := atomic.LoadInt64(&c.sessionRequests)
+
+	// 计算最近5分钟的平均每秒请求数
+	requestsPerSecond := c.getRecentRequestsPerSecond()
 
 	// 收集状态码统计（已经在上面获取了）
 
@@ -425,8 +448,9 @@ func (c *Collector) GetStats() map[string]interface{} {
 			"max":          fmt.Sprintf("%.2fms", float64(maxLatency)/float64(time.Millisecond)),
 			"distribution": latencyDistribution,
 		},
-		"bandwidth_history": bandwidthHistory,
-		"current_bandwidth": utils.FormatBytes(int64(c.getCurrentBandwidth())) + "/s",
+		"bandwidth_history":        bandwidthHistory,
+		"current_bandwidth":        utils.FormatBytes(int64(c.getCurrentBandwidth())) + "/s",
+		"current_session_requests": sessionRequests,
 	}
 }
 
@@ -552,6 +576,81 @@ func (c *Collector) getCurrentBandwidth() float64 {
 	return float64(c.bandwidthStats.current) / duration
 }
 
+// updateRequestsWindow 更新请求窗口统计
+func (c *Collector) updateRequestsWindow(count int64) {
+	c.requestsWindow.Lock()
+	defer c.requestsWindow.Unlock()
+
+	now := time.Now()
+
+	// 计算当前应该在哪个桶
+	timeSinceLastUpdate := now.Sub(c.requestsWindow.lastUpdate)
+
+	// 如果时间跨度超过桶大小，需要移动到新桶
+	if timeSinceLastUpdate >= c.requestsWindow.bucketSize {
+		// 保存当前桶的数据
+		if len(c.requestsWindow.buckets) > 0 {
+			// 向前移动桶（最新的在前面）
+			bucketsToMove := int(timeSinceLastUpdate / c.requestsWindow.bucketSize)
+			if bucketsToMove >= len(c.requestsWindow.buckets) {
+				// 如果移动的桶数超过总桶数，清空所有桶
+				for i := range c.requestsWindow.buckets {
+					c.requestsWindow.buckets[i] = 0
+				}
+			} else {
+				// 移动桶数据
+				copy(c.requestsWindow.buckets[bucketsToMove:], c.requestsWindow.buckets[:len(c.requestsWindow.buckets)-bucketsToMove])
+				// 清空前面的桶
+				for i := 0; i < bucketsToMove; i++ {
+					c.requestsWindow.buckets[i] = 0
+				}
+			}
+		}
+
+		// 更新当前桶为新请求数
+		c.requestsWindow.current = count
+		c.requestsWindow.lastUpdate = now
+
+		// 将当前请求数加到第一个桶
+		if len(c.requestsWindow.buckets) > 0 {
+			c.requestsWindow.buckets[0] = count
+		}
+	} else {
+		// 在同一个桶内，累加请求数
+		c.requestsWindow.current += count
+		if len(c.requestsWindow.buckets) > 0 {
+			c.requestsWindow.buckets[0] += count
+		}
+	}
+}
+
+// getRecentRequestsPerSecond 获取最近5分钟的平均每秒请求数
+func (c *Collector) getRecentRequestsPerSecond() float64 {
+	c.requestsWindow.RLock()
+	defer c.requestsWindow.RUnlock()
+
+	// 统计所有桶的总请求数
+	var totalRequests int64
+	for _, bucket := range c.requestsWindow.buckets {
+		totalRequests += bucket
+	}
+
+	// 计算实际的时间窗口（可能不满5分钟）
+	now := time.Now()
+	actualWindow := c.requestsWindow.window
+
+	// 如果程序运行时间不足5分钟，使用实际运行时间
+	if runTime := now.Sub(c.requestsWindow.lastUpdate); runTime < c.requestsWindow.window {
+		actualWindow = runTime
+	}
+
+	if actualWindow.Seconds() == 0 {
+		return 0
+	}
+
+	return float64(totalRequests) / actualWindow.Seconds()
+}
+
 // getBandwidthHistory 获取带宽历史记录
 func (c *Collector) getBandwidthHistory() map[string]string {
 	c.bandwidthStats.RLock()
@@ -614,6 +713,12 @@ func (c *Collector) startAsyncMetricsUpdater() {
 // 批量更新指标
 func (c *Collector) updateMetricsBatch(batch []RequestMetric) {
 	for _, m := range batch {
+		// 增加当前会话请求计数
+		atomic.AddInt64(&c.sessionRequests, 1)
+
+		// 更新请求窗口统计
+		c.updateRequestsWindow(1)
+
 		// 更新状态码统计
 		c.statusCodeStats.Increment(m.Status)
 

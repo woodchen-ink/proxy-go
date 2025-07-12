@@ -34,6 +34,7 @@ interface Metrics {
   bandwidth_history: Record<string, string>
   current_bandwidth: string
   total_bytes: number
+  current_session_requests: number
   top_referers: Array<{
     path: string
     request_count: number
@@ -167,8 +168,12 @@ export default function DashboardPage() {
                 <div className="text-lg font-semibold">{formatBytes(metrics.bytes_per_second)}/s</div>
               </div>
               <div>
-                <div className="text-sm font-medium text-gray-500">平均每秒请求数</div>
-                <div className="text-lg font-semibold">{metrics.requests_per_second.toFixed(2)}</div>
+                <div className="text-sm font-medium text-gray-500">当前会话请求数</div>
+                <div className="text-lg font-semibold text-blue-600">{metrics.current_session_requests || 0}</div>
+              </div>
+              <div>
+                <div className="text-sm font-medium text-gray-500">近5分钟每秒请求数</div>
+                <div className="text-lg font-semibold">{(metrics.requests_per_second || 0).toFixed(2)}</div>
               </div>
             </div>
           </CardContent>
