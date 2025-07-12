@@ -17,6 +17,9 @@ interface CacheStats {
   hit_rate: number
   bytes_saved: number
   enabled: boolean
+  format_fallback_hit: number
+  image_cache_hit: number
+  regular_cache_hit: number
 }
 
 interface CacheConfig {
@@ -325,6 +328,45 @@ export default function CachePage() {
         </Button>
       </div>
 
+      {/* 智能缓存汇总 */}
+      <Card>
+        <CardHeader>
+          <CardTitle>智能缓存汇总</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="text-center" title="所有常规文件的精确缓存命中总数">
+              <div className="text-2xl font-bold text-blue-600">
+                {(stats?.proxy.regular_cache_hit ?? 0) + (stats?.mirror.regular_cache_hit ?? 0)}
+              </div>
+              <div className="text-sm text-gray-500">常规缓存命中</div>
+            </div>
+            <div className="text-center" title="所有图片文件的精确格式缓存命中总数">
+              <div className="text-2xl font-bold text-green-600">
+                {(stats?.proxy.image_cache_hit ?? 0) + (stats?.mirror.image_cache_hit ?? 0)}
+              </div>
+              <div className="text-sm text-gray-500">图片精确命中</div>
+            </div>
+            <div className="text-center" title="图片格式回退命中总数，提高了缓存效率">
+              <div className="text-2xl font-bold text-orange-600">
+                {(stats?.proxy.format_fallback_hit ?? 0) + (stats?.mirror.format_fallback_hit ?? 0)}
+              </div>
+              <div className="text-sm text-gray-500">格式回退命中</div>
+            </div>
+            <div className="text-center" title="格式回退在所有图片请求中的占比，显示智能缓存的效果">
+              <div className="text-2xl font-bold text-purple-600">
+                {(() => {
+                  const totalImageRequests = (stats?.proxy.image_cache_hit ?? 0) + (stats?.mirror.image_cache_hit ?? 0) + (stats?.proxy.format_fallback_hit ?? 0) + (stats?.mirror.format_fallback_hit ?? 0)
+                  const fallbackHits = (stats?.proxy.format_fallback_hit ?? 0) + (stats?.mirror.format_fallback_hit ?? 0)
+                  return totalImageRequests > 0 ? ((fallbackHits / totalImageRequests) * 100).toFixed(1) : '0.0'
+                })()}%
+              </div>
+              <div className="text-sm text-gray-500">格式回退率</div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid gap-6 md:grid-cols-2">
         {/* 代理缓存 */}
         <Card>
@@ -369,6 +411,23 @@ export default function CachePage() {
               <div className="flex justify-between">
                 <dt className="text-sm font-medium text-gray-500">节省带宽</dt>
                 <dd className="text-sm text-gray-900">{formatBytes(stats?.proxy.bytes_saved ?? 0)}</dd>
+              </div>
+              <div className="border-t pt-2 mt-2">
+                <div className="text-xs font-medium text-gray-600 mb-1">智能缓存统计</div>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div className="text-center" title="常规文件的精确缓存命中">
+                    <div className="text-blue-600 font-medium">{stats?.proxy.regular_cache_hit ?? 0}</div>
+                    <div className="text-gray-500">常规命中</div>
+                  </div>
+                  <div className="text-center" title="图片文件的精确格式缓存命中">
+                    <div className="text-green-600 font-medium">{stats?.proxy.image_cache_hit ?? 0}</div>
+                    <div className="text-gray-500">图片命中</div>
+                  </div>
+                  <div className="text-center" title="图片格式回退命中（如请求WebP但提供JPEG）">
+                    <div className="text-orange-600 font-medium">{stats?.proxy.format_fallback_hit ?? 0}</div>
+                    <div className="text-gray-500">格式回退</div>
+                  </div>
+                </div>
               </div>
             </dl>
             {renderCacheConfig("proxy")}
@@ -418,6 +477,23 @@ export default function CachePage() {
               <div className="flex justify-between">
                 <dt className="text-sm font-medium text-gray-500">节省带宽</dt>
                 <dd className="text-sm text-gray-900">{formatBytes(stats?.mirror.bytes_saved ?? 0)}</dd>
+              </div>
+              <div className="border-t pt-2 mt-2">
+                <div className="text-xs font-medium text-gray-600 mb-1">智能缓存统计</div>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div className="text-center" title="常规文件的精确缓存命中">
+                    <div className="text-blue-600 font-medium">{stats?.mirror.regular_cache_hit ?? 0}</div>
+                    <div className="text-gray-500">常规命中</div>
+                  </div>
+                  <div className="text-center" title="图片文件的精确格式缓存命中">
+                    <div className="text-green-600 font-medium">{stats?.mirror.image_cache_hit ?? 0}</div>
+                    <div className="text-gray-500">图片命中</div>
+                  </div>
+                  <div className="text-center" title="图片格式回退命中（如请求WebP但提供JPEG）">
+                    <div className="text-orange-600 font-medium">{stats?.mirror.format_fallback_hit ?? 0}</div>
+                    <div className="text-gray-500">格式回退</div>
+                  </div>
+                </div>
               </div>
             </dl>
             {renderCacheConfig("mirror")}

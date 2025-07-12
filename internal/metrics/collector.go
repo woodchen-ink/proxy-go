@@ -10,6 +10,7 @@ import (
 	"proxy-go/internal/utils"
 	"runtime"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -318,14 +319,25 @@ func (c *Collector) GetStats() map[string]interface{} {
 
 	// 计算总请求数和平均延迟
 	var totalRequests int64
+	var totalErrors int64
 	statusCodeStats := c.statusCodeStats.GetStats()
-	for _, count := range statusCodeStats {
+	for statusCode, count := range statusCodeStats {
 		totalRequests += count
+		// 计算错误数（4xx和5xx状态码）
+		if code, err := strconv.Atoi(statusCode); err == nil && code >= 400 {
+			totalErrors += count
+		}
 	}
 
 	avgLatency := float64(0)
 	if totalRequests > 0 {
 		avgLatency = float64(atomic.LoadInt64(&c.latencySum)) / float64(totalRequests)
+	}
+
+	// 计算错误率
+	errorRate := float64(0)
+	if totalRequests > 0 {
+		errorRate = float64(totalErrors) / float64(totalRequests)
 	}
 
 	// 计算总体平均每秒请求数
@@ -396,6 +408,9 @@ func (c *Collector) GetStats() map[string]interface{} {
 	return map[string]interface{}{
 		"uptime":              FormatUptime(totalRuntime),
 		"active_requests":     atomic.LoadInt64(&c.activeRequests),
+		"total_requests":      totalRequests,
+		"total_errors":        totalErrors,
+		"error_rate":          errorRate,
 		"total_bytes":         atomic.LoadInt64(&c.totalBytes),
 		"num_goroutine":       runtime.NumGoroutine(),
 		"memory_usage":        utils.FormatBytes(int64(mem.Alloc)),

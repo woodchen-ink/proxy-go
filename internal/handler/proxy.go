@@ -262,6 +262,28 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 早期缓存检查 - 只对GET请求进行缓存检查
+	if r.Method == http.MethodGet && h.Cache != nil {
+		cacheKey := h.Cache.GenerateCacheKey(r)
+		if item, hit, notModified := h.Cache.Get(cacheKey, r); hit {
+			// 从缓存提供响应
+			w.Header().Set("Content-Type", item.ContentType)
+			if item.ContentEncoding != "" {
+				w.Header().Set("Content-Encoding", item.ContentEncoding)
+			}
+			w.Header().Set("Proxy-Go-Cache-HIT", "1")
+			w.Header().Set("Proxy-Go-AltTarget", "0") // 缓存命中时设为0
+
+			if notModified {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			http.ServeFile(w, r, item.FilePath)
+			collector.RecordRequest(r.URL.Path, http.StatusOK, time.Since(start), item.Size, iputil.GetClientIP(r), r)
+			return
+		}
+	}
+
 	// 构建目标 URL
 	targetPath := strings.TrimPrefix(r.URL.Path, matchedPrefix)
 
@@ -384,33 +406,6 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 检查是否可以使用缓存
-	if r.Method == http.MethodGet && h.Cache != nil {
-		cacheKey := h.Cache.GenerateCacheKey(r)
-		if item, hit, notModified := h.Cache.Get(cacheKey, r); hit {
-			// 从缓存提供响应
-			w.Header().Set("Content-Type", item.ContentType)
-			if item.ContentEncoding != "" {
-				w.Header().Set("Content-Encoding", item.ContentEncoding)
-			}
-			w.Header().Set("Proxy-Go-Cache-HIT", "1")
-
-			// 如果使用了扩展名映射的备用目标，添加标记响应头
-			if usedAltTarget {
-				w.Header().Set("Proxy-Go-AltTarget", "1")
-			}
-			w.Header().Set("Proxy-Go-AltTarget", "0")
-
-			if notModified {
-				w.WriteHeader(http.StatusNotModified)
-				return
-			}
-			http.ServeFile(w, r, item.FilePath)
-			collector.RecordRequest(r.URL.Path, http.StatusOK, time.Since(start), item.Size, iputil.GetClientIP(r), r)
-			return
-		}
-	}
-
 	// 发送代理请求
 	resp, err := h.client.Do(proxyReq)
 	if err != nil {
@@ -432,8 +427,9 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 如果使用了扩展名映射的备用目标，添加标记响应头
 	if usedAltTarget {
 		w.Header().Set("Proxy-Go-AltTarget", "1")
+	} else {
+		w.Header().Set("Proxy-Go-AltTarget", "0")
 	}
-	w.Header().Set("Proxy-Go-AltTarget", "0")
 
 	// 设置响应状态码
 	w.WriteHeader(resp.StatusCode)

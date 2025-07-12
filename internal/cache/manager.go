@@ -228,13 +228,16 @@ type CacheItem struct {
 
 // CacheStats 缓存统计信息
 type CacheStats struct {
-	TotalItems int     `json:"total_items"` // 缓存项数量
-	TotalSize  int64   `json:"total_size"`  // 总大小
-	HitCount   int64   `json:"hit_count"`   // 命中次数
-	MissCount  int64   `json:"miss_count"`  // 未命中次数
-	HitRate    float64 `json:"hit_rate"`    // 命中率
-	BytesSaved int64   `json:"bytes_saved"` // 节省的带宽
-	Enabled    bool    `json:"enabled"`     // 缓存开关状态
+	TotalItems        int     `json:"total_items"`         // 缓存项数量
+	TotalSize         int64   `json:"total_size"`          // 总大小
+	HitCount          int64   `json:"hit_count"`           // 命中次数
+	MissCount         int64   `json:"miss_count"`          // 未命中次数
+	HitRate           float64 `json:"hit_rate"`            // 命中率
+	BytesSaved        int64   `json:"bytes_saved"`         // 节省的带宽
+	Enabled           bool    `json:"enabled"`             // 缓存开关状态
+	FormatFallbackHit int64   `json:"format_fallback_hit"` // 格式回退命中次数
+	ImageCacheHit     int64   `json:"image_cache_hit"`     // 图片缓存命中次数
+	RegularCacheHit   int64   `json:"regular_cache_hit"`   // 常规缓存命中次数
 }
 
 // CacheManager 缓存管理器
@@ -252,11 +255,13 @@ type CacheManager struct {
 	cleanupTimer *time.Ticker  // 添加清理定时器
 	stopCleanup  chan struct{} // 添加停止信号通道
 
+	// 新增：格式回退统计
+	formatFallbackHit atomic.Int64 // 格式回退命中次数
+	imageCacheHit     atomic.Int64 // 图片缓存命中次数
+	regularCacheHit   atomic.Int64 // 常规缓存命中次数
+
 	// ExtensionMatcher缓存
 	extensionMatcherCache *ExtensionMatcherCache
-
-	// 缓存预热
-	prewarming atomic.Bool
 }
 
 // NewCacheManager 创建新的缓存管理器
@@ -292,9 +297,6 @@ func NewCacheManager(cacheDir string) (*CacheManager, error) {
 	// 启动清理协程
 	cm.startCleanup()
 
-	// 启动缓存预热
-	go cm.prewarmCache()
-
 	return cm, nil
 }
 
@@ -311,10 +313,79 @@ func (cm *CacheManager) GenerateCacheKey(r *http.Request) CacheKey {
 	}
 	sort.Strings(varyHeaders)
 
+	url := r.URL.String()
+	acceptHeaders := r.Header.Get("Accept")
+	userAgent := r.Header.Get("User-Agent")
+
+	// 🎯 针对图片请求进行智能缓存键优化
+	if utils.IsImageRequest(r.URL.Path) {
+		// 解析Accept头中的图片格式偏好
+		imageFormat := cm.parseImageFormatPreference(acceptHeaders)
+
+		// 为图片请求生成格式感知的缓存键
+		return CacheKey{
+			URL:           url,
+			AcceptHeaders: imageFormat,                      // 使用标准化的图片格式
+			UserAgent:     cm.normalizeUserAgent(userAgent), // 标准化UserAgent
+		}
+	}
+
 	return CacheKey{
-		URL:           r.URL.String(),
-		AcceptHeaders: r.Header.Get("Accept"),
-		UserAgent:     r.Header.Get("User-Agent"),
+		URL:           url,
+		AcceptHeaders: acceptHeaders,
+		UserAgent:     userAgent,
+	}
+}
+
+// parseImageFormatPreference 解析图片格式偏好，返回标准化的格式标识
+func (cm *CacheManager) parseImageFormatPreference(accept string) string {
+	if accept == "" {
+		return "image/jpeg" // 默认格式
+	}
+
+	accept = strings.ToLower(accept)
+
+	// 按优先级检查现代图片格式
+	switch {
+	case strings.Contains(accept, "image/avif"):
+		return "image/avif"
+	case strings.Contains(accept, "image/webp"):
+		return "image/webp"
+	case strings.Contains(accept, "image/jpeg") || strings.Contains(accept, "image/jpg"):
+		return "image/jpeg"
+	case strings.Contains(accept, "image/png"):
+		return "image/png"
+	case strings.Contains(accept, "image/gif"):
+		return "image/gif"
+	case strings.Contains(accept, "image/*"):
+		return "image/auto" // 自动格式
+	default:
+		return "image/jpeg" // 默认格式
+	}
+}
+
+// normalizeUserAgent 标准化UserAgent，减少缓存键的变化
+func (cm *CacheManager) normalizeUserAgent(ua string) string {
+	if ua == "" {
+		return "default"
+	}
+
+	ua = strings.ToLower(ua)
+
+	// 根据主要浏览器类型进行分类
+	switch {
+	case strings.Contains(ua, "chrome") && !strings.Contains(ua, "edge"):
+		return "chrome"
+	case strings.Contains(ua, "firefox"):
+		return "firefox"
+	case strings.Contains(ua, "safari") && !strings.Contains(ua, "chrome"):
+		return "safari"
+	case strings.Contains(ua, "edge"):
+		return "edge"
+	case strings.Contains(ua, "bot") || strings.Contains(ua, "crawler"):
+		return "bot"
+	default:
+		return "other"
 	}
 }
 
@@ -324,6 +395,100 @@ func (cm *CacheManager) Get(key CacheKey, r *http.Request) (*CacheItem, bool, bo
 		return nil, false, false
 	}
 
+	// 🎯 针对图片请求实现智能格式回退
+	if utils.IsImageRequest(r.URL.Path) {
+		return cm.getImageWithFallback(key, r)
+	}
+
+	return cm.getRegularItem(key)
+}
+
+// getImageWithFallback 获取图片缓存项，支持格式回退
+func (cm *CacheManager) getImageWithFallback(key CacheKey, r *http.Request) (*CacheItem, bool, bool) {
+	// 首先尝试精确匹配
+	if item, found, notModified := cm.getRegularItem(key); found {
+		cm.imageCacheHit.Add(1)
+		return item, found, notModified
+	}
+
+	// 如果精确匹配失败，尝试格式回退
+	if item, found, notModified := cm.tryFormatFallback(key, r); found {
+		cm.formatFallbackHit.Add(1)
+		return item, found, notModified
+	}
+
+	return nil, false, false
+}
+
+// tryFormatFallback 尝试格式回退
+func (cm *CacheManager) tryFormatFallback(originalKey CacheKey, r *http.Request) (*CacheItem, bool, bool) {
+	requestedFormat := originalKey.AcceptHeaders
+
+	// 定义格式回退顺序
+	fallbackFormats := cm.getFormatFallbackOrder(requestedFormat)
+
+	for _, format := range fallbackFormats {
+		fallbackKey := CacheKey{
+			URL:           originalKey.URL,
+			AcceptHeaders: format,
+			UserAgent:     originalKey.UserAgent,
+		}
+
+		if item, found, notModified := cm.getRegularItem(fallbackKey); found {
+			// 找到了兼容格式，检查是否真的兼容
+			if cm.isFormatCompatible(requestedFormat, format, item.ContentType) {
+				log.Printf("[Cache] 格式回退: %s -> %s (%s)", requestedFormat, format, originalKey.URL)
+				return item, found, notModified
+			}
+		}
+	}
+
+	return nil, false, false
+}
+
+// getFormatFallbackOrder 获取格式回退顺序
+func (cm *CacheManager) getFormatFallbackOrder(requestedFormat string) []string {
+	switch requestedFormat {
+	case "image/avif":
+		return []string{"image/webp", "image/jpeg", "image/png"}
+	case "image/webp":
+		return []string{"image/jpeg", "image/png", "image/avif"}
+	case "image/jpeg":
+		return []string{"image/webp", "image/png", "image/avif"}
+	case "image/png":
+		return []string{"image/webp", "image/jpeg", "image/avif"}
+	case "image/auto":
+		return []string{"image/webp", "image/avif", "image/jpeg", "image/png"}
+	default:
+		return []string{"image/jpeg", "image/webp", "image/png"}
+	}
+}
+
+// isFormatCompatible 检查格式是否兼容
+func (cm *CacheManager) isFormatCompatible(requestedFormat, cachedFormat, actualContentType string) bool {
+	// 如果是自动格式，接受任何现代格式
+	if requestedFormat == "image/auto" {
+		return true
+	}
+
+	// 现代浏览器通常可以处理多种格式
+	modernFormats := map[string]bool{
+		"image/webp": true,
+		"image/avif": true,
+		"image/jpeg": true,
+		"image/png":  true,
+	}
+
+	// 检查实际内容类型是否为现代格式
+	if actualContentType != "" {
+		return modernFormats[strings.ToLower(actualContentType)]
+	}
+
+	return modernFormats[cachedFormat]
+}
+
+// getRegularItem 获取常规缓存项（原有逻辑）
+func (cm *CacheManager) getRegularItem(key CacheKey) (*CacheItem, bool, bool) {
 	// 检查LRU缓存
 	if item, found := cm.lruCache.Get(key); found {
 		// 检查LRU缓存项是否过期
@@ -336,6 +501,7 @@ func (cm *CacheManager) Get(key CacheKey, r *http.Request) (*CacheItem, bool, bo
 		item.LastAccess = time.Now()
 		atomic.AddInt64(&item.AccessCount, 1)
 		cm.hitCount.Add(1)
+		cm.regularCacheHit.Add(1)
 		return item, true, false
 	}
 
@@ -367,6 +533,7 @@ func (cm *CacheManager) Get(key CacheKey, r *http.Request) (*CacheItem, bool, bo
 	item.LastAccess = time.Now()
 	atomic.AddInt64(&item.AccessCount, 1)
 	cm.hitCount.Add(1)
+	cm.regularCacheHit.Add(1)
 	cm.bytesSaved.Add(item.Size)
 
 	// 将缓存项添加到LRU缓存
@@ -531,13 +698,16 @@ func (cm *CacheManager) GetStats() CacheStats {
 	}
 
 	return CacheStats{
-		TotalItems: totalItems,
-		TotalSize:  totalSize,
-		HitCount:   hitCount,
-		MissCount:  missCount,
-		HitRate:    hitRate,
-		BytesSaved: cm.bytesSaved.Load(),
-		Enabled:    cm.enabled.Load(),
+		TotalItems:        totalItems,
+		TotalSize:         totalSize,
+		HitCount:          hitCount,
+		MissCount:         missCount,
+		HitRate:           hitRate,
+		BytesSaved:        cm.bytesSaved.Load(),
+		Enabled:           cm.enabled.Load(),
+		FormatFallbackHit: cm.formatFallbackHit.Load(),
+		ImageCacheHit:     cm.imageCacheHit.Load(),
+		RegularCacheHit:   cm.regularCacheHit.Load(),
 	}
 }
 
@@ -580,6 +750,9 @@ func (cm *CacheManager) ClearCache() error {
 	cm.hitCount.Store(0)
 	cm.missCount.Store(0)
 	cm.bytesSaved.Store(0)
+	cm.formatFallbackHit.Store(0)
+	cm.imageCacheHit.Store(0)
+	cm.regularCacheHit.Store(0)
 
 	return nil
 }
@@ -650,15 +823,41 @@ func (cm *CacheManager) Commit(key CacheKey, tempPath string, resp *http.Respons
 		return fmt.Errorf("cache is disabled")
 	}
 
-	// 生成最终的缓存文件名
-	h := sha256.New()
-	h.Write([]byte(key.String()))
-	hashStr := hex.EncodeToString(h.Sum(nil))
-	ext := filepath.Ext(key.URL)
-	if ext == "" {
-		ext = ".bin"
+	// 读取临时文件内容以计算哈希
+	tempData, err := os.ReadFile(tempPath)
+	if err != nil {
+		os.Remove(tempPath)
+		return fmt.Errorf("failed to read temp file: %v", err)
 	}
-	filePath := filepath.Join(cm.cacheDir, hashStr+ext)
+
+	// 计算内容哈希，与Put方法保持一致
+	contentHash := sha256.Sum256(tempData)
+	hashStr := hex.EncodeToString(contentHash[:])
+
+	// 检查是否存在相同哈希的缓存项
+	var existingItem *CacheItem
+	cm.items.Range(func(k, v interface{}) bool {
+		if item := v.(*CacheItem); item.Hash == hashStr {
+			if _, err := os.Stat(item.FilePath); err == nil {
+				existingItem = item
+				return false
+			}
+			cm.items.Delete(k)
+		}
+		return true
+	})
+
+	if existingItem != nil {
+		// 删除临时文件，使用现有缓存
+		os.Remove(tempPath)
+		cm.items.Store(key, existingItem)
+		log.Printf("[Cache] HIT %s %s (%s) from %s", resp.Request.Method, key.URL, formatBytes(existingItem.Size), utils.GetRequestSource(resp.Request))
+		return nil
+	}
+
+	// 生成最终的缓存文件名（使用内容哈希）
+	fileName := hashStr
+	filePath := filepath.Join(cm.cacheDir, fileName)
 
 	// 重命名临时文件
 	if err := os.Rename(tempPath, filePath); err != nil {
@@ -846,81 +1045,5 @@ func (cm *CacheManager) Stop() {
 	// 停止ExtensionMatcher缓存
 	if cm.extensionMatcherCache != nil {
 		cm.extensionMatcherCache.Stop()
-	}
-}
-
-// prewarmCache 启动缓存预热
-func (cm *CacheManager) prewarmCache() {
-	// 模拟一些请求来预热缓存
-	// 实际应用中，这里会从数据库或外部服务加载热点数据
-	// 例如，从数据库加载最近访问频率高的URL
-	// 或者从外部API获取热门资源
-
-	// 示例：加载最近访问的URL
-	// 假设我们有一个数据库或文件，记录最近访问的URL和它们的哈希
-	// 这里我们简单地加载一些示例URL
-	exampleUrls := []string{
-		"https://example.com/api/data",
-		"https://api.github.com/repos/golang/go/releases",
-		"https://api.openai.com/v1/models",
-		"https://api.openai.com/v1/chat/completions",
-	}
-
-	for _, url := range exampleUrls {
-		// 生成一个随机的Accept Headers和UserAgent
-		acceptHeaders := "application/json"
-		userAgent := "Mozilla/5.0 (compatible; ProxyGo/1.0)"
-
-		// 模拟一个HTTP请求
-		req, err := http.NewRequest("GET", url, nil)
-		if err != nil {
-			log.Printf("[Cache] ERR Failed to create request for prewarming: %v", err)
-			continue
-		}
-		req.Header.Set("Accept", acceptHeaders)
-		req.Header.Set("User-Agent", userAgent)
-
-		// 生成缓存键
-		cacheKey := cm.GenerateCacheKey(req)
-
-		// 尝试从LRU缓存获取
-		if _, found := cm.lruCache.Get(cacheKey); found {
-			log.Printf("[Cache] WARN %s (prewarmed)", cacheKey.URL)
-			continue
-		}
-
-		// 尝试从文件缓存获取
-		if _, ok := cm.items.Load(cacheKey); ok {
-			log.Printf("[Cache] WARN %s (prewarmed)", cacheKey.URL)
-			continue
-		}
-
-		// 模拟一个HTTP响应
-		resp := &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Request:    req,
-		}
-		resp.Header.Set("Content-Type", "application/json")
-		resp.Header.Set("Content-Encoding", "gzip")
-		resp.Header.Set("X-Cache", "HIT") // 模拟缓存命中
-
-		// 模拟一个HTTP请求体
-		body := []byte(`{"message": "Hello from prewarmed cache"}`)
-
-		// 添加到LRU缓存
-		contentHash := sha256.Sum256(body)
-		cm.lruCache.Put(cacheKey, &CacheItem{
-			FilePath:        "", // 文件缓存，这里不需要
-			ContentType:     "application/json",
-			ContentEncoding: "gzip",
-			Size:            int64(len(body)),
-			LastAccess:      time.Now(),
-			Hash:            hex.EncodeToString(contentHash[:]),
-			CreatedAt:       time.Now(),
-			AccessCount:     1,
-		})
-
-		log.Printf("[Cache] PREWARM %s", cacheKey.URL)
 	}
 }

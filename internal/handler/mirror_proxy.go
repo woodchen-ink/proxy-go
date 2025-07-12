@@ -120,6 +120,26 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		actualURL += "?" + r.URL.RawQuery
 	}
 
+	// 早期缓存检查 - 只对GET请求进行缓存检查
+	if r.Method == http.MethodGet && h.Cache != nil {
+		cacheKey := h.Cache.GenerateCacheKey(r)
+		if item, hit, notModified := h.Cache.Get(cacheKey, r); hit {
+			// 从缓存提供响应
+			w.Header().Set("Content-Type", item.ContentType)
+			if item.ContentEncoding != "" {
+				w.Header().Set("Content-Encoding", item.ContentEncoding)
+			}
+			w.Header().Set("Proxy-Go-Cache-HIT", "1")
+			if notModified {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			http.ServeFile(w, r, item.FilePath)
+			collector.RecordRequest(r.URL.Path, http.StatusOK, time.Since(startTime), item.Size, iputil.GetClientIP(r), r)
+			return
+		}
+	}
+
 	// 解析目标 URL 以获取 host
 	parsedURL, err := url.Parse(actualURL)
 	if err != nil {
@@ -161,26 +181,6 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	proxyReq.Header.Set("Host", parsedURL.Host)
 	proxyReq.Host = parsedURL.Host
-
-	// 检查是否可以使用缓存
-	if r.Method == http.MethodGet && h.Cache != nil {
-		cacheKey := h.Cache.GenerateCacheKey(r)
-		if item, hit, notModified := h.Cache.Get(cacheKey, r); hit {
-			// 从缓存提供响应
-			w.Header().Set("Content-Type", item.ContentType)
-			if item.ContentEncoding != "" {
-				w.Header().Set("Content-Encoding", item.ContentEncoding)
-			}
-			w.Header().Set("Proxy-Go-Cache-HIT", "1")
-			if notModified {
-				w.WriteHeader(http.StatusNotModified)
-				return
-			}
-			http.ServeFile(w, r, item.FilePath)
-			collector.RecordRequest(r.URL.Path, http.StatusOK, time.Since(startTime), item.Size, iputil.GetClientIP(r), r)
-			return
-		}
-	}
 
 	// 发送请求
 	resp, err := h.client.Do(proxyReq)

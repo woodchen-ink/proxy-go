@@ -40,7 +40,7 @@ interface Metrics {
     error_count: number
     avg_latency: string
     bytes_transferred: number
-    last_access_time: number  // 添加最后访问时间字段
+    last_access_time: number
   }>
 }
 
@@ -93,7 +93,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchMetrics()
-    const interval = setInterval(fetchMetrics, 3000)
+    const interval = setInterval(fetchMetrics, 1000)
     return () => clearInterval(interval)
   }, [fetchMetrics])
 
@@ -147,12 +147,28 @@ export default function DashboardPage() {
                 <div className="text-lg font-semibold">{metrics.active_requests}</div>
               </div>
               <div>
+                <div className="text-sm font-medium text-gray-500">总请求数</div>
+                <div className="text-lg font-semibold">{metrics.total_requests || Object.values(metrics.status_code_stats || {}).reduce((a, b) => a + (b as number), 0)}</div>
+              </div>
+              <div>
+                <div className="text-sm font-medium text-gray-500">总错误数</div>
+                <div className="text-lg font-semibold text-red-600">{metrics.total_errors || 0}</div>
+              </div>
+              <div>
+                <div className="text-sm font-medium text-gray-500">错误率</div>
+                <div className="text-lg font-semibold text-red-600">{((metrics.error_rate || 0) * 100).toFixed(2)}%</div>
+              </div>
+              <div>
                 <div className="text-sm font-medium text-gray-500">总传输数据</div>
                 <div className="text-lg font-semibold">{formatBytes(metrics.total_bytes)}</div>
               </div>
               <div>
                 <div className="text-sm font-medium text-gray-500">每秒传输数据</div>
                 <div className="text-lg font-semibold">{formatBytes(metrics.bytes_per_second)}/s</div>
+              </div>
+              <div>
+                <div className="text-sm font-medium text-gray-500">平均每秒请求数</div>
+                <div className="text-lg font-semibold">{metrics.requests_per_second.toFixed(2)}</div>
               </div>
             </div>
           </CardContent>
@@ -177,10 +193,8 @@ export default function DashboardPage() {
                 <div className="text-lg font-semibold">{metrics.avg_response_time}</div>
               </div>
               <div>
-                <div className="text-sm font-medium text-gray-500">平均每秒请求数</div>
-                <div className="text-lg font-semibold">
-                  {metrics.requests_per_second.toFixed(2)}
-                </div>
+                <div className="text-sm font-medium text-gray-500">当前带宽</div>
+                <div className="text-lg font-semibold">{metrics.current_bandwidth}</div>
               </div>
             </div>
           </CardContent>
