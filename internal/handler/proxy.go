@@ -431,6 +431,18 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Proxy-Go-AltTarget", "0")
 	}
 
+	// 对于图片请求，添加 Vary 头部以支持 CDN 基于 Accept 头部的缓存
+	if utils.IsImageRequest(r.URL.Path) {
+		// 添加 Vary: Accept 头部，让 CDN 知道响应会根据 Accept 头部变化
+		if existingVary := w.Header().Get("Vary"); existingVary != "" {
+			if !strings.Contains(existingVary, "Accept") {
+				w.Header().Set("Vary", existingVary+", Accept")
+			}
+		} else {
+			w.Header().Set("Vary", "Accept")
+		}
+	}
+
 	// 设置响应状态码
 	w.WriteHeader(resp.StatusCode)
 
