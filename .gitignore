@@ -36,3 +36,4 @@ data/metrics/status_codes.json
 data/config.json
 .env
 data/cache
+CLAUDE.md
