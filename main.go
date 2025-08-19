@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"proxy-go/internal/compression"
 	"proxy-go/internal/config"
 	"proxy-go/internal/constants"
 	"proxy-go/internal/handler"
@@ -15,7 +14,6 @@ import (
 	"proxy-go/internal/middleware"
 	"proxy-go/internal/security"
 	"strings"
-	"sync/atomic"
 	"syscall"
 )
 
@@ -48,14 +46,6 @@ func main() {
 	// 初始化统计服务
 	metrics.Init(cfg)
 
-	// 创建压缩管理器（使用atomic.Value来支持动态更新）
-	var compManagerAtomic atomic.Value
-	compManager := compression.NewManager(compression.Config{
-		Gzip:   compression.CompressorConfig(cfg.Compression.Gzip),
-		Brotli: compression.CompressorConfig(cfg.Compression.Brotli),
-	})
-	compManagerAtomic.Store(compManager)
-
 	// 创建安全管理器
 	var banManager *security.IPBanManager
 	var securityMiddleware *middleware.SecurityMiddleware
@@ -82,17 +72,6 @@ func main() {
 	if banManager != nil {
 		securityHandler = handler.NewSecurityHandler(banManager)
 	}
-
-	// 注册压缩配置更新回调
-	config.RegisterUpdateCallback(func(newCfg *config.Config) {
-		// 更新压缩管理器
-		newCompManager := compression.NewManager(compression.Config{
-			Gzip:   compression.CompressorConfig(newCfg.Compression.Gzip),
-			Brotli: compression.CompressorConfig(newCfg.Compression.Brotli),
-		})
-		compManagerAtomic.Store(newCompManager)
-		log.Printf("[Config] 压缩管理器配置已更新")
-	})
 
 	// 定义API路由
 	apiRoutes := []Route{
@@ -222,15 +201,6 @@ func main() {
 	// 添加安全中间件（最外层，优先级最高）
 	if securityMiddleware != nil {
 		handler = securityMiddleware.IPBanMiddleware(handler)
-	}
-
-	// 添加压缩中间件
-	if cfg.Compression.Gzip.Enabled || cfg.Compression.Brotli.Enabled {
-		// 创建动态压缩中间件包装器
-		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			currentCompManager := compManagerAtomic.Load().(compression.Manager)
-			middleware.CompressionMiddleware(currentCompManager)(handler).ServeHTTP(w, r)
-		})
 	}
 
 	// 创建服务器

@@ -16,7 +16,6 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Switch } from "@/components/ui/switch"
-import { Slider } from "@/components/ui/slider"
 import { Plus, Trash2, Edit, Download, Upload, Shield } from "lucide-react"
 import Link from "next/link"
 import {
@@ -387,17 +386,6 @@ export default function ConfigPage() {
     delete newConfig.MAP[deletingPath]
     updateConfig(newConfig)
     setDeletingPath(null)
-  }
-
-  const updateCompression = (type: 'Gzip' | 'Brotli', field: 'Enabled' | 'Level', value: boolean | number) => {
-    if (!config) return
-    const newConfig = { ...config }
-    if (field === 'Enabled') {
-      newConfig.Compression[type].Enabled = value as boolean
-    } else {
-      newConfig.Compression[type].Level = value as number
-    }
-    updateConfig(newConfig)
   }
 
   const updateSecurity = (field: keyof SecurityConfig['IPBan'], value: boolean | number) => {
@@ -848,7 +836,6 @@ export default function ConfigPage() {
           <Tabs defaultValue="paths" className="space-y-4">
             <TabsList>
               <TabsTrigger value="paths">路径映射</TabsTrigger>
-              <TabsTrigger value="compression">压缩设置</TabsTrigger>
               <TabsTrigger value="security">安全策略</TabsTrigger>
             </TabsList>
 
@@ -1027,58 +1014,6 @@ export default function ConfigPage() {
                   </Card>
                 ))}
               </div>
-            </TabsContent>
-
-            <TabsContent value="compression" className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Gzip 压缩</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <Label>启用 Gzip</Label>
-                    <Switch
-                      checked={config?.Compression.Gzip.Enabled}
-                      onCheckedChange={(checked) => updateCompression('Gzip', 'Enabled', checked)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>压缩级别 (1-9)</Label>
-                    <Slider
-                      min={1}
-                      max={9}
-                      step={1}
-                      value={[config?.Compression.Gzip.Level || 6]}
-                      onValueChange={(value: number[]) => updateCompression('Gzip', 'Level', value[0])}
-                    />
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Brotli 压缩</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <Label>启用 Brotli</Label>
-                    <Switch
-                      checked={config?.Compression.Brotli.Enabled}
-                      onCheckedChange={(checked) => updateCompression('Brotli', 'Enabled', checked)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>压缩级别 (1-11)</Label>
-                    <Slider
-                      min={1}
-                      max={11}
-                      step={1}
-                      value={[config?.Compression.Brotli.Level || 4]}
-                      onValueChange={(value: number[]) => updateCompression('Brotli', 'Level', value[0])}
-                    />
-                  </div>
-                </CardContent>
-              </Card>
             </TabsContent>
 
             <TabsContent value="security" className="space-y-6">
