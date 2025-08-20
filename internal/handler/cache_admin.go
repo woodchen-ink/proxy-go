@@ -4,26 +4,19 @@ import (
 	"encoding/json"
 	"net/http"
 	"proxy-go/internal/cache"
+	"proxy-go/internal/service"
 )
 
 type CacheAdminHandler struct {
-	proxyCache  *cache.CacheManager
-	mirrorCache *cache.CacheManager
+	cacheService *service.CacheService
 }
 
 func NewCacheAdminHandler(proxyCache, mirrorCache *cache.CacheManager) *CacheAdminHandler {
 	return &CacheAdminHandler{
-		proxyCache:  proxyCache,
-		mirrorCache: mirrorCache,
+		cacheService: service.NewCacheService(proxyCache, mirrorCache),
 	}
 }
 
-// CacheConfig 缓存配置结构
-type CacheConfig struct {
-	MaxAge       int64 `json:"max_age"`        // 最大缓存时间（分钟）
-	CleanupTick  int64 `json:"cleanup_tick"`   // 清理间隔（分钟）
-	MaxCacheSize int64 `json:"max_cache_size"` // 最大缓存大小（GB）
-}
 
 // GetCacheStats 获取缓存统计信息
 func (h *CacheAdminHandler) GetCacheStats(w http.ResponseWriter, r *http.Request) {
@@ -32,10 +25,7 @@ func (h *CacheAdminHandler) GetCacheStats(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	stats := map[string]cache.CacheStats{
-		"proxy":  h.proxyCache.GetStats(),
-		"mirror": h.mirrorCache.GetStats(),
-	}
+	stats := h.cacheService.GetCacheStats()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
@@ -48,10 +38,7 @@ func (h *CacheAdminHandler) GetCacheConfig(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	configs := map[string]cache.CacheConfig{
-		"proxy":  h.proxyCache.GetConfig(),
-		"mirror": h.mirrorCache.GetConfig(),
-	}
+	configs := h.cacheService.GetCacheConfig()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(configs)
@@ -65,8 +52,8 @@ func (h *CacheAdminHandler) UpdateCacheConfig(w http.ResponseWriter, r *http.Req
 	}
 
 	var req struct {
-		Type   string      `json:"type"`   // "proxy", "mirror"
-		Config CacheConfig `json:"config"` // 新的配置
+		Type   string                 `json:"type"`   // "proxy", "mirror"
+		Config service.CacheConfig    `json:"config"` // 新的配置
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -74,19 +61,12 @@ func (h *CacheAdminHandler) UpdateCacheConfig(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	var targetCache *cache.CacheManager
-	switch req.Type {
-	case "proxy":
-		targetCache = h.proxyCache
-	case "mirror":
-		targetCache = h.mirrorCache
-	default:
-		http.Error(w, "Invalid cache type", http.StatusBadRequest)
-		return
-	}
-
-	if err := targetCache.UpdateConfig(req.Config.MaxAge, req.Config.CleanupTick, req.Config.MaxCacheSize); err != nil {
-		http.Error(w, "Failed to update config: "+err.Error(), http.StatusInternalServerError)
+	if err := h.cacheService.UpdateCacheConfig(req.Type, req.Config); err != nil {
+		if err.Error() == "invalid cache type" {
+			http.Error(w, "Invalid cache type", http.StatusBadRequest)
+		} else {
+			http.Error(w, "Failed to update config: "+err.Error(), http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -110,12 +90,7 @@ func (h *CacheAdminHandler) SetCacheEnabled(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	switch req.Type {
-	case "proxy":
-		h.proxyCache.SetEnabled(req.Enabled)
-	case "mirror":
-		h.mirrorCache.SetEnabled(req.Enabled)
-	default:
+	if err := h.cacheService.SetCacheEnabled(req.Type, req.Enabled); err != nil {
 		http.Error(w, "Invalid cache type", http.StatusBadRequest)
 		return
 	}
@@ -139,24 +114,12 @@ func (h *CacheAdminHandler) ClearCache(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var err error
-	switch req.Type {
-	case "proxy":
-		err = h.proxyCache.ClearCache()
-	case "mirror":
-		err = h.mirrorCache.ClearCache()
-	case "all":
-		err = h.proxyCache.ClearCache()
-		if err == nil {
-			err = h.mirrorCache.ClearCache()
+	if err := h.cacheService.ClearCache(req.Type); err != nil {
+		if err.Error() == "invalid cache type" {
+			http.Error(w, "Invalid cache type", http.StatusBadRequest)
+		} else {
+			http.Error(w, "Failed to clear cache: "+err.Error(), http.StatusInternalServerError)
 		}
-	default:
-		http.Error(w, "Invalid cache type", http.StatusBadRequest)
-		return
-	}
-
-	if err != nil {
-		http.Error(w, "Failed to clear cache: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 

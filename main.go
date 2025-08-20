@@ -14,10 +14,18 @@ import (
 	"proxy-go/internal/router"
 	"proxy-go/internal/security"
 	"syscall"
+
+	"github.com/joho/godotenv"
 )
 
 
 func main() {
+	// 加载.env文件（如果存在）
+	if err := godotenv.Load(".env"); err != nil {
+		log.Printf("[Init] .env文件不存在或加载失败: %v", err)
+	} else {
+		log.Printf("[Init] .env文件加载成功")
+	}
 
 	// 初始化应用程序（包括配置迁移）
 	configPath := "data/config.json"
@@ -65,8 +73,14 @@ func main() {
 		securityHandler = handler.NewSecurityHandler(banManager)
 	}
 
+	// 创建认证处理器
+	authHandler := handler.NewAuthHandler(proxyHandler.GetAuthService())
+	
+	// 创建指标处理器
+	metricsHandler := handler.NewMetricsHandler(proxyHandler.GetMetricsService())
+
 	// 设置路由
-	_, adminHandler := router.SetupAdminRoutes(proxyHandler, mirrorHandler, configHandler, securityHandler)
+	_, adminHandler := router.SetupAdminRoutes(proxyHandler, authHandler, metricsHandler, mirrorHandler, configHandler, securityHandler)
 	mainRoutes := router.SetupMainRoutes(mirrorHandler, proxyHandler)
 
 	// 创建路由处理器

@@ -3,11 +3,9 @@ package handler
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"proxy-go/internal/cache"
 	"proxy-go/internal/config"
 	"proxy-go/internal/metrics"
@@ -62,16 +60,17 @@ const (
 type ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)
 
 type ProxyHandler struct {
-	pathMap         map[string]config.PathConfig
-	prefixTree      *prefixMatcher // 添加前缀匹配树
-	client          *http.Client
-	startTime       time.Time
-	config          *config.Config
-	auth            *authManager
-	errorHandler    ErrorHandler
-	Cache           *cache.CacheManager
-	redirectHandler *RedirectHandler     // 添加302跳转处理器
-	ruleService     *service.RuleService // 添加规则服务
+	// Service层依赖
+	proxyService       *service.ProxyService
+	authService        *service.AuthService
+	pathMatcherService *service.PathMatcherService
+	metricsService     *service.MetricsService
+
+	// 保留的字段（为了向后兼容）
+	startTime    time.Time
+	config       *config.Config
+	errorHandler ErrorHandler
+	Cache        *cache.CacheManager
 }
 
 // 前缀匹配器结构体
@@ -176,25 +175,41 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 	// 初始化规则服务
 	ruleService := service.NewRuleService(cacheManager)
 
-	handler := &ProxyHandler{
-		pathMap:    cfg.MAP,
-		prefixTree: newPrefixMatcher(cfg.MAP), // 初始化前缀匹配树
-		client: &http.Client{
-			Transport: transport,
-			Timeout:   proxyRespTimeout,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 10 {
-					return fmt.Errorf("stopped after 10 redirects")
-				}
-				return nil
-			},
+	// 记录开始时间
+	startTime := time.Now()
+
+	// 创建HTTP客户端
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   proxyRespTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			return nil
 		},
-		startTime:       time.Now(),
-		config:          cfg,
-		auth:            newAuthManager(),
-		Cache:           cacheManager,
-		ruleService:     ruleService,
-		redirectHandler: NewRedirectHandler(ruleService), // 初始化302跳转处理器
+	}
+
+	// 初始化重定向处理器（暂时保留）
+	_ = NewRedirectHandler(ruleService)
+
+	// 初始化Service层
+	pathMatcherService := service.NewPathMatcherService(cfg.MAP)
+	authService := service.NewAuthServiceFromEnv()
+	proxyService := service.NewProxyService(client, cacheManager, ruleService)
+	metricsService := service.NewMetricsService(startTime)
+
+	handler := &ProxyHandler{
+		// Service层依赖
+		proxyService:       proxyService,
+		authService:        authService,
+		pathMatcherService: pathMatcherService,
+		metricsService:     metricsService,
+
+		// 保留字段
+		startTime: startTime,
+		config:    cfg,
+		Cache:     cacheManager,
 		errorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			log.Printf("[Error] %s %s -> %v from %s", r.Method, r.URL.Path, err, utils.GetRequestSource(r))
 			w.WriteHeader(http.StatusInternalServerError)
@@ -205,8 +220,7 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 	// 注册配置更新回调
 	config.RegisterUpdateCallback(func(newCfg *config.Config) {
 		// 注意：config包已经在回调触发前处理了所有ExtRules，这里无需再次处理
-		handler.pathMap = newCfg.MAP
-		handler.prefixTree.update(newCfg.MAP) // 更新前缀匹配树
+		handler.pathMatcherService.UpdatePaths(newCfg.MAP)
 		handler.config = newCfg
 
 		// 清理ExtensionMatcher缓存，确保使用新配置
@@ -223,6 +237,16 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 	})
 
 	return handler
+}
+
+// GetAuthService 获取认证服务（用于其他handler访问）
+func (h *ProxyHandler) GetAuthService() *service.AuthService {
+	return h.authService
+}
+
+// GetMetricsService 获取指标服务（用于其他handler访问）
+func (h *ProxyHandler) GetMetricsService() *service.MetricsService {
+	return h.metricsService
 }
 
 func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -247,292 +271,87 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 处理根路径请求
 	if r.URL.Path == "/" {
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "Welcome to CZL proxy.")
-		log.Printf("[Proxy] %s %s -> %d (%s) from %s", r.Method, r.URL.Path, http.StatusOK, iputil.GetClientIP(r), utils.GetRequestSource(r))
+		h.handleWelcome(w, r, start)
 		return
 	}
 
-	// 使用前缀匹配树快速查找匹配的路径
-	matchedPrefix, pathConfig, matched := h.prefixTree.match(r.URL.Path)
-
-	// 如果没有找到匹配，返回404
-	if !matched {
+	// 使用路径匹配服务查找匹配的路径
+	matchResult := h.pathMatcherService.MatchPath(r.URL.Path)
+	if !matchResult.Matched {
 		http.NotFound(w, r)
 		return
 	}
 
-	// 早期缓存检查 - 只对GET请求进行缓存检查
-	if r.Method == http.MethodGet && h.Cache != nil {
-		cacheKey := h.Cache.GenerateCacheKey(r)
-		if item, hit, notModified := h.Cache.Get(cacheKey, r); hit {
-			// 从缓存提供响应
-			w.Header().Set("Content-Type", item.ContentType)
-			if item.ContentEncoding != "" {
-				w.Header().Set("Content-Encoding", item.ContentEncoding)
-			}
-			w.Header().Set("Proxy-Go-Cache-HIT", "1")
-			w.Header().Set("Proxy-Go-AltTarget", "0") // 缓存命中时设为0
-
-			if notModified {
-				w.WriteHeader(http.StatusNotModified)
-				return
-			}
-			http.ServeFile(w, r, item.FilePath)
-			collector.RecordRequest(r.URL.Path, http.StatusOK, time.Since(start), item.Size, iputil.GetClientIP(r), r)
-			return
-		}
+	// 创建代理请求结构
+	proxyReq := &service.ProxyRequest{
+		OriginalRequest: r,
+		MatchedPrefix:   matchResult.MatchedPrefix,
+		PathConfig:      matchResult.PathConfig,
+		TargetPath:      matchResult.TargetPath,
+		StartTime:       start,
 	}
 
-	// 构建目标 URL
-	targetPath := strings.TrimPrefix(r.URL.Path, matchedPrefix)
-
-	// URL 解码，然后重新编码，确保特殊字符被正确处理
-	decodedPath, err := url.QueryUnescape(targetPath)
-	if err != nil {
-		h.errorHandler(w, r, fmt.Errorf("error decoding path: %v", err))
+	// 检查缓存
+	if item, hit, notModified := h.proxyService.CheckCache(proxyReq); hit {
+		h.handleCacheHit(w, r, item, notModified, start, collector)
 		return
 	}
 
-	// 检查是否需要进行302跳转
-	if h.redirectHandler != nil && h.redirectHandler.HandleRedirect(w, r, pathConfig, decodedPath, h.client) {
-		// 如果进行了302跳转，直接返回，不继续处理
+	// 检查重定向
+	if h.proxyService.CheckRedirect(proxyReq, w) {
 		collector.RecordRequest(r.URL.Path, http.StatusFound, time.Since(start), 0, iputil.GetClientIP(r), r)
 		return
 	}
 
-	// 使用统一的路由选择逻辑
-	targetBase, usedAltTarget := h.ruleService.GetTargetURL(h.client, r, pathConfig, decodedPath)
+	// 选择目标服务器
+	targetURL, altTarget := h.proxyService.SelectTarget(proxyReq)
 
-	// 重新编码路径，保留 '/'
-	parts := strings.Split(decodedPath, "/")
-	for i, part := range parts {
-		parts[i] = url.PathEscape(part)
-	}
-	encodedPath := strings.Join(parts, "/")
-	targetURL := targetBase + encodedPath
-
-	// 添加原始请求的查询参数
-	if r.URL.RawQuery != "" {
-		targetURL = targetURL + "?" + r.URL.RawQuery
-	}
-
-	// 解析目标 URL 以获取 host
-	parsedURL, err := url.Parse(targetURL)
+	// 创建代理请求
+	httpReq, err := h.proxyService.CreateProxyRequest(proxyReq, targetURL)
 	if err != nil {
-		h.errorHandler(w, r, fmt.Errorf("error parsing URL: %v", err))
+		h.errorHandler(w, r, err)
 		return
 	}
 
-	// 创建新的请求时使用带超时的上下文
-	proxyReq, err := http.NewRequestWithContext(ctx, r.Method, targetURL, r.Body)
+	// 执行请求
+	resp, err := h.proxyService.ExecuteRequest(httpReq)
 	if err != nil {
-		h.errorHandler(w, r, fmt.Errorf("error creating request: %v", err))
+		h.errorHandler(w, r, fmt.Errorf("error executing request: %v", err))
 		return
 	}
 
-	// 复制并处理请求头 - 使用更高效的方式
-	copyHeader(proxyReq.Header, r.Header)
-
-	// 添加常见浏览器User-Agent - 避免冗余字符串操作
-	if r.Header.Get("User-Agent") == "" {
-		proxyReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-	}
-
-	// 使用预先构建的URL字符串
-	hostScheme := parsedURL.Scheme + "://" + parsedURL.Host
-
-	// 添加Origin
-	proxyReq.Header.Set("Origin", hostScheme)
-
-	// 设置Referer为源站的完整域名（带上斜杠）
-	proxyReq.Header.Set("Referer", hostScheme+"/")
-
-	// 设置Host头和proxyReq.Host
-	proxyReq.Header.Set("Host", parsedURL.Host)
-	proxyReq.Host = parsedURL.Host
-
-	// 确保设置适当的Accept头 - 避免冗余字符串操作
-	if r.Header.Get("Accept") == "" {
-		proxyReq.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
-	}
-
-	// 确保设置Accept-Encoding - 避免冗余字符串操作
-	if ae := r.Header.Get("Accept-Encoding"); ae != "" {
-		proxyReq.Header.Set("Accept-Encoding", ae)
-	} else {
-		proxyReq.Header.Del("Accept-Encoding")
-	}
-
-	// 特别处理图片请求
-	if utils.IsImageRequest(r.URL.Path) {
-		accept := r.Header.Get("Accept")
-
-		// 使用switch语句优化条件分支
-		switch {
-		case strings.Contains(accept, "image/avif"):
-			proxyReq.Header.Set("Accept", "image/avif")
-		case strings.Contains(accept, "image/webp"):
-			proxyReq.Header.Set("Accept", "image/webp")
-		}
-
-		// 设置 Cloudflare 特定的头部
-		proxyReq.Header.Set("CF-Image-Format", "auto")
-	}
-
-	// 设置最小必要的代理头部
-	clientIP := iputil.GetClientIP(r)
-	proxyReq.Header.Set("X-Real-IP", clientIP)
-
-	// 添加或更新 X-Forwarded-For - 减少重复获取客户端IP
-	if clientIP != "" {
-		if prior := proxyReq.Header.Get("X-Forwarded-For"); prior != "" {
-			proxyReq.Header.Set("X-Forwarded-For", prior+", "+clientIP)
-		} else {
-			proxyReq.Header.Set("X-Forwarded-For", clientIP)
-		}
-	}
-
-	// 处理 Cookie 安全属性
-	if r.TLS != nil && len(proxyReq.Cookies()) > 0 {
-		cookies := proxyReq.Cookies()
-		for _, cookie := range cookies {
-			if !cookie.Secure {
-				cookie.Secure = true
-			}
-			if !cookie.HttpOnly {
-				cookie.HttpOnly = true
-			}
-		}
-	}
-
-	// 发送代理请求
-	resp, err := h.client.Do(proxyReq)
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			h.errorHandler(w, r, fmt.Errorf("request timeout after %v", proxyRespTimeout))
-			log.Printf("[Proxy] ERR %s %s -> 408 (%s) timeout from %s", r.Method, r.URL.Path, iputil.GetClientIP(r), utils.GetRequestSource(r))
-		} else {
-			h.errorHandler(w, r, fmt.Errorf("proxy error: %v", err))
-			log.Printf("[Proxy] ERR %s %s -> 502 (%s) proxy error from %s", r.Method, r.URL.Path, iputil.GetClientIP(r), utils.GetRequestSource(r))
-		}
-		return
-	}
+	// 处理响应
 	defer resp.Body.Close()
-
-	// 复制响应头
-	copyHeader(w.Header(), resp.Header)
-	w.Header().Set("Proxy-Go-Cache-HIT", "0")
-
-	// 如果使用了扩展名映射的备用目标，添加标记响应头
-	if usedAltTarget {
-		w.Header().Set("Proxy-Go-AltTarget", "1")
-	} else {
-		w.Header().Set("Proxy-Go-AltTarget", "0")
-	}
-
-	// 对于图片请求，添加 Vary 头部以支持 CDN 基于 Accept 头部的缓存
-	if utils.IsImageRequest(r.URL.Path) {
-		// 添加 Vary: Accept 头部，让 CDN 知道响应会根据 Accept 头部变化
-		if existingVary := w.Header().Get("Vary"); existingVary != "" {
-			if !strings.Contains(existingVary, "Accept") {
-				w.Header().Set("Vary", existingVary+", Accept")
-			}
-		} else {
-			w.Header().Set("Vary", "Accept")
-		}
-	}
-
-	// 设置响应状态码
-	w.WriteHeader(resp.StatusCode)
-
-	var written int64
-	// 如果是GET请求且响应成功，使用TeeReader同时写入缓存
-	if r.Method == http.MethodGet && resp.StatusCode == http.StatusOK && h.Cache != nil {
-		cacheKey := h.Cache.GenerateCacheKey(r)
-		if cacheFile, err := h.Cache.CreateTemp(cacheKey, resp); err == nil {
-			defer cacheFile.Close()
-
-			// 使用缓冲IO提高性能
-			bufSize := 32 * 1024 // 32KB 缓冲区
-			buf := make([]byte, bufSize)
-
-			teeReader := io.TeeReader(resp.Body, cacheFile)
-			written, err = io.CopyBuffer(w, teeReader, buf)
-
-			if err == nil {
-				// 异步提交缓存，不阻塞当前请求处理
-				fileName := cacheFile.Name()
-				respClone := *resp // 创建响应的浅拷贝
-				go func() {
-					h.Cache.Commit(cacheKey, fileName, &respClone, written)
-				}()
-			}
-		} else {
-			// 使用缓冲的复制提高性能
-			bufSize := 32 * 1024 // 32KB 缓冲区
-			buf := make([]byte, bufSize)
-
-			written, err = io.CopyBuffer(w, resp.Body, buf)
-			if err != nil && !isConnectionClosed(err) {
-				log.Printf("[Proxy] ERR %s %s -> write error (%s) from %s", r.Method, r.URL.Path, iputil.GetClientIP(r), utils.GetRequestSource(r))
-				return
-			}
-		}
-	} else {
-		// 使用缓冲的复制提高性能
-		bufSize := 32 * 1024 // 32KB 缓冲区
-		buf := make([]byte, bufSize)
-
-		written, err = io.CopyBuffer(w, resp.Body, buf)
-		if err != nil && !isConnectionClosed(err) {
-			log.Printf("[Proxy] ERR %s %s -> write error (%s) from %s", r.Method, r.URL.Path, iputil.GetClientIP(r), utils.GetRequestSource(r))
-			return
-		}
+	written, err := h.proxyService.ProcessResponse(proxyReq, resp, w, altTarget)
+	if err != nil {
+		h.errorHandler(w, r, err)
+		return
 	}
 
 	// 记录统计信息
 	collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(start), written, iputil.GetClientIP(r), r)
 }
 
-func copyHeader(dst, src http.Header) {
-	// 创建一个新的局部 map，复制基础 hop headers
-	hopHeaders := make(map[string]bool, len(hopHeadersBase))
-	for k, v := range hopHeadersBase {
-		hopHeaders[k] = v
-	}
-
-	// 处理 Connection 头部指定的其他 hop-by-hop 头部
-	if connection := src.Get("Connection"); connection != "" {
-		for _, h := range strings.Split(connection, ",") {
-			hopHeaders[strings.TrimSpace(h)] = true
-		}
-	}
-
-	// 添加需要过滤的安全头部
-	securityHeaders := map[string]bool{
-		"Content-Security-Policy":             true,
-		"Content-Security-Policy-Report-Only": true,
-		"X-Content-Security-Policy":           true,
-		"X-WebKit-CSP":                        true,
-	}
-
-	// 使用局部 map 快速查找，跳过 hop-by-hop 头部和安全头部
-	for k, vv := range src {
-		if !hopHeaders[k] && !securityHeaders[k] {
-			for _, v := range vv {
-				dst.Add(k, v)
-			}
-		}
-	}
+// handleWelcome 处理根路径欢迎消息
+func (h *ProxyHandler) handleWelcome(w http.ResponseWriter, r *http.Request, start time.Time) {
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, "Welcome to CZL proxy.")
+	log.Printf("[Proxy] %s %s -> %d (%s) from %s", r.Method, r.URL.Path, http.StatusOK, iputil.GetClientIP(r), utils.GetRequestSource(r))
 }
 
-// 添加辅助函数判断是否是连接关闭错误
-func isConnectionClosed(err error) bool {
-	if err == nil {
-		return false
+// handleCacheHit 处理缓存命中
+func (h *ProxyHandler) handleCacheHit(w http.ResponseWriter, r *http.Request, item *cache.CacheItem, notModified bool, start time.Time, collector *metrics.Collector) {
+	w.Header().Set("Content-Type", item.ContentType)
+	if item.ContentEncoding != "" {
+		w.Header().Set("Content-Encoding", item.ContentEncoding)
 	}
-	return strings.Contains(err.Error(), "broken pipe") ||
-		strings.Contains(err.Error(), "connection reset by peer") ||
-		strings.Contains(err.Error(), "protocol wrong type for socket")
+	w.Header().Set("Proxy-Go-Cache-HIT", "1")
+	w.Header().Set("Proxy-Go-AltTarget", "0") // 缓存命中时设为0
+
+	if notModified {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	http.ServeFile(w, r, item.FilePath)
+	collector.RecordRequest(r.URL.Path, http.StatusOK, time.Since(start), item.Size, iputil.GetClientIP(r), r)
 }

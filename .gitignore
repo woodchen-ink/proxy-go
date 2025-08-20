@@ -37,3 +37,4 @@ data/config.json
 .env
 data/cache
 CLAUDE.md
+.claude/

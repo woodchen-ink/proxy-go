@@ -2,15 +2,12 @@ package handler
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"proxy-go/internal/cache"
 	"proxy-go/internal/metrics"
-	"proxy-go/internal/utils"
-	"strings"
+	"proxy-go/internal/service"
 	"time"
 
 	"github.com/woodchen-ink/go-web-utils/iputil"
@@ -26,8 +23,8 @@ const (
 )
 
 type MirrorProxyHandler struct {
-	client *http.Client
-	Cache  *cache.CacheManager
+	mirrorService *service.MirrorProxyService
+	Cache        *cache.CacheManager // 保留Cache字段以兼容现有代码
 }
 
 func NewMirrorProxyHandler() *MirrorProxyHandler {
@@ -71,18 +68,20 @@ func NewMirrorProxyHandler() *MirrorProxyHandler {
 		log.Printf("[Cache] Failed to initialize mirror cache manager: %v", err)
 	}
 
-	return &MirrorProxyHandler{
-		client: &http.Client{
-			Transport: transport,
-			Timeout:   mirrorTimeout,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 10 {
-					return fmt.Errorf("stopped after 10 redirects")
-				}
-				return nil
-			},
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   mirrorTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			return nil
 		},
-		Cache: cacheManager,
+	}
+
+	return &MirrorProxyHandler{
+		mirrorService: service.NewMirrorProxyService(client, cacheManager),
+		Cache:         cacheManager, // 保留字段以兼容现有代码
 	}
 }
 
@@ -99,139 +98,81 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 处理 OPTIONS 请求
 	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | CORS Preflight",
-			r.Method, http.StatusOK, time.Since(startTime),
-			iputil.GetClientIP(r), "-", r.URL.Path)
+		h.handleCORSPreflight(w, r, startTime)
 		return
 	}
 
-	// 从路径中提取实际URL
-	actualURL := strings.TrimPrefix(r.URL.Path, "/mirror/")
-	if actualURL == "" || actualURL == r.URL.Path {
-		http.Error(w, "Invalid URL", http.StatusBadRequest)
-		log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | Invalid URL",
-			r.Method, http.StatusBadRequest, time.Since(startTime),
-			iputil.GetClientIP(r), "-", r.URL.Path)
-		return
-	}
-
-	if r.URL.RawQuery != "" {
-		actualURL += "?" + r.URL.RawQuery
-	}
-
-	// 早期缓存检查 - 只对GET请求进行缓存检查
-	if r.Method == http.MethodGet && h.Cache != nil {
-		cacheKey := h.Cache.GenerateCacheKey(r)
-		if item, hit, notModified := h.Cache.Get(cacheKey, r); hit {
-			// 从缓存提供响应
-			w.Header().Set("Content-Type", item.ContentType)
-			if item.ContentEncoding != "" {
-				w.Header().Set("Content-Encoding", item.ContentEncoding)
-			}
-			w.Header().Set("Proxy-Go-Cache-HIT", "1")
-			if notModified {
-				w.WriteHeader(http.StatusNotModified)
-				return
-			}
-			http.ServeFile(w, r, item.FilePath)
-			collector.RecordRequest(r.URL.Path, http.StatusOK, time.Since(startTime), item.Size, iputil.GetClientIP(r), r)
-			return
-		}
-	}
-
-	// 解析目标 URL 以获取 host
-	parsedURL, err := url.Parse(actualURL)
+	// 提取目标URL
+	mirrorReq, err := h.mirrorService.ExtractTargetURL(r)
 	if err != nil {
-		http.Error(w, "Invalid URL", http.StatusBadRequest)
-		log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | Parse URL error: %v",
-			r.Method, http.StatusBadRequest, time.Since(startTime),
-			iputil.GetClientIP(r), "-", actualURL, err)
+		h.handleError(w, r, "Invalid URL", http.StatusBadRequest, startTime, err)
 		return
 	}
 
-	// 确保有 scheme
-	scheme := parsedURL.Scheme
-	if scheme == "" {
-		scheme = "https"
-		actualURL = "https://" + actualURL
-		parsedURL, _ = url.Parse(actualURL)
-	}
-
-	// 创建新的请求
-	proxyReq, err := http.NewRequest(r.Method, actualURL, r.Body)
-	if err != nil {
-		http.Error(w, "Error creating request", http.StatusInternalServerError)
-		log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | Error creating request: %v",
-			r.Method, http.StatusInternalServerError, time.Since(startTime),
-			iputil.GetClientIP(r), "-", actualURL, err)
+	// 检查缓存
+	if item, hit, notModified := h.mirrorService.CheckCache(mirrorReq); hit {
+		h.handleCacheHit(w, r, item, notModified, startTime, collector)
 		return
 	}
 
-	// 复制原始请求的header
-	copyHeader(proxyReq.Header, r.Header)
-
-	// 设置必要的请求头
-	proxyReq.Header.Set("Origin", fmt.Sprintf("%s://%s", scheme, parsedURL.Host))
-	proxyReq.Header.Set("Referer", fmt.Sprintf("%s://%s/", scheme, parsedURL.Host))
-	if ua := r.Header.Get("User-Agent"); ua != "" {
-		proxyReq.Header.Set("User-Agent", ua)
-	} else {
-		proxyReq.Header.Set("User-Agent", "Mozilla/5.0")
-	}
-	proxyReq.Header.Set("Host", parsedURL.Host)
-	proxyReq.Host = parsedURL.Host
-
-	// 发送请求
-	resp, err := h.client.Do(proxyReq)
+	// 创建代理请求
+	proxyReq, err := h.mirrorService.CreateProxyRequest(mirrorReq)
 	if err != nil {
-		http.Error(w, "Error forwarding request", http.StatusBadGateway)
-		log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | Error forwarding request: %v",
-			r.Method, http.StatusBadGateway, time.Since(startTime),
-			iputil.GetClientIP(r), "-", actualURL, err)
+		h.handleError(w, r, "Error creating request", http.StatusInternalServerError, startTime, err)
+		return
+	}
+
+	// 执行请求
+	resp, err := h.mirrorService.ExecuteRequest(proxyReq)
+	if err != nil {
+		h.handleError(w, r, "Error forwarding request", http.StatusBadGateway, startTime, err)
 		return
 	}
 	defer resp.Body.Close()
 
-	// 复制响应头
-	copyHeader(w.Header(), resp.Header)
-	w.Header().Set("Proxy-Go-Cache-HIT", "0")
-
-	// 设置状态码
-	w.WriteHeader(resp.StatusCode)
-
-	var written int64
-	// 如果是GET请求且响应成功，使用TeeReader同时写入缓存
-	if r.Method == http.MethodGet && resp.StatusCode == http.StatusOK && h.Cache != nil {
-		cacheKey := h.Cache.GenerateCacheKey(r)
-		if cacheFile, err := h.Cache.CreateTemp(cacheKey, resp); err == nil {
-			defer cacheFile.Close()
-			teeReader := io.TeeReader(resp.Body, cacheFile)
-			written, err = io.Copy(w, teeReader)
-			if err == nil {
-				h.Cache.Commit(cacheKey, cacheFile.Name(), resp, written)
-			}
-		} else {
-			written, err = io.Copy(w, resp.Body)
-			if err != nil && !isConnectionClosed(err) {
-				log.Printf("Error writing response: %v", err)
-				return
-			}
-		}
-	} else {
-		written, err = io.Copy(w, resp.Body)
-		if err != nil && !isConnectionClosed(err) {
-			log.Printf("Error writing response: %v", err)
-			return
-		}
+	// 处理响应
+	written, err := h.mirrorService.ProcessResponse(mirrorReq, resp, w)
+	if err != nil {
+		log.Printf("Error processing response: %v", err)
+		return
 	}
 
 	// 记录访问日志
-	log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | %s",
-		r.Method, resp.StatusCode, time.Since(startTime),
-		iputil.GetClientIP(r), utils.FormatBytes(written),
-		utils.GetRequestSource(r), actualURL)
+	log.Printf(h.mirrorService.CreateLogEntry(mirrorReq, resp.StatusCode, time.Since(startTime), written))
 
 	// 记录统计信息
 	collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(startTime), written, iputil.GetClientIP(r), r)
+}
+
+// handleCORSPreflight 处理CORS预检请求
+func (h *MirrorProxyHandler) handleCORSPreflight(w http.ResponseWriter, r *http.Request, startTime time.Time) {
+	w.WriteHeader(http.StatusOK)
+	log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | CORS Preflight",
+		r.Method, http.StatusOK, time.Since(startTime),
+		iputil.GetClientIP(r), "-", r.URL.Path)
+}
+
+// handleError 处理错误
+func (h *MirrorProxyHandler) handleError(w http.ResponseWriter, r *http.Request, message string, statusCode int, startTime time.Time, err error) {
+	http.Error(w, message, statusCode)
+	log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | Error: %v",
+		r.Method, statusCode, time.Since(startTime),
+		iputil.GetClientIP(r), "-", r.URL.Path, err)
+}
+
+// handleCacheHit 处理缓存命中
+func (h *MirrorProxyHandler) handleCacheHit(w http.ResponseWriter, r *http.Request, item *cache.CacheItem, notModified bool, startTime time.Time, collector *metrics.Collector) {
+	w.Header().Set("Content-Type", item.ContentType)
+	if item.ContentEncoding != "" {
+		w.Header().Set("Content-Encoding", item.ContentEncoding)
+	}
+	w.Header().Set("Proxy-Go-Cache-HIT", "1")
+	
+	if notModified {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	
+	http.ServeFile(w, r, item.FilePath)
+	collector.RecordRequest(r.URL.Path, http.StatusOK, time.Since(startTime), item.Size, iputil.GetClientIP(r), r)
 }

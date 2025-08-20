@@ -17,17 +17,17 @@ type Route struct {
 }
 
 // SetupAdminRoutes 设置管理员路由
-func SetupAdminRoutes(proxyHandler *handler.ProxyHandler, mirrorHandler *handler.MirrorProxyHandler, configHandler *handler.ConfigHandler, securityHandler *handler.SecurityHandler) ([]Route, RouteHandler) {
+func SetupAdminRoutes(proxyHandler *handler.ProxyHandler, authHandler *handler.AuthHandler, metricsHandler *handler.MetricsHandler, mirrorHandler *handler.MirrorProxyHandler, configHandler *handler.ConfigHandler, securityHandler *handler.SecurityHandler) ([]Route, RouteHandler) {
 	// 定义API路由
 	apiRoutes := []Route{
-		{http.MethodGet, "/admin/api/auth", proxyHandler.LoginHandler, false},
-		{http.MethodGet, "/admin/api/oauth/callback", proxyHandler.OAuthCallbackHandler, false},
+		{http.MethodGet, "/admin/api/auth", authHandler.LoginHandler, false},
+		{http.MethodGet, "/admin/api/oauth/callback", authHandler.OAuthCallbackHandler, false},
 		{http.MethodGet, "/admin/api/check-auth", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]bool{"authenticated": true})
 		}, true},
-		{http.MethodPost, "/admin/api/logout", proxyHandler.LogoutHandler, false},
-		{http.MethodGet, "/admin/api/metrics", proxyHandler.MetricsHandler, true},
+		{http.MethodPost, "/admin/api/logout", authHandler.LogoutHandler, false},
+		{http.MethodGet, "/admin/api/metrics", metricsHandler.GetMetrics, true},
 		{http.MethodGet, "/admin/api/config/get", configHandler.ServeHTTP, true},
 		{http.MethodPost, "/admin/api/config/save", configHandler.ServeHTTP, true},
 		{http.MethodGet, "/admin/api/cache/stats", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).GetCacheStats, true},
@@ -59,7 +59,7 @@ func SetupAdminRoutes(proxyHandler *handler.ProxyHandler, mirrorHandler *handler
 				for _, route := range apiRoutes {
 					if r.URL.Path == route.Pattern && r.Method == route.Method {
 						if route.RequireAuth {
-							proxyHandler.AuthMiddleware(route.Handler)(w, r)
+							authHandler.AuthMiddleware(route.Handler)(w, r)
 						} else {
 							route.Handler(w, r)
 						}
