@@ -13,7 +13,9 @@ import (
 	"proxy-go/internal/middleware"
 	"proxy-go/internal/router"
 	"proxy-go/internal/security"
+	"proxy-go/internal/service"
 	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -60,6 +62,11 @@ func main() {
 		securityMiddleware = middleware.NewSecurityMiddleware(banManager)
 	}
 
+	// 创建服务层
+	startTime := time.Now()
+	metricsService := service.NewMetricsService(startTime)
+	authService := service.NewAuthServiceFromEnv()
+
 	// 创建代理处理器
 	mirrorHandler := handler.NewMirrorProxyHandler()
 	proxyHandler := handler.NewProxyHandler(cfg)
@@ -74,10 +81,10 @@ func main() {
 	}
 
 	// 创建认证处理器
-	authHandler := handler.NewAuthHandler(proxyHandler.GetAuthService())
+	authHandler := handler.NewAuthHandler(authService)
 	
 	// 创建指标处理器
-	metricsHandler := handler.NewMetricsHandler(proxyHandler.GetMetricsService())
+	metricsHandler := handler.NewMetricsHandler(metricsService)
 
 	// 设置路由
 	_, adminHandler := router.SetupAdminRoutes(proxyHandler, authHandler, metricsHandler, mirrorHandler, configHandler, securityHandler)

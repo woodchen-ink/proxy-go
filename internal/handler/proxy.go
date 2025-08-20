@@ -62,9 +62,7 @@ type ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)
 type ProxyHandler struct {
 	// Service层依赖
 	proxyService       *service.ProxyService
-	authService        *service.AuthService
 	pathMatcherService *service.PathMatcherService
-	metricsService     *service.MetricsService
 
 	// 保留的字段（为了向后兼容）
 	startTime    time.Time
@@ -195,16 +193,12 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 
 	// 初始化Service层
 	pathMatcherService := service.NewPathMatcherService(cfg.MAP)
-	authService := service.NewAuthServiceFromEnv()
 	proxyService := service.NewProxyService(client, cacheManager, ruleService)
-	metricsService := service.NewMetricsService(startTime)
 
 	handler := &ProxyHandler{
 		// Service层依赖
 		proxyService:       proxyService,
-		authService:        authService,
 		pathMatcherService: pathMatcherService,
-		metricsService:     metricsService,
 
 		// 保留字段
 		startTime: startTime,
@@ -239,15 +233,6 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 	return handler
 }
 
-// GetAuthService 获取认证服务（用于其他handler访问）
-func (h *ProxyHandler) GetAuthService() *service.AuthService {
-	return h.authService
-}
-
-// GetMetricsService 获取指标服务（用于其他handler访问）
-func (h *ProxyHandler) GetMetricsService() *service.MetricsService {
-	return h.metricsService
-}
 
 func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 添加 panic 恢复
