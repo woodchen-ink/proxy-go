@@ -277,11 +277,24 @@ func (s *ProxyService) processWithCache(req *ProxyRequest, resp *http.Response, 
 
 // buildTargetURL 构建目标URL
 func (s *ProxyService) buildTargetURL(baseURL, targetPath, rawQuery string) string {
-	targetURL := baseURL + targetPath
-	if rawQuery != "" {
-		targetURL += "?" + rawQuery
+	// 解析基础URL
+	parsedBase, err := url.Parse(baseURL)
+	if err != nil {
+		// 如果解析失败，回退到简单字符串拼接
+		targetURL := baseURL + targetPath
+		if rawQuery != "" {
+			targetURL += "?" + rawQuery
+		}
+		return targetURL
 	}
-	return targetURL
+	
+	// 正确处理路径，保持URL编码
+	parsedBase.Path = strings.TrimSuffix(parsedBase.Path, "/") + targetPath
+	if rawQuery != "" {
+		parsedBase.RawQuery = rawQuery
+	}
+	
+	return parsedBase.String()
 }
 
 // copyHeaders 复制HTTP头部，过滤hop-by-hop头部
