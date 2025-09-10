@@ -22,23 +22,23 @@ type MirrorProxyRequest struct {
 
 // MirrorProxyResponse 镜像代理响应
 type MirrorProxyResponse struct {
-	StatusCode      int
-	Headers         http.Header
-	Body            io.ReadCloser
-	ContentLength   int64
-	FromCache       bool
-	CacheKey        string
+	StatusCode    int
+	Headers       http.Header
+	Body          io.ReadCloser
+	ContentLength int64
+	FromCache     bool
+	CacheKey      string
 }
 
 // MirrorProxyResult 镜像代理处理结果
 type MirrorProxyResult struct {
-	Success       bool
-	StatusCode    int
-	ErrorMessage  string
-	BytesWritten  int64
-	Duration      time.Duration
-	FromCache     bool
-	ActualURL     string
+	Success      bool
+	StatusCode   int
+	ErrorMessage string
+	BytesWritten int64
+	Duration     time.Duration
+	FromCache    bool
+	ActualURL    string
 }
 
 type MirrorProxyService struct {
@@ -58,6 +58,14 @@ func (s *MirrorProxyService) ExtractTargetURL(r *http.Request) (*MirrorProxyRequ
 	actualURL := strings.TrimPrefix(r.URL.Path, "/mirror/")
 	if actualURL == "" || actualURL == r.URL.Path {
 		return nil, fmt.Errorf("invalid URL")
+	}
+
+	// 防御性编程：修复 Traefik v3.5.2新版本导致的 URL 问题
+	// 当检测到 https:/ 或 http:/ 时，自动补全为 https:// 或 http://
+	if strings.HasPrefix(actualURL, "https:/") && !strings.HasPrefix(actualURL, "https://") {
+		actualURL = strings.Replace(actualURL, "https:/", "https://", 1)
+	} else if strings.HasPrefix(actualURL, "http:/") && !strings.HasPrefix(actualURL, "http://") {
+		actualURL = strings.Replace(actualURL, "http:/", "http://", 1)
 	}
 
 	if r.URL.RawQuery != "" {
@@ -110,13 +118,13 @@ func (s *MirrorProxyService) CreateProxyRequest(req *MirrorProxyRequest) (*http.
 
 	proxyReq.Header.Set("Origin", fmt.Sprintf("%s://%s", scheme, host))
 	proxyReq.Header.Set("Referer", fmt.Sprintf("%s://%s/", scheme, host))
-	
+
 	if ua := req.OriginalRequest.Header.Get("User-Agent"); ua != "" {
 		proxyReq.Header.Set("User-Agent", ua)
 	} else {
 		proxyReq.Header.Set("User-Agent", "Mozilla/5.0")
 	}
-	
+
 	proxyReq.Header.Set("Host", host)
 	proxyReq.Host = host
 
@@ -159,7 +167,7 @@ func (s *MirrorProxyService) ProcessResponse(req *MirrorProxyRequest, resp *http
 // processWithCache 处理带缓存的响应
 func (s *MirrorProxyService) processWithCache(req *MirrorProxyRequest, resp *http.Response, w http.ResponseWriter) (int64, error) {
 	cacheKey := s.cache.GenerateCacheKey(req.OriginalRequest)
-	
+
 	if cacheFile, err := s.cache.CreateTemp(cacheKey, resp); err == nil {
 		defer cacheFile.Close()
 		teeReader := io.TeeReader(resp.Body, cacheFile)
@@ -169,7 +177,7 @@ func (s *MirrorProxyService) processWithCache(req *MirrorProxyRequest, resp *htt
 		}
 		return written, err
 	}
-	
+
 	return io.Copy(w, resp.Body)
 }
 
