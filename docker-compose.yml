@@ -1,6 +1,6 @@
 services:
   proxy:
-    image: woodchen/proxy-go:latest
+    image: ghcr.io/woodchen-ink/proxy-go:latest
     container_name: proxy-go
     ports:
       - "3336:3336"
