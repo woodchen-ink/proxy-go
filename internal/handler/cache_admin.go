@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"proxy-go/internal/cache"
+	"proxy-go/internal/config"
 	"proxy-go/internal/service"
 )
 
@@ -52,8 +53,8 @@ func (h *CacheAdminHandler) UpdateCacheConfig(w http.ResponseWriter, r *http.Req
 	}
 
 	var req struct {
-		Type   string                 `json:"type"`   // "proxy", "mirror"
-		Config service.CacheConfig    `json:"config"` // 新的配置
+		Type   string              `json:"type"`   // "proxy", "mirror"
+		Config config.CacheConfig  `json:"config"` // 新的配置
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -61,6 +62,7 @@ func (h *CacheAdminHandler) UpdateCacheConfig(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// 更新缓存管理器配置
 	if err := h.cacheService.UpdateCacheConfig(req.Type, req.Config); err != nil {
 		if err.Error() == "invalid cache type" {
 			http.Error(w, "Invalid cache type", http.StatusBadRequest)
@@ -68,6 +70,27 @@ func (h *CacheAdminHandler) UpdateCacheConfig(w http.ResponseWriter, r *http.Req
 			http.Error(w, "Failed to update config: "+err.Error(), http.StatusInternalServerError)
 		}
 		return
+	}
+
+	// 同时更新主配置文件
+	mainConfig := config.GetConfig()
+	if mainConfig != nil {
+		// 创建配置副本以避免并发问题
+		newConfig := *mainConfig
+		
+		// 更新对应的缓存配置
+		switch req.Type {
+		case "proxy":
+			newConfig.Cache = req.Config
+		case "mirror":
+			newConfig.MirrorCache = req.Config
+		}
+		
+		// 保存到主配置文件
+		if err := config.UpdateConfig(&newConfig); err != nil {
+			http.Error(w, "Failed to save config to file: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	w.WriteHeader(http.StatusOK)

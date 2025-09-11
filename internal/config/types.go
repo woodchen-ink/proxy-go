@@ -8,6 +8,8 @@ type Config struct {
 	MAP         map[string]PathConfig `json:"MAP"` // 路径映射配置
 	Compression CompressionConfig     `json:"Compression"`
 	Security    SecurityConfig        `json:"Security"` // 安全配置
+	Cache       CacheConfig          `json:"Cache"`     // 缓存配置
+	MirrorCache CacheConfig          `json:"MirrorCache"` // 镜像缓存配置
 }
 
 type PathConfig struct {
@@ -47,6 +49,12 @@ type IPBanConfig struct {
 	WindowMinutes          int  `json:"WindowMinutes"`          // 统计窗口时间（分钟）
 	BanDurationMinutes     int  `json:"BanDurationMinutes"`     // 封禁时长（分钟）
 	CleanupIntervalMinutes int  `json:"CleanupIntervalMinutes"` // 清理间隔（分钟）
+}
+
+type CacheConfig struct {
+	MaxAge       int64 `json:"max_age"`        // 最大缓存时间（分钟）
+	CleanupTick  int64 `json:"cleanup_tick"`   // 清理间隔（分钟）
+	MaxCacheSize int64 `json:"max_cache_size"` // 最大缓存大小（GB）
 }
 
 // 扩展名映射配置结构

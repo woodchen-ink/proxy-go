@@ -18,7 +18,6 @@ type Manager struct {
 	stopChan      chan struct{}
 	eventChan     chan SyncEvent
 	configLoader  ConfigLoader
-	metricsLoader MetricsLoader
 	dataSync      *DirectorySync
 	faviconSync   *DirectorySync
 }
@@ -30,15 +29,9 @@ type ConfigLoader interface {
 	GetConfigVersion() string
 }
 
-// MetricsLoader 统计数据加载器接口
-type MetricsLoader interface {
-	LoadMetrics() (any, error)
-	SaveMetrics(metrics any) error
-	GetLastUpdate() time.Time
-}
 
 // NewManager 创建新的同步管理器
-func NewManager(storage CloudStorage, config *Config, configLoader ConfigLoader, metricsLoader MetricsLoader) *Manager {
+func NewManager(storage CloudStorage, config *Config, configLoader ConfigLoader) *Manager {
 	m := &Manager{
 		storage:       storage,
 		config:        config,
@@ -46,7 +39,6 @@ func NewManager(storage CloudStorage, config *Config, configLoader ConfigLoader,
 		stopChan:      make(chan struct{}),
 		eventChan:     make(chan SyncEvent, 100),
 		configLoader:  configLoader,
-		metricsLoader: metricsLoader,
 	}
 	
 	// 初始化目录同步器
@@ -154,7 +146,7 @@ func (m *Manager) SyncNow(ctx context.Context) error {
 
 // UploadConfig 上传配置
 func (m *Manager) UploadConfig(ctx context.Context, config any) error {
-	return m.uploadConfig(ctx, config, nil)
+	return m.uploadConfig(ctx, config)
 }
 
 // SyncConfigOnly 仅同步主配置文件（快速同步）
@@ -262,16 +254,11 @@ func (m *Manager) uploadLocalConfig(ctx context.Context) error {
 		return fmt.Errorf("failed to load local config: %w", err)
 	}
 	
-	var metrics any
-	if m.metricsLoader != nil {
-		metrics, _ = m.metricsLoader.LoadMetrics()
-	}
-	
-	return m.uploadConfig(ctx, config, metrics)
+	return m.uploadConfig(ctx, config)
 }
 
-// uploadConfig 上传配置和统计数据
-func (m *Manager) uploadConfig(ctx context.Context, config any, metrics any) error {
+// uploadConfig 上传配置文件
+func (m *Manager) uploadConfig(ctx context.Context, config any) error {
 	// 直接上传配置文件JSON（不包装SyncData）
 	configJson, err := json.Marshal(config)
 	if err != nil {
@@ -283,20 +270,7 @@ func (m *Manager) uploadConfig(ctx context.Context, config any, metrics any) err
 		return fmt.Errorf("failed to upload config: %w", err)
 	}
 	
-	// 上传统计数据（如果有）- 直接存储JSON格式
-	if metrics != nil {
-		metricsJson, err := json.Marshal(metrics)
-		if err != nil {
-			log.Printf("Failed to marshal metrics: %v", err)
-			return nil // 统计数据上传失败不影响配置同步
-		}
-		
-		metricsPath := m.config.ConfigPath + "/metrics.json"
-		if err := m.storage.Upload(ctx, metricsPath, metricsJson); err != nil {
-			log.Printf("Failed to upload metrics: %v", err)
-			// 统计数据上传失败不影响配置同步
-		}
-	}
+	// metrics数据通过DirectorySync处理，不在这里单独上传
 	
 	return nil
 }
@@ -323,24 +297,7 @@ func (m *Manager) downloadRemoteConfig(ctx context.Context) error {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 	
-	// 尝试下载统计数据（可选）
-	if m.metricsLoader != nil {
-		metricsPath := m.config.ConfigPath + "/metrics.json"
-		metricsData, err := m.storage.Download(ctx, metricsPath)
-		if err != nil {
-			log.Printf("No remote metrics found or failed to download: %v", err)
-		} else {
-			// 直接解析metrics JSON（不使用SyncData包装）
-			var metrics map[string]any
-			if err := json.Unmarshal(metricsData, &metrics); err != nil {
-				log.Printf("Failed to unmarshal metrics JSON: %v", err)
-			} else {
-				if err := m.metricsLoader.SaveMetrics(metrics); err != nil {
-					log.Printf("Failed to save metrics: %v", err)
-				}
-			}
-		}
-	}
+	// metrics数据通过DirectorySync处理，不在这里单独下载
 	
 	return nil
 }

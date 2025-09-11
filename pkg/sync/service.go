@@ -17,7 +17,6 @@ var (
 type SyncService struct {
 	manager       SyncManager
 	configAdapter *ConfigAdapter
-	metricsAdapter *MetricsAdapter
 	isEnabled     bool
 	mutex         sync.RWMutex
 }
@@ -55,16 +54,14 @@ func InitSyncService() error {
 	
 	// 创建适配器
 	configAdapter := NewConfigAdapter("data/config.json")
-	metricsAdapter := NewMetricsAdapter("data/metrics")
 	
 	// 创建同步管理器
-	manager := NewManager(s3Client, syncConfig, configAdapter, metricsAdapter)
+	manager := NewManager(s3Client, syncConfig, configAdapter)
 	
 	// 创建同步服务
 	globalSyncService = &SyncService{
 		manager:        manager,
 		configAdapter:  configAdapter,
-		metricsAdapter: metricsAdapter,
 		isEnabled:      true,
 	}
 	

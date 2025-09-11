@@ -3,7 +3,6 @@ package cache
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"log"
@@ -265,7 +264,7 @@ type CacheManager struct {
 }
 
 // NewCacheManager 创建新的缓存管理器
-func NewCacheManager(cacheDir string) (*CacheManager, error) {
+func NewCacheManager(cacheDir string, initialConfig *config.CacheConfig) (*CacheManager, error) {
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create cache directory: %v", err)
 	}
@@ -273,9 +272,6 @@ func NewCacheManager(cacheDir string) (*CacheManager, error) {
 	cm := &CacheManager{
 		cacheDir:     cacheDir,
 		lruCache:     NewLRUCache(10000), // 10000个热点缓存项
-		maxAge:       30 * time.Minute,
-		cleanupTick:  5 * time.Minute,
-		maxCacheSize: 10 * 1024 * 1024 * 1024, // 10GB
 		stopCleanup:  make(chan struct{}),
 
 		// 初始化ExtensionMatcher缓存
@@ -284,9 +280,16 @@ func NewCacheManager(cacheDir string) (*CacheManager, error) {
 
 	cm.enabled.Store(true) // 默认启用缓存
 
-	// 尝试加载配置
-	if err := cm.loadConfig(); err != nil {
-		log.Printf("[Cache] Failed to load config: %v, using default values", err)
+	// 应用初始配置
+	if initialConfig != nil {
+		cm.maxAge = time.Duration(initialConfig.MaxAge) * time.Minute
+		cm.cleanupTick = time.Duration(initialConfig.CleanupTick) * time.Minute
+		cm.maxCacheSize = initialConfig.MaxCacheSize * 1024 * 1024 * 1024 // 转换为字节
+	} else {
+		// 使用默认值
+		cm.maxAge = 30 * time.Minute
+		cm.cleanupTick = 5 * time.Minute
+		cm.maxCacheSize = 10 * 1024 * 1024 * 1024 // 10GB
 	}
 
 	// 启动时清理过期和临时文件
@@ -884,8 +887,8 @@ func (cm *CacheManager) Commit(key CacheKey, tempPath string, resp *http.Respons
 }
 
 // GetConfig 获取缓存配置
-func (cm *CacheManager) GetConfig() CacheConfig {
-	return CacheConfig{
+func (cm *CacheManager) GetConfig() config.CacheConfig {
+	return config.CacheConfig{
 		MaxAge:       int64(cm.maxAge.Minutes()),
 		CleanupTick:  int64(cm.cleanupTick.Minutes()),
 		MaxCacheSize: cm.maxCacheSize / (1024 * 1024 * 1024), // 转换为GB
@@ -893,16 +896,16 @@ func (cm *CacheManager) GetConfig() CacheConfig {
 }
 
 // UpdateConfig 更新缓存配置
-func (cm *CacheManager) UpdateConfig(maxAge, cleanupTick, maxCacheSize int64) error {
-	if maxAge <= 0 || cleanupTick <= 0 || maxCacheSize <= 0 {
+func (cm *CacheManager) UpdateConfig(cacheConfig *config.CacheConfig) error {
+	if cacheConfig.MaxAge <= 0 || cacheConfig.CleanupTick <= 0 || cacheConfig.MaxCacheSize <= 0 {
 		return fmt.Errorf("invalid config values: all values must be positive")
 	}
 
-	cm.maxAge = time.Duration(maxAge) * time.Minute
-	cm.maxCacheSize = maxCacheSize * 1024 * 1024 * 1024 // 转换为字节
+	cm.maxAge = time.Duration(cacheConfig.MaxAge) * time.Minute
+	cm.maxCacheSize = cacheConfig.MaxCacheSize * 1024 * 1024 * 1024 // 转换为字节
 
 	// 如果清理间隔发生变化，重启清理协程
-	newCleanupTick := time.Duration(cleanupTick) * time.Minute
+	newCleanupTick := time.Duration(cacheConfig.CleanupTick) * time.Minute
 	if cm.cleanupTick != newCleanupTick {
 		cm.cleanupTick = newCleanupTick
 		// 停止当前的清理协程
@@ -911,20 +914,9 @@ func (cm *CacheManager) UpdateConfig(maxAge, cleanupTick, maxCacheSize int64) er
 		cm.startCleanup()
 	}
 
-	// 保存配置到文件
-	if err := cm.saveConfig(); err != nil {
-		log.Printf("[Cache] Failed to save config: %v", err)
-	}
-
 	return nil
 }
 
-// CacheConfig 缓存配置结构
-type CacheConfig struct {
-	MaxAge       int64 `json:"max_age"`        // 最大缓存时间（分钟）
-	CleanupTick  int64 `json:"cleanup_tick"`   // 清理间隔（分钟）
-	MaxCacheSize int64 `json:"max_cache_size"` // 最大缓存大小（GB）
-}
 
 // startCleanup 启动清理协程
 func (cm *CacheManager) startCleanup() {
@@ -942,60 +934,6 @@ func (cm *CacheManager) startCleanup() {
 	}()
 }
 
-// saveConfig 保存配置到文件
-func (cm *CacheManager) saveConfig() error {
-	config := CacheConfig{
-		MaxAge:       int64(cm.maxAge.Minutes()),
-		CleanupTick:  int64(cm.cleanupTick.Minutes()),
-		MaxCacheSize: cm.maxCacheSize / (1024 * 1024 * 1024), // 转换为GB
-	}
-
-	configPath := filepath.Join(cm.cacheDir, "config.json")
-	data, err := json.Marshal(config)
-	if err != nil {
-		return fmt.Errorf("failed to marshal config: %v", err)
-	}
-
-	if err := os.WriteFile(configPath, data, 0600); err != nil {
-		return fmt.Errorf("failed to write config file: %v", err)
-	}
-
-	return nil
-}
-
-// loadConfig 从文件加载配置
-func (cm *CacheManager) loadConfig() error {
-	configPath := filepath.Join(cm.cacheDir, "config.json")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// 如果配置文件不存在，使用默认配置并保存
-			return cm.saveConfig()
-		}
-		return fmt.Errorf("failed to read config file: %v", err)
-	}
-
-	var config CacheConfig
-	if err := json.Unmarshal(data, &config); err != nil {
-		return fmt.Errorf("failed to unmarshal config: %v", err)
-	}
-
-	// 更新配置
-	cm.maxAge = time.Duration(config.MaxAge) * time.Minute
-	cm.maxCacheSize = config.MaxCacheSize * 1024 * 1024 * 1024 // 转换为字节
-
-	// 如果清理间隔发生变化，重启清理协程
-	newCleanupTick := time.Duration(config.CleanupTick) * time.Minute
-	if cm.cleanupTick != newCleanupTick {
-		cm.cleanupTick = newCleanupTick
-		if cm.cleanupTimer != nil {
-			cm.stopCleanup <- struct{}{}
-		}
-		cm.startCleanup()
-	}
-
-	return nil
-}
 
 // GetExtensionMatcher 获取缓存的ExtensionMatcher
 func (cm *CacheManager) GetExtensionMatcher(pathKey string, rules []config.ExtensionRule) *utils.ExtensionMatcher {

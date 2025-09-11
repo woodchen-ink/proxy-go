@@ -196,21 +196,8 @@ func (ds *DirectorySync) shouldSyncFile(filePath string) bool {
 			}
 		}
 	} else {
-		// data目录：同步配置和统计文件
-		syncDirPatterns := []string{
-			"config.json",   // 主配置文件
-			"cache/",        // 缓存配置目录（只会同步.json文件）
-			"mirror_cache/", // 镜像缓存配置目录（只会同步.json文件）
-			"metrics/",      // 统计数据目录（只会同步.json文件）
-		}
-
-		// 检查是否在允许的目录或文件中
-		for _, pattern := range syncDirPatterns {
-			if relativePath == strings.TrimSuffix(pattern, "/") || // 精确匹配文件
-				strings.HasPrefix(relativePath, pattern) { // 匹配目录下的文件
-				return true
-			}
-		}
+		// data目录：只同步主配置文件
+		return relativePath == "config.json"
 	}
 
 	return false
@@ -292,21 +279,8 @@ func (ds *DirectorySync) shouldSyncRemoteFile(relativePath string) bool {
 		}
 		return false
 	} else {
-		// data目录：同步配置和统计文件
-		syncDirPatterns := []string{
-			"config.json",   // 主配置文件
-			"cache/",        // 缓存配置目录（只会同步.json文件）
-			"mirror_cache/", // 镜像缓存配置目录（只会同步.json文件）
-			"metrics/",      // 统计数据目录（只会同步.json文件）
-		}
-
-		// 检查是否在允许的目录或文件中
-		for _, pattern := range syncDirPatterns {
-			if relativePath == strings.TrimSuffix(pattern, "/") || // 精确匹配文件
-				strings.HasPrefix(relativePath, pattern) { // 匹配目录下的文件
-				return true
-			}
-		}
+		// data目录：只同步主配置文件
+		return relativePath == "config.json"
 	}
 
 	return false

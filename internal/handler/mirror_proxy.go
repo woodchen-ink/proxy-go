@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"proxy-go/internal/cache"
+	"proxy-go/internal/config"
 	"proxy-go/internal/metrics"
 	"proxy-go/internal/service"
 	"time"
@@ -62,8 +63,13 @@ func NewMirrorProxyHandler() *MirrorProxyHandler {
 		http2Transport.StrictMaxConcurrentStreams = true
 	}
 
-	// 初始化缓存管理器
-	cacheManager, err := cache.NewCacheManager("data/mirror_cache")
+	// 初始化缓存管理器 - 从主配置获取缓存配置
+	cfg := config.GetConfig()
+	var mirrorCacheConfig *config.CacheConfig
+	if cfg != nil {
+		mirrorCacheConfig = &cfg.MirrorCache
+	}
+	cacheManager, err := cache.NewCacheManager("data/mirror_cache", mirrorCacheConfig)
 	if err != nil {
 		log.Printf("[Cache] Failed to initialize mirror cache manager: %v", err)
 	}

@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"proxy-go/internal/cache"
+	"proxy-go/internal/config"
 )
 
 type CacheService struct {
@@ -17,12 +18,6 @@ func NewCacheService(proxyCache, mirrorCache *cache.CacheManager) *CacheService 
 	}
 }
 
-// CacheConfig 缓存配置结构
-type CacheConfig struct {
-	MaxAge       int64 `json:"max_age"`
-	CleanupTick  int64 `json:"cleanup_tick"`
-	MaxCacheSize int64 `json:"max_cache_size"`
-}
 
 // GetCacheStats 获取缓存统计信息
 func (s *CacheService) GetCacheStats() map[string]cache.CacheStats {
@@ -33,15 +28,15 @@ func (s *CacheService) GetCacheStats() map[string]cache.CacheStats {
 }
 
 // GetCacheConfig 获取缓存配置
-func (s *CacheService) GetCacheConfig() map[string]cache.CacheConfig {
-	return map[string]cache.CacheConfig{
+func (s *CacheService) GetCacheConfig() map[string]config.CacheConfig {
+	return map[string]config.CacheConfig{
 		"proxy":  s.proxyCache.GetConfig(),
 		"mirror": s.mirrorCache.GetConfig(),
 	}
 }
 
 // UpdateCacheConfig 更新指定类型的缓存配置
-func (s *CacheService) UpdateCacheConfig(cacheType string, config CacheConfig) error {
+func (s *CacheService) UpdateCacheConfig(cacheType string, config config.CacheConfig) error {
 	var targetCache *cache.CacheManager
 	
 	switch cacheType {
@@ -53,7 +48,7 @@ func (s *CacheService) UpdateCacheConfig(cacheType string, config CacheConfig) e
 		return errors.New("invalid cache type")
 	}
 
-	return targetCache.UpdateConfig(config.MaxAge, config.CleanupTick, config.MaxCacheSize)
+	return targetCache.UpdateConfig(&config)
 }
 
 // SetCacheEnabled 设置缓存开关状态

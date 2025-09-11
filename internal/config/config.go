@@ -115,6 +115,25 @@ func (cm *ConfigManager) createDefaultConfig() error {
 				Level:   6,
 			},
 		},
+		Security: SecurityConfig{
+			IPBan: IPBanConfig{
+				Enabled:                true,
+				ErrorThreshold:         60,
+				WindowMinutes:          1,
+				BanDurationMinutes:     5,
+				CleanupIntervalMinutes: 1440,
+			},
+		},
+		Cache: CacheConfig{
+			MaxAge:       30, // 30分钟
+			CleanupTick:  5,  // 5分钟清理一次
+			MaxCacheSize: 10, // 10GB
+		},
+		MirrorCache: CacheConfig{
+			MaxAge:       30, // 30分钟
+			CleanupTick:  5,  // 5分钟清理一次
+			MaxCacheSize: 10, // 10GB
+		},
 	}
 
 	// 序列化为JSON

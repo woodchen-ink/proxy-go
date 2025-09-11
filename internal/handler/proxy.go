@@ -164,8 +164,13 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 
 	}
 
-	// 初始化缓存管理器
-	cacheManager, err := cache.NewCacheManager("data/cache")
+	// 初始化缓存管理器 - 从主配置获取缓存配置
+	mainConfig := config.GetConfig()
+	var cacheConfig *config.CacheConfig
+	if mainConfig != nil {
+		cacheConfig = &mainConfig.Cache
+	}
+	cacheManager, err := cache.NewCacheManager("data/cache", cacheConfig)
 	if err != nil {
 		log.Printf("[Cache] Failed to initialize cache manager: %v", err)
 	}
