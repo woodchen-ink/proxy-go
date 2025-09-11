@@ -21,11 +21,21 @@ type DirectorySync struct {
 
 // NewDirectorySync 创建目录同步器
 func NewDirectorySync(storage CloudStorage, config *Config, localPath string) *DirectorySync {
+	// 根据本地路径确定远程路径
+	var remotePath string
+	if strings.Contains(localPath, "favicon") {
+		// favicon目录的文件直接存储在远程根目录
+		remotePath = config.ConfigPath
+	} else {
+		// data目录的文件存储在远程根目录
+		remotePath = config.ConfigPath
+	}
+
 	return &DirectorySync{
 		storage:    storage,
 		config:     config,
 		localPath:  localPath,
-		remotePath: config.ConfigPath,
+		remotePath: remotePath,
 	}
 }
 
@@ -65,7 +75,7 @@ func (ds *DirectorySync) SyncDirectory(ctx context.Context) error {
 				log.Printf("[DirectorySync] Failed to upload %s (updated): %v", relativePath, err)
 			} else {
 				log.Printf("[DirectorySync] Uploaded updated file: %s (local: %v, remote: %v)", 
-					relativePath, localFile.ModTime.Format(time.RFC3339), remoteFile.ModTime.Format(time.RFC3339))
+					relativePath, localFile.ModTime.UTC().Format(time.RFC3339), remoteFile.ModTime.UTC().Format(time.RFC3339))
 				uploadCount++
 			}
 		}
@@ -121,13 +131,20 @@ func (ds *DirectorySync) scanLocalFiles() (map[string]FileInfo, error) {
 		}
 		
 		// 计算相对路径
-		relativePath, err := filepath.Rel(ds.localPath, path)
-		if err != nil {
-			return err
+		var relativePath string
+		if strings.Contains(ds.localPath, "favicon") {
+			// favicon目录：保留完整路径（包含favicon目录）
+			relativePath = strings.TrimPrefix(path, "./")
+			relativePath = filepath.ToSlash(relativePath)
+		} else {
+			// data目录：计算相对路径
+			var err error
+			relativePath, err = filepath.Rel(ds.localPath, path)
+			if err != nil {
+				return err
+			}
+			relativePath = filepath.ToSlash(relativePath)
 		}
-		
-		// 标准化路径分隔符
-		relativePath = filepath.ToSlash(relativePath)
 		
 		files[relativePath] = FileInfo{
 			Path:         path,
@@ -267,8 +284,8 @@ func (ds *DirectorySync) shouldSyncRemoteFile(relativePath string) bool {
 	
 	// 根据扫描的目录确定同步模式
 	if strings.Contains(ds.localPath, "favicon") {
-		// favicon目录：只同步图标文件
-		allowedFaviconFiles := []string{"favicon.ico"}
+		// favicon目录：只同步图标文件（现在包含完整路径）
+		allowedFaviconFiles := []string{"favicon/favicon.ico"}
 		for _, allowedFile := range allowedFaviconFiles {
 			if relativePath == allowedFile {
 				return true
@@ -303,9 +320,9 @@ func (ds *DirectorySync) shouldUpload(local, remote FileInfo) bool {
 		return true
 	}
 	
-	// 截断到秒级精度以避免亚秒级差异导致的问题
-	localTime := local.ModTime.Truncate(time.Second)
-	remoteTime := remote.ModTime.Truncate(time.Second)
+	// 统一转换为UTC时间并截断到秒级精度
+	localTime := local.ModTime.UTC().Truncate(time.Second)
+	remoteTime := remote.ModTime.UTC().Truncate(time.Second)
 	
 	// 如果本地文件更新，上传
 	return localTime.After(remoteTime)
@@ -318,6 +335,7 @@ func (ds *DirectorySync) uploadFile(ctx context.Context, relativePath string, fi
 		return fmt.Errorf("failed to read local file: %w", err)
 	}
 	
+	// 构建远程路径（现在relativePath已经包含完整路径）
 	remotePath := ds.remotePath + "/" + relativePath
 	
 	if err := ds.storage.Upload(ctx, remotePath, data); err != nil {
@@ -330,6 +348,7 @@ func (ds *DirectorySync) uploadFile(ctx context.Context, relativePath string, fi
 
 // downloadFile 下载文件
 func (ds *DirectorySync) downloadFile(ctx context.Context, relativePath string, fileInfo FileInfo) error {
+	// 构建远程路径（现在relativePath已经包含完整路径）
 	remotePath := ds.remotePath + "/" + relativePath
 	
 	data, err := ds.storage.Download(ctx, remotePath)

@@ -120,6 +120,8 @@ func (ca *ConfigAdapter) GetConfigVersion() string {
 	return fmt.Sprintf("%d", fileInfo.ModTime().Unix())
 }
 
+// 移除了 IsNewNode 和 isDefaultConfig 方法，因为启动时统一只下载，不再需要新节点检测
+
 // MetricsAdapter 统计数据适配器
 type MetricsAdapter struct {
 	metricsDir string

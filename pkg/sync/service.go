@@ -122,6 +122,23 @@ func SyncNow(ctx context.Context) error {
 	return globalSyncService.manager.SyncNow(ctx)
 }
 
+// DownloadConfigOnly 仅下载配置（启动时使用）
+// 如果远程不存在配置，则上传本地配置作为初始版本
+func DownloadConfigOnly(ctx context.Context) error {
+	globalSyncMutex.RLock()
+	defer globalSyncMutex.RUnlock()
+	
+	if globalSyncService == nil || !globalSyncService.isEnabled {
+		return fmt.Errorf("sync service not available")
+	}
+	
+	if manager, ok := globalSyncService.manager.(*Manager); ok {
+		return manager.downloadConfigWithFallback(ctx)
+	}
+	
+	return fmt.Errorf("sync manager type mismatch")
+}
+
 // SyncConfigOnly 仅同步主配置文件（快速同步）
 func SyncConfigOnly(ctx context.Context) error {
 	globalSyncMutex.RLock()
@@ -176,6 +193,11 @@ func IsServiceEnabled() bool {
 	defer globalSyncMutex.RUnlock()
 	
 	return globalSyncService != nil && globalSyncService.isEnabled
+}
+
+// IsEnabled 检查同步功能是否启用（基于环境变量）
+func IsEnabled() bool {
+	return IsConfigComplete()
 }
 
 // handleEvents 处理同步事件

@@ -79,10 +79,8 @@ func (m *Manager) Start(ctx context.Context) error {
 		Message:   "Sync manager started",
 	})
 	
-	// 初始同步
-	if err := m.SyncNow(ctx); err != nil {
-		log.Printf("Initial sync failed: %v", err)
-	}
+	// 启动时不执行初始同步，因为 initapp 中已经调用了 DownloadConfigOnly
+	log.Printf("[Sync] Skipping initial sync at startup (already downloaded config)")
 	
 	// 启动定时同步
 	go m.syncLoop(ctx)
@@ -393,9 +391,9 @@ func shouldUpload(localVersion, remoteVersion string, localTime, remoteTime time
 	localTimestamp, err1 := parseVersionTimestamp(localVersion)
 	remoteTimestamp, err2 := parseVersionTimestamp(remoteVersion)
 	
-	// 如果解析失败，使用时间比较作为回退
+	// 如果解析失败，使用时间比较作为回退（统一转换为UTC）
 	if err1 != nil || err2 != nil {
-		return localTime.After(remoteTime)
+		return localTime.UTC().After(remoteTime.UTC())
 	}
 	
 	// 比较时间戳，本地更新则上传
@@ -414,4 +412,34 @@ func parseVersionTimestamp(version string) (int64, error) {
 	}
 	
 	return timestamp, nil
+}
+
+// downloadConfigWithFallback 下载配置，如果远程不存在则上传本地配置
+func (m *Manager) downloadConfigWithFallback(ctx context.Context) error {
+	log.Printf("[Sync] Checking for remote config...")
+	
+	configPath := m.config.ConfigPath + "/config.json"
+	
+	// 尝试下载远程配置
+	_, err := m.storage.Download(ctx, configPath)
+	if err != nil {
+		log.Printf("[Sync] Remote config not found, uploading local config as initial version: %v", err)
+		
+		// 远程不存在，上传本地配置作为初始版本
+		if uploadErr := m.uploadLocalConfig(ctx); uploadErr != nil {
+			return fmt.Errorf("failed to upload initial config: %w", uploadErr)
+		}
+		
+		log.Printf("[Sync] Successfully uploaded local config as initial version")
+		return nil
+	}
+	
+	// 远程存在，执行下载
+	log.Printf("[Sync] Remote config found, downloading...")
+	if err := m.downloadRemoteConfig(ctx); err != nil {
+		return fmt.Errorf("failed to download remote config: %w", err)
+	}
+	
+	log.Printf("[Sync] Successfully downloaded remote config")
+	return nil
 }

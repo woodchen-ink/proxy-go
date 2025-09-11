@@ -1,27 +1,19 @@
 package main
 
 import (
-	"context"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
-	"proxy-go/internal/config"
-	"proxy-go/internal/constants"
-	"proxy-go/internal/handler"
 	"proxy-go/internal/initapp"
 	"proxy-go/internal/metrics"
-	"proxy-go/internal/middleware"
 	"proxy-go/internal/router"
-	"proxy-go/internal/security"
-	"proxy-go/internal/service"
 	"proxy-go/pkg/sync"
 	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
 )
-
 
 func main() {
 	// 加载.env文件（如果存在）
@@ -31,91 +23,21 @@ func main() {
 		log.Printf("[Init] .env文件加载成功")
 	}
 
-	// 初始化应用程序（包括配置迁移）
+	// 初始化应用程序（完整初始化：同步、配置、服务、处理器、路由）
 	configPath := "data/config.json"
-	initapp.Init(configPath)
-
-	// 1. 先初始化同步服务（在配置加载之前）
-	log.Printf("[Init] 正在初始化同步服务...")
-	if err := sync.InitSyncService(); err != nil {
-		log.Printf("[Init] Warning: Failed to initialize sync service: %v", err)
-	}
-
-	// 2. 现在初始化配置管理器（使用已同步的配置）
-	log.Printf("[Init] 正在加载配置...")
-	configManager, err := config.Init(configPath)
-	if err != nil {
-		log.Fatal("Error initializing config manager:", err)
-	}
-
-	// 设置全局配置管理器
-	config.SetGlobalConfigManager(configManager)
-
-	// 获取配置
-	cfg := configManager.GetConfig()
-
-	// 更新常量配置
-	constants.UpdateFromConfig(cfg)
-
-	// 初始化统计服务
-	metrics.Init(cfg)
-
-	// 3. 启动同步服务的定时任务
-	ctx := context.Background()
-	if err := sync.StartSyncService(ctx); err != nil {
-		log.Printf("Warning: Failed to start sync service: %v", err)
-	}
-
-	// 注册配置更新回调（在配置更新时自动同步）
-	config.RegisterUpdateCallback(func(cfg *config.Config) {
-		sync.ConfigSyncCallback()
+	components, err := initapp.InitApp(initapp.InitOptions{
+		ConfigPath:      configPath,
+		SyncTimeout:     30 * time.Second,
+		EnableSync:      true,
+		FallbackOnError: true,
 	})
-
-	// 创建安全管理器
-	var banManager *security.IPBanManager
-	var securityMiddleware *middleware.SecurityMiddleware
-	if cfg.Security.IPBan.Enabled {
-		banConfig := &security.IPBanConfig{
-			ErrorThreshold:         cfg.Security.IPBan.ErrorThreshold,
-			WindowMinutes:          cfg.Security.IPBan.WindowMinutes,
-			BanDurationMinutes:     cfg.Security.IPBan.BanDurationMinutes,
-			CleanupIntervalMinutes: cfg.Security.IPBan.CleanupIntervalMinutes,
-		}
-		banManager = security.NewIPBanManager(banConfig)
-		securityMiddleware = middleware.NewSecurityMiddleware(banManager)
+	if err != nil {
+		log.Fatal("Error initializing application:", err)
 	}
-
-	// 创建服务层
-	startTime := time.Now()
-	metricsService := service.NewMetricsService(startTime)
-	authService := service.NewAuthServiceFromEnv()
-
-	// 创建代理处理器
-	mirrorHandler := handler.NewMirrorProxyHandler()
-	proxyHandler := handler.NewProxyHandler(cfg)
-
-	// 创建配置处理器
-	configHandler := handler.NewConfigHandler(configManager)
-
-	// 创建安全管理处理器
-	var securityHandler *handler.SecurityHandler
-	if banManager != nil {
-		securityHandler = handler.NewSecurityHandler(banManager)
-	}
-
-	// 创建认证处理器
-	authHandler := handler.NewAuthHandler(authService)
-	
-	// 创建指标处理器
-	metricsHandler := handler.NewMetricsHandler(metricsService)
-
-	// 设置路由
-	_, adminHandler := router.SetupAdminRoutes(proxyHandler, authHandler, metricsHandler, mirrorHandler, configHandler, securityHandler)
-	mainRoutes := router.SetupMainRoutes(mirrorHandler, proxyHandler)
 
 	// 创建路由处理器
-	handlers := []router.RouteHandler{adminHandler}
-	handlers = append(handlers, mainRoutes...)
+	handlers := []router.RouteHandler{components.AdminHandler}
+	handlers = append(handlers, components.MainRoutes...)
 
 	// 创建主处理器
 	mainHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -135,8 +57,8 @@ func main() {
 	var handler http.Handler = mainHandler
 
 	// 添加安全中间件（最外层，优先级最高）
-	if securityMiddleware != nil {
-		handler = securityMiddleware.IPBanMiddleware(handler)
+	if components.SecurityMiddleware != nil {
+		handler = components.SecurityMiddleware.IPBanMiddleware(handler)
 	}
 
 	// 创建服务器
@@ -153,8 +75,8 @@ func main() {
 		log.Println("Shutting down server...")
 
 		// 停止安全管理器
-		if banManager != nil {
-			banManager.Stop()
+		if components.BanManager != nil {
+			components.BanManager.Stop()
 		}
 
 		// 停止指标存储服务

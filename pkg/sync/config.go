@@ -29,29 +29,24 @@ func (c *Config) Validate() error {
 	if c.Bucket == "" {
 		return fmt.Errorf("bucket name is required")
 	}
-	
+
 	if c.AccessKeyID == "" {
 		return fmt.Errorf("access key ID is required")
 	}
-	
+
 	if c.SecretAccessKey == "" {
 		return fmt.Errorf("secret access key is required")
 	}
-	
+
 	if c.Region == "" {
 		return fmt.Errorf("region is required")
 	}
-	
+
 	if c.ConfigPath == "" {
 		return fmt.Errorf("config path is required")
 	}
-	
-	return nil
-}
 
-// IsEnabled 检查同步功能是否启用
-func IsEnabled() bool {
-	return os.Getenv("SYNC_S3_BUCKET") != ""
+	return nil
 }
 
 // getEnvDefault 获取环境变量，如果不存在则返回默认值
@@ -69,4 +64,23 @@ func getEnvBool(key string, defaultValue bool) bool {
 		return defaultValue
 	}
 	return value == "true" || value == "1" || value == "yes"
+}
+
+// IsConfigComplete 检查同步配置是否完整（基于环境变量）
+func IsConfigComplete() bool {
+	// 检查必需的环境变量是否存在
+	requiredEnvs := []string{
+		"SYNC_S3_BUCKET",
+		"SYNC_S3_ACCESS_KEY_ID", 
+		"SYNC_S3_SECRET_ACCESS_KEY",
+		"SYNC_S3_REGION",
+	}
+	
+	for _, env := range requiredEnvs {
+		if os.Getenv(env) == "" {
+			return false
+		}
+	}
+	
+	return true
 }
