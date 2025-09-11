@@ -35,17 +35,7 @@ type CloudStorage interface {
 	// GetVersion 获取文件版本信息
 	GetVersion(ctx context.Context, key string) (string, time.Time, error)
 	
-	// ListVersions 列出对象版本
-	ListVersions(ctx context.Context, key string) ([]VersionInfo, error)
-}
-
-// VersionInfo 版本信息
-type VersionInfo struct {
-	Version    string    `json:"version"`
-	Timestamp  time.Time `json:"timestamp"`
-	ETag       string    `json:"etag"`
-	Size       int64     `json:"size"`
-	IsLatest   bool      `json:"is_latest"`
+	// 移除了 ListVersions 接口，因为不再使用S3版本控制
 }
 
 // SyncManager 同步管理器接口
@@ -62,8 +52,7 @@ type SyncManager interface {
 	// UploadConfig 上传配置
 	UploadConfig(ctx context.Context, config any) error
 	
-	// DownloadConfig 下载配置
-	DownloadConfig(ctx context.Context) (any, error)
+	// 移除了 DownloadConfig 接口，因为已有 downloadRemoteConfig 等实现
 	
 	// GetSyncStatus 获取同步状态
 	GetSyncStatus() SyncStatus

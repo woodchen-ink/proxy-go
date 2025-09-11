@@ -110,55 +110,22 @@ func (c *S3Client) GetVersion(ctx context.Context, key string) (string, time.Tim
 	return version, timestamp, nil
 }
 
-// ListVersions 列出对象版本
-func (c *S3Client) ListVersions(ctx context.Context, key string) ([]VersionInfo, error) {
-	result, err := c.client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{
-		Bucket: aws.String(c.config.Bucket),
-		Prefix: aws.String(key),
-	})
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to list object versions: %w", err)
-	}
-
-	var versions []VersionInfo
-
-	for _, version := range result.Versions {
-		if version.Key != nil && *version.Key == key {
-			info := VersionInfo{
-				Version:  aws.ToString(version.VersionId),
-				ETag:     strings.Trim(aws.ToString(version.ETag), "\""),
-				Size:     aws.ToInt64(version.Size),
-				IsLatest: aws.ToBool(version.IsLatest),
-			}
-
-			if version.LastModified != nil {
-				info.Timestamp = *version.LastModified
-			}
-
-			versions = append(versions, info)
-		}
-	}
-
-	return versions, nil
-}
-
 // ListObjects 列出对象（使用ListObjectsV2）
 func (c *S3Client) ListObjects(ctx context.Context, prefix string) ([]FileInfo, error) {
 	var allFiles []FileInfo
-	
+
 	input := &s3.ListObjectsV2Input{
 		Bucket: aws.String(c.config.Bucket),
 		Prefix: aws.String(prefix),
 	}
-	
+
 	// 处理分页
 	for {
 		result, err := c.client.ListObjectsV2(ctx, input)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list objects: %w", err)
 		}
-		
+
 		// 转换结果
 		for _, obj := range result.Contents {
 			if obj.Key != nil {
@@ -166,24 +133,24 @@ func (c *S3Client) ListObjects(ctx context.Context, prefix string) ([]FileInfo, 
 					RelativePath: strings.TrimPrefix(*obj.Key, prefix+"/"),
 					Size:         aws.ToInt64(obj.Size),
 				}
-				
+
 				if obj.LastModified != nil {
 					fileInfo.ModTime = *obj.LastModified
 				}
-				
+
 				allFiles = append(allFiles, fileInfo)
 			}
 		}
-		
+
 		// 检查是否还有更多页
 		if !aws.ToBool(result.IsTruncated) {
 			break
 		}
-		
+
 		// 设置下一页的令牌
 		input.ContinuationToken = result.NextContinuationToken
 	}
-	
+
 	return allFiles, nil
 }
 
@@ -199,4 +166,3 @@ func (c *S3Client) TestConnection(ctx context.Context) error {
 
 	return nil
 }
-

@@ -217,21 +217,8 @@ func (m *Manager) SyncConfigOnly(ctx context.Context) error {
 	return nil
 }
 
-// DownloadConfig 下载配置
-func (m *Manager) DownloadConfig(ctx context.Context) (any, error) {
-	configPath := m.config.ConfigPath + "/config.json"
-	data, err := m.storage.Download(ctx, configPath)
-	if err != nil {
-		return nil, err
-	}
-	
-	var syncData SyncData
-	if err := json.Unmarshal(data, &syncData); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal sync data: %w", err)
-	}
-	
-	return syncData.Config, nil
-}
+// 移除了 DownloadConfig 函数，因为它使用了旧的SyncData格式
+// 现在使用 downloadRemoteConfig() 和 downloadConfigWithFallback() 替代
 
 // GetSyncStatus 获取同步状态
 func (m *Manager) GetSyncStatus() SyncStatus {
@@ -296,17 +283,11 @@ func (m *Manager) uploadConfig(ctx context.Context, config any, metrics any) err
 		return fmt.Errorf("failed to upload config: %w", err)
 	}
 	
-	// 上传统计数据（如果有）
+	// 上传统计数据（如果有）- 直接存储JSON格式
 	if metrics != nil {
-		metricsData := SyncData{
-			Version:   m.configLoader.GetConfigVersion(),
-			Timestamp: time.Now(),
-			Metrics:   metrics,
-		}
-		
-		metricsJson, err := json.Marshal(metricsData)
+		metricsJson, err := json.Marshal(metrics)
 		if err != nil {
-			log.Printf("Failed to marshal metrics data: %v", err)
+			log.Printf("Failed to marshal metrics: %v", err)
 			return nil // 统计数据上传失败不影响配置同步
 		}
 		
@@ -349,11 +330,12 @@ func (m *Manager) downloadRemoteConfig(ctx context.Context) error {
 		if err != nil {
 			log.Printf("No remote metrics found or failed to download: %v", err)
 		} else {
-			var metricsSyncData SyncData
-			if err := json.Unmarshal(metricsData, &metricsSyncData); err != nil {
-				log.Printf("Failed to unmarshal metrics data: %v", err)
-			} else if metricsSyncData.Metrics != nil {
-				if err := m.metricsLoader.SaveMetrics(metricsSyncData.Metrics); err != nil {
+			// 直接解析metrics JSON（不使用SyncData包装）
+			var metrics map[string]any
+			if err := json.Unmarshal(metricsData, &metrics); err != nil {
+				log.Printf("Failed to unmarshal metrics JSON: %v", err)
+			} else {
+				if err := m.metricsLoader.SaveMetrics(metrics); err != nil {
 					log.Printf("Failed to save metrics: %v", err)
 				}
 			}

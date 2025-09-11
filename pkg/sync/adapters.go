@@ -268,24 +268,7 @@ func parseStatusCode(codeStr string) (int, error) {
 	return code, nil
 }
 
-// SyncDataWithTimestamp 带时间戳的同步数据
-type SyncDataWithTimestamp struct {
-	SyncData
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-// CreateVersionedSyncData 创建带版本的同步数据
-func CreateVersionedSyncData(config any, metrics any, configVersion string) *SyncDataWithTimestamp {
-	now := time.Now()
-	return &SyncDataWithTimestamp{
-		SyncData: SyncData{
-			Version:   configVersion,
-			Timestamp: now,
-			Config:    config,
-			Metrics:   metrics,
-		},
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-}
+// 移除了未使用的版本化同步数据类型和函数：
+// - SyncDataWithTimestamp 类型
+// - CreateVersionedSyncData() 函数  
+// 这些在直接存储JSON的方案中不需要
