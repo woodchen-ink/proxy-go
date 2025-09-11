@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"proxy-go/internal/router"
 	"proxy-go/internal/security"
 	"proxy-go/internal/service"
+	"proxy-go/pkg/sync"
 	"syscall"
 	"time"
 
@@ -33,11 +35,21 @@ func main() {
 	configPath := "data/config.json"
 	initapp.Init(configPath)
 
-	// 初始化配置管理器
+	// 1. 先初始化同步服务（在配置加载之前）
+	log.Printf("[Init] 正在初始化同步服务...")
+	if err := sync.InitSyncService(); err != nil {
+		log.Printf("[Init] Warning: Failed to initialize sync service: %v", err)
+	}
+
+	// 2. 现在初始化配置管理器（使用已同步的配置）
+	log.Printf("[Init] 正在加载配置...")
 	configManager, err := config.Init(configPath)
 	if err != nil {
 		log.Fatal("Error initializing config manager:", err)
 	}
+
+	// 设置全局配置管理器
+	config.SetGlobalConfigManager(configManager)
 
 	// 获取配置
 	cfg := configManager.GetConfig()
@@ -47,6 +59,17 @@ func main() {
 
 	// 初始化统计服务
 	metrics.Init(cfg)
+
+	// 3. 启动同步服务的定时任务
+	ctx := context.Background()
+	if err := sync.StartSyncService(ctx); err != nil {
+		log.Printf("Warning: Failed to start sync service: %v", err)
+	}
+
+	// 注册配置更新回调（在配置更新时自动同步）
+	config.RegisterUpdateCallback(func(cfg *config.Config) {
+		sync.ConfigSyncCallback()
+	})
 
 	// 创建安全管理器
 	var banManager *security.IPBanManager
@@ -136,6 +159,11 @@ func main() {
 
 		// 停止指标存储服务
 		metrics.StopMetricsStorage()
+
+		// 停止同步服务
+		if err := sync.StopSyncService(); err != nil {
+			log.Printf("Error stopping sync service: %v", err)
+		}
 
 		if err := server.Close(); err != nil {
 			log.Printf("Error during server shutdown: %v\n", err)

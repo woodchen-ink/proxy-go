@@ -237,3 +237,32 @@ func Load(path string) (*Config, error) {
 	}
 	return globalConfigManager.GetConfig(), nil
 }
+
+// SetGlobalConfigManager 设置全局配置管理器
+func SetGlobalConfigManager(cm *ConfigManager) {
+	globalConfigManager = cm
+}
+
+// GetConfig 获取当前配置（全局接口）
+func GetConfig() *Config {
+	if globalConfigManager == nil {
+		return nil
+	}
+	return globalConfigManager.GetConfig()
+}
+
+// ReloadConfig 重新加载配置（全局接口）
+func ReloadConfig() error {
+	if globalConfigManager == nil {
+		return nil
+	}
+	return globalConfigManager.ReloadConfig()
+}
+
+// UpdateConfig 更新配置（全局接口）
+func UpdateConfig(newConfig *Config) error {
+	if globalConfigManager == nil {
+		return nil
+	}
+	return globalConfigManager.UpdateConfig(newConfig)
+}

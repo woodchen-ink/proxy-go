@@ -14,4 +14,18 @@ services:
       #填写公网访问的地址, 需要跟CZL Connect保持一致. 
       #选填, 不填为自动获取
       - OAUTH_REDIRECT_URI=https://localhost:3336/admin/api/oauth/callback 
+      # S3端点
+      - SYNC_S3_ENDPOINT=https://tw-001.s3.synologyc2.net
+      # 存储桶名称 (必需)
+      - SYNC_S3_BUCKET=c2
+      # AWS地区 (必需)
+      - SYNC_S3_REGION=tw-001
+      # 访问密钥ID (必需)
+      - SYNC_S3_ACCESS_KEY_ID=tw4Hxxxxxxxxx
+      # 访问密钥 (必需)
+      - SYNC_S3_SECRET_ACCESS_KEY=VMxxxxxxxxxxx
+      # 是否使用Path Style URL (可选，默认false)
+      - SYNC_S3_USE_PATH_STYLE=false
+      # 配置文件在S3中的保存路径 (可选)
+      - SYNC_CONFIG_PATH=data/proxy-go
     restart: always

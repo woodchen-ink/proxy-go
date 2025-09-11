@@ -792,3 +792,25 @@ func (c *Collector) updateMetricsBatch(batch []RequestMetric) {
 		})
 	}
 }
+
+// RecordStatusCodeBatch 批量记录状态码（用于同步）
+func (c *Collector) RecordStatusCodeBatch(code int, count int64) {
+	c.statusCodeStats.mu.RLock()
+	if counter, exists := c.statusCodeStats.stats[code]; exists {
+		c.statusCodeStats.mu.RUnlock()
+		atomic.AddInt64(counter, count)
+		return
+	}
+	c.statusCodeStats.mu.RUnlock()
+
+	// 需要创建新的计数器
+	c.statusCodeStats.mu.Lock()
+	defer c.statusCodeStats.mu.Unlock()
+	if counter, exists := c.statusCodeStats.stats[code]; exists {
+		atomic.AddInt64(counter, count)
+	} else {
+		counter := new(int64)
+		*counter = count
+		c.statusCodeStats.stats[code] = counter
+	}
+}
