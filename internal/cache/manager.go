@@ -280,16 +280,17 @@ func NewCacheManager(cacheDir string, initialConfig *config.CacheConfig) (*Cache
 
 	cm.enabled.Store(true) // 默认启用缓存
 
-	// 应用初始配置
-	if initialConfig != nil {
+	// 应用初始配置，对于0值使用默认值
+	if initialConfig != nil && initialConfig.MaxAge > 0 && initialConfig.CleanupTick > 0 && initialConfig.MaxCacheSize > 0 {
 		cm.maxAge = time.Duration(initialConfig.MaxAge) * time.Minute
 		cm.cleanupTick = time.Duration(initialConfig.CleanupTick) * time.Minute
 		cm.maxCacheSize = initialConfig.MaxCacheSize * 1024 * 1024 * 1024 // 转换为字节
 	} else {
-		// 使用默认值
+		// 使用默认值（当配置为nil或包含0值时）
 		cm.maxAge = 30 * time.Minute
 		cm.cleanupTick = 5 * time.Minute
 		cm.maxCacheSize = 10 * 1024 * 1024 * 1024 // 10GB
+		log.Printf("[Cache] Using default cache config (maxAge: 30min, cleanupTick: 5min, maxSize: 10GB)")
 	}
 
 	// 启动时清理过期和临时文件
