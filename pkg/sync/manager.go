@@ -285,16 +285,10 @@ func (m *Manager) uploadLocalConfig(ctx context.Context) error {
 
 // uploadConfig 上传配置和统计数据
 func (m *Manager) uploadConfig(ctx context.Context, config any, metrics any) error {
-	// 上传配置文件
-	configData := SyncData{
-		Version:   m.configLoader.GetConfigVersion(),
-		Timestamp: time.Now(),
-		Config:    config,
-	}
-	
-	configJson, err := json.Marshal(configData)
+	// 直接上传配置文件JSON（不包装SyncData）
+	configJson, err := json.Marshal(config)
 	if err != nil {
-		return fmt.Errorf("failed to marshal config data: %w", err)
+		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 	
 	configPath := m.config.ConfigPath + "/config.json"
@@ -335,13 +329,16 @@ func (m *Manager) downloadRemoteConfig(ctx context.Context) error {
 		return fmt.Errorf("failed to download remote config: %w", err)
 	}
 	
-	var configSyncData SyncData
-	if err := json.Unmarshal(configData, &configSyncData); err != nil {
-		return fmt.Errorf("failed to unmarshal config data: %w", err)
+	// 直接解析配置JSON（不是SyncData格式）
+	var config map[string]any
+	if err := json.Unmarshal(configData, &config); err != nil {
+		return fmt.Errorf("failed to unmarshal config JSON: %w", err)
 	}
 	
+	log.Printf("[Sync] Downloaded config successfully, size: %d bytes", len(configData))
+	
 	// 保存配置
-	if err := m.configLoader.SaveConfig(configSyncData.Config); err != nil {
+	if err := m.configLoader.SaveConfig(config); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 	

@@ -31,7 +31,17 @@ func (ca *ConfigAdapter) LoadConfig() (any, error) {
 	}
 
 	// 如果全局配置管理器未初始化，直接从文件加载
-	return ca.loadConfigFromFile()
+	cfg, err := ca.loadConfigFromFile()
+	if err != nil {
+		return nil, err
+	}
+	
+	// 确保返回的不是nil
+	if cfg == nil {
+		return nil, fmt.Errorf("loaded config is nil")
+	}
+	
+	return cfg, nil
 }
 
 // loadConfigFromFile 直接从文件加载配置
