@@ -223,18 +223,21 @@ func (s *SyncService) handleEvents() {
 // ConfigSyncCallback 配置同步回调（在config包中使用）
 func ConfigSyncCallback() {
 	if !IsServiceEnabled() {
+		log.Printf("[Sync] Config sync skipped - service not enabled")
 		return
 	}
 	
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	
 	go func() {
+		// 在goroutine内部创建context，避免过早取消
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		
 		// 配置变更时使用快速同步，只同步主配置文件
 		if err := SyncConfigOnly(ctx); err != nil {
-			log.Printf("[Sync] Failed to sync config after change: %v", err)
+			// S3同步失败不影响本地配置，只记录警告日志
+			log.Printf("[Sync] Warning: Config sync to cloud failed (local config saved successfully): %v", err)
 		} else {
-			log.Printf("[Sync] Config synced after change")
+			log.Printf("[Sync] Config synced to cloud successfully")
 		}
 	}()
 }

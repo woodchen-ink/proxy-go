@@ -41,6 +41,10 @@ func NewS3Client(cfg *Config) (*S3Client, error) {
 			o.BaseEndpoint = aws.String(cfg.Endpoint)
 		}
 		o.UsePathStyle = cfg.UsePathStyle
+		
+		// 设置重试配置
+		o.RetryMaxAttempts = 2
+		o.RetryMode = aws.RetryModeStandard
 	}
 
 	client := s3.NewFromConfig(awsCfg, options)
