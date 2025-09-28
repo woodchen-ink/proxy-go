@@ -986,3 +986,23 @@ func (cm *CacheManager) Stop() {
 		cm.extensionMatcherCache.Stop()
 	}
 }
+
+// InvalidateCacheItem 使指定缓存项失效（删除内存记录和文件）
+func (cm *CacheManager) InvalidateCacheItem(key CacheKey) {
+	// 从sync.Map中获取缓存项
+	if value, ok := cm.items.Load(key); ok {
+		item := value.(*CacheItem)
+		// 删除文件
+		if err := os.Remove(item.FilePath); err != nil {
+			log.Printf("[Cache] Failed to remove cache file %s: %v", item.FilePath, err)
+		}
+		// 删除内存记录
+		cm.items.Delete(key)
+		log.Printf("[Cache] Invalidated cache item for key: %s", key.URL)
+	}
+
+	// 同时从LRU缓存中删除
+	if cm.lruCache != nil {
+		cm.lruCache.Delete(key)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"proxy-go/internal/cache"
 	"proxy-go/internal/config"
 	"proxy-go/internal/metrics"
@@ -331,6 +332,20 @@ func (h *ProxyHandler) handleWelcome(w http.ResponseWriter, r *http.Request, sta
 
 // handleCacheHit 处理缓存命中
 func (h *ProxyHandler) handleCacheHit(w http.ResponseWriter, r *http.Request, item *cache.CacheItem, notModified bool, start time.Time, collector *metrics.Collector) {
+	// 🔧 修复缓存文件被删除后404的问题：在提供文件前再次验证文件是否存在
+	if _, err := os.Stat(item.FilePath); err != nil {
+		// 缓存文件不存在，清理缓存记录并重新处理请求
+		if h.Cache != nil {
+			// 清理内存中的缓存记录
+			cacheKey := h.Cache.GenerateCacheKey(r)
+			h.Cache.InvalidateCacheItem(cacheKey)
+			log.Printf("[Cache] File missing, invalidated cache for %s", r.URL.Path)
+		}
+		// 重新执行正常的代理流程
+		h.handleMissedCache(w, r, start, collector)
+		return
+	}
+
 	w.Header().Set("Content-Type", item.ContentType)
 	if item.ContentEncoding != "" {
 		w.Header().Set("Content-Encoding", item.ContentEncoding)
@@ -344,4 +359,57 @@ func (h *ProxyHandler) handleCacheHit(w http.ResponseWriter, r *http.Request, it
 	}
 	http.ServeFile(w, r, item.FilePath)
 	collector.RecordRequest(r.URL.Path, http.StatusOK, time.Since(start), item.Size, iputil.GetClientIP(r), r)
+}
+
+// handleMissedCache 处理缓存未命中或缓存失效的情况，重新执行代理请求
+func (h *ProxyHandler) handleMissedCache(w http.ResponseWriter, r *http.Request, start time.Time, collector *metrics.Collector) {
+	// 使用路径匹配服务查找匹配的路径
+	matchResult := h.pathMatcherService.MatchPath(r.URL.Path)
+	if !matchResult.Matched {
+		http.NotFound(w, r)
+		return
+	}
+
+	// 创建代理请求结构
+	proxyReq := &service.ProxyRequest{
+		OriginalRequest: r,
+		MatchedPrefix:   matchResult.MatchedPrefix,
+		PathConfig:      matchResult.PathConfig,
+		TargetPath:      matchResult.TargetPath,
+		StartTime:       start,
+	}
+
+	// 检查重定向
+	if h.proxyService.CheckRedirect(proxyReq, w) {
+		collector.RecordRequest(r.URL.Path, http.StatusFound, time.Since(start), 0, iputil.GetClientIP(r), r)
+		return
+	}
+
+	// 选择目标服务器
+	targetURL, altTarget := h.proxyService.SelectTarget(proxyReq)
+
+	// 创建代理请求
+	httpReq, err := h.proxyService.CreateProxyRequest(proxyReq, targetURL)
+	if err != nil {
+		h.errorHandler(w, r, err)
+		return
+	}
+
+	// 执行请求
+	resp, err := h.proxyService.ExecuteRequest(httpReq)
+	if err != nil {
+		h.errorHandler(w, r, fmt.Errorf("error executing request: %v", err))
+		return
+	}
+
+	// 处理响应
+	defer resp.Body.Close()
+	written, err := h.proxyService.ProcessResponse(proxyReq, resp, w, altTarget)
+	if err != nil {
+		h.errorHandler(w, r, err)
+		return
+	}
+
+	// 记录统计信息
+	collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(start), written, iputil.GetClientIP(r), r)
 }
