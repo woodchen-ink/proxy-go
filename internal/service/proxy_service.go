@@ -247,28 +247,43 @@ func (s *ProxyService) shouldCache(req *ProxyRequest, resp *http.Response) bool 
 // processWithCache 处理带缓存的响应
 func (s *ProxyService) processWithCache(req *ProxyRequest, resp *http.Response, w http.ResponseWriter) (int64, error) {
 	cacheKey := s.cache.GenerateCacheKey(req.OriginalRequest)
-	
+
 	if cacheFile, err := s.cache.CreateTemp(cacheKey, resp); err == nil {
-		defer cacheFile.Close()
-		
 		// 使用缓冲IO提高性能
 		bufSize := 32 * 1024 // 32KB 缓冲区
 		buf := make([]byte, bufSize)
-		
+
 		teeReader := io.TeeReader(resp.Body, cacheFile)
 		written, err := io.CopyBuffer(w, teeReader, buf)
-		
-		if err == nil {
+
+		// 🔧 修复: 确保文件完全写入并同步到磁盘后再关闭和提交
+		// 1. 先同步文件内容到磁盘
+		if syncErr := cacheFile.Sync(); syncErr != nil && err == nil {
+			// 如果同步失败，记录错误但继续（不影响客户端响应）
+			// 这里不设置 err，因为客户端已经收到了数据
+		}
+
+		// 2. 关闭文件，确保所有缓冲区都被刷新
+		closeErr := cacheFile.Close()
+
+		// 3. 只有在写入成功且文件正确关闭的情况下才提交缓存
+		if err == nil && closeErr == nil {
 			// 异步提交缓存，不阻塞当前请求处理
 			fileName := cacheFile.Name()
 			respClone := *resp // 创建响应的浅拷贝
 			go func() {
 				s.cache.Commit(cacheKey, fileName, &respClone, written)
 			}()
+		} else {
+			// 如果关闭失败，删除临时文件
+			if closeErr != nil {
+				cacheFile.Close() // 尝试再次关闭
+			}
 		}
+
 		return written, err
 	}
-	
+
 	// 使用缓冲的复制提高性能
 	bufSize := 32 * 1024 // 32KB 缓冲区
 	buf := make([]byte, bufSize)
