@@ -63,14 +63,39 @@ func (cm *ConfigManager) loadConfigFromFile() (*Config, error) {
 		return nil, err
 	}
 
+	// 规范化配置（向后兼容）
+	cm.normalizeConfig(&config)
+
 	// 确保 /mirror 系统路径存在
-	cm.ensureMirrorPath(&config)
+	modified := cm.ensureMirrorPath(&config)
+
+	// 如果添加了 /mirror 或修改了配置，保存到文件
+	if modified {
+		if err := cm.saveConfigToFile(&config); err != nil {
+			log.Printf("[ConfigManager] 保存配置失败: %v", err)
+		}
+	}
 
 	return &config, nil
 }
 
+// normalizeConfig 规范化配置，确保向后兼容
+func (cm *ConfigManager) normalizeConfig(config *Config) {
+	// 遍历所有路径配置，确保 Enabled 字段有默认值
+	for path, pathConfig := range config.MAP {
+		// 如果 Enabled 为 false 且 DefaultTarget 不为空
+		// 说明这是旧配置（JSON unmarshal 默认值为 false）
+		// 我们将其设置为 true（默认启用）
+		if !pathConfig.Enabled && pathConfig.DefaultTarget != "" {
+			pathConfig.Enabled = true
+			config.MAP[path] = pathConfig
+		}
+	}
+}
+
 // ensureMirrorPath 确保 mirror 系统路径存在于配置中
-func (cm *ConfigManager) ensureMirrorPath(config *Config) {
+// 返回 true 表示配置被修改，false 表示未修改
+func (cm *ConfigManager) ensureMirrorPath(config *Config) bool {
 	if config.MAP == nil {
 		config.MAP = make(map[string]PathConfig)
 	}
@@ -96,7 +121,10 @@ func (cm *ConfigManager) ensureMirrorPath(config *Config) {
 			},
 		}
 		log.Printf("[ConfigManager] 自动添加 /mirror 系统路径")
+		return true
 	}
+
+	return false
 }
 
 // createDefaultConfig 创建默认配置文件

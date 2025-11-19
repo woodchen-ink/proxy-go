@@ -971,7 +971,7 @@ export default function ConfigPage() {
               <div className="space-y-4">
                 {config && Object.entries(config.MAP).map(([path, mapping]) => {
                   const stats = pathStats.find(s => s.path === path)
-                  const isSystemPath = path === '/mirror'
+                  const isSystemPath = typeof mapping === 'object' && mapping.DefaultTarget === 'mirror'
 
                   return (
                     <PathMappingItem
@@ -983,6 +983,7 @@ export default function ConfigPage() {
                       onEdit={(p) => handleEditPath(p, mapping)}
                       onDelete={deletePath}
                       onCacheConfigUpdate={handleCacheConfigUpdate}
+                      onExtensionMapEdit={handleExtensionMapEdit}
                     />
                   )
                 })}

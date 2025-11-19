@@ -2,7 +2,7 @@ import React, { useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Edit, Trash2, Database, Shield } from "lucide-react"
+import { Edit, Trash2, Database, Shield, FileText } from "lucide-react"
 import PathStatsCard from "./PathStatsCard"
 import PathCacheConfigDialog from "./PathCacheConfigDialog"
 import {
@@ -55,6 +55,7 @@ interface PathMappingItemProps {
   onEdit: (path: string) => void
   onDelete: (path: string) => void
   onCacheConfigUpdate: (path: string, config: CacheConfig | null) => void
+  onExtensionMapEdit?: (path: string) => void
 }
 
 export default function PathMappingItem({
@@ -65,6 +66,7 @@ export default function PathMappingItem({
   onEdit,
   onDelete,
   onCacheConfigUpdate,
+  onExtensionMapEdit,
 }: PathMappingItemProps) {
   const [cacheDialogOpen, setCacheDialogOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -122,6 +124,16 @@ export default function PathMappingItem({
 
               {/* 操作按钮 */}
               <div className="flex items-center gap-2 ml-4">
+                {onExtensionMapEdit && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onExtensionMapEdit(path)}
+                    title="扩展名规则"
+                  >
+                    <FileText className="h-4 w-4" />
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   size="sm"
