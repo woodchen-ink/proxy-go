@@ -72,6 +72,11 @@ type ProxyHandler struct {
 	Cache        *cache.CacheManager
 }
 
+// GetProxyService 获取ProxyService实例
+func (h *ProxyHandler) GetProxyService() *service.ProxyService {
+	return h.proxyService
+}
+
 // 前缀匹配器结构体
 type prefixMatcher struct {
 	prefixes []string

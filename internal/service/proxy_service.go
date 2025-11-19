@@ -51,15 +51,21 @@ type ProxyService struct {
 	cache           *cache.CacheManager
 	ruleService     *RuleService
 	redirectService *RedirectService
+	retryConfig     RetryConfig      // 重试配置
+	healthChecker   *HealthChecker   // 健康检查器
 }
 
 func NewProxyService(client *http.Client, cache *cache.CacheManager, ruleService *RuleService) *ProxyService {
 	redirectService := NewRedirectService(ruleService)
+	healthChecker := NewHealthChecker(DefaultHealthCheckConfig) // 创建健康检查器
+
 	return &ProxyService{
 		client:          client,
 		cache:           cache,
 		ruleService:     ruleService,
 		redirectService: redirectService,
+		retryConfig:     DefaultRetryConfig, // 使用默认重试配置
+		healthChecker:   healthChecker,      // 健康检查器
 	}
 }
 
@@ -180,11 +186,23 @@ func (s *ProxyService) CreateProxyRequest(req *ProxyRequest, targetURL string) (
 	return proxyReq, nil
 }
 
-// ExecuteRequest 执行代理请求
+// ExecuteRequest 执行代理请求（带重试机制和健康检查）
 func (s *ProxyService) ExecuteRequest(proxyReq *http.Request) (*http.Response, error) {
-	resp, err := s.client.Do(proxyReq)
+	targetURL := proxyReq.URL.String()
+	start := time.Now()
+
+	// 使用带重试的请求执行
+	resp, err := ExecuteWithRetry(s.client, proxyReq, s.retryConfig)
+	latency := time.Since(start)
+
+	// 记录健康检查结果
+	if s.healthChecker != nil {
+		success := err == nil && resp != nil && resp.StatusCode < 500
+		s.healthChecker.RecordRequest(targetURL, success, latency, err)
+	}
+
 	if err != nil {
-		return nil, fmt.Errorf("proxy request failed: %v", err)
+		return nil, fmt.Errorf("proxy request failed after retries: %v", err)
 	}
 	return resp, nil
 }
@@ -224,9 +242,9 @@ func (s *ProxyService) ProcessResponse(req *ProxyRequest, resp *http.Response, w
 	if s.shouldCache(req, resp) {
 		written, err = s.processWithCache(req, resp, w)
 	} else {
-		// 使用缓冲的复制提高性能
-		bufSize := 32 * 1024 // 32KB 缓冲区
-		buf := make([]byte, bufSize)
+		// 🚀 零拷贝优化: 使用 buffer pool 复用缓冲区
+		buf := cache.GetBuffer(32 * 1024)
+		defer cache.PutBuffer(buf)
 		written, err = io.CopyBuffer(w, resp.Body, buf)
 	}
 
@@ -249,9 +267,9 @@ func (s *ProxyService) processWithCache(req *ProxyRequest, resp *http.Response, 
 	cacheKey := s.cache.GenerateCacheKey(req.OriginalRequest)
 
 	if cacheFile, err := s.cache.CreateTemp(cacheKey, resp); err == nil {
-		// 使用缓冲IO提高性能
-		bufSize := 32 * 1024 // 32KB 缓冲区
-		buf := make([]byte, bufSize)
+		// 🚀 零拷贝优化: 使用 buffer pool 复用缓冲区
+		buf := cache.GetBuffer(32 * 1024)
+		defer cache.PutBuffer(buf)
 
 		teeReader := io.TeeReader(resp.Body, cacheFile)
 		written, err := io.CopyBuffer(w, teeReader, buf)
@@ -284,9 +302,9 @@ func (s *ProxyService) processWithCache(req *ProxyRequest, resp *http.Response, 
 		return written, err
 	}
 
-	// 使用缓冲的复制提高性能
-	bufSize := 32 * 1024 // 32KB 缓冲区
-	buf := make([]byte, bufSize)
+	// 🚀 零拷贝优化: 使用 buffer pool 复用缓冲区
+	buf := cache.GetBuffer(32 * 1024)
+	defer cache.PutBuffer(buf)
 	return io.CopyBuffer(w, resp.Body, buf)
 }
 
@@ -367,4 +385,24 @@ func (s *ProxyService) CreateLogEntry(req *ProxyRequest, statusCode int, duratio
 		req.OriginalRequest.Method, req.OriginalRequest.URL.Path, statusCode,
 		iputil.GetClientIP(req.OriginalRequest), utils.FormatBytes(bytesWritten),
 		utils.GetRequestSource(req.OriginalRequest), targetURL)
+}
+
+// GetHealthChecker 获取健康检查器
+func (s *ProxyService) GetHealthChecker() *HealthChecker {
+	return s.healthChecker
+}
+
+// IsTargetHealthy 检查目标是否健康
+func (s *ProxyService) IsTargetHealthy(targetURL string) bool {
+	if s.healthChecker == nil {
+		return true
+	}
+	return s.healthChecker.IsHealthy(targetURL)
+}
+
+// StopHealthChecker 停止健康检查器
+func (s *ProxyService) StopHealthChecker() {
+	if s.healthChecker != nil {
+		s.healthChecker.Stop()
+	}
 }

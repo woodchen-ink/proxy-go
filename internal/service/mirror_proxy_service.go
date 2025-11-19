@@ -154,7 +154,10 @@ func (s *MirrorProxyService) ProcessResponse(req *MirrorProxyRequest, resp *http
 	if req.OriginalRequest.Method == http.MethodGet && resp.StatusCode == http.StatusOK && s.cache != nil {
 		written, err = s.processWithCache(req, resp, w)
 	} else {
-		written, err = io.Copy(w, resp.Body)
+		// 🚀 零拷贝优化: 使用 buffer pool 复用缓冲区
+		buf := cache.GetBuffer(32 * 1024)
+		defer cache.PutBuffer(buf)
+		written, err = io.CopyBuffer(w, resp.Body, buf)
 	}
 
 	if err != nil && !s.isConnectionClosed(err) {
@@ -169,9 +172,9 @@ func (s *MirrorProxyService) processWithCache(req *MirrorProxyRequest, resp *htt
 	cacheKey := s.cache.GenerateCacheKey(req.OriginalRequest)
 
 	if cacheFile, err := s.cache.CreateTemp(cacheKey, resp); err == nil {
-		// 使用缓冲IO提高性能
-		bufSize := 32 * 1024 // 32KB 缓冲区
-		buf := make([]byte, bufSize)
+		// 🚀 零拷贝优化: 使用 buffer pool 复用缓冲区
+		buf := cache.GetBuffer(32 * 1024)
+		defer cache.PutBuffer(buf)
 
 		teeReader := io.TeeReader(resp.Body, cacheFile)
 		written, err := io.CopyBuffer(w, teeReader, buf)
@@ -204,7 +207,10 @@ func (s *MirrorProxyService) processWithCache(req *MirrorProxyRequest, resp *htt
 		return written, err
 	}
 
-	return io.Copy(w, resp.Body)
+	// 🚀 零拷贝优化: 使用 buffer pool 复用缓冲区
+	buf := cache.GetBuffer(32 * 1024)
+	defer cache.PutBuffer(buf)
+	return io.CopyBuffer(w, resp.Body, buf)
 }
 
 // copyHeaders 复制HTTP头部，过滤hop-by-hop头部

@@ -45,8 +45,16 @@ interface Metrics {
   }>
 }
 
+interface HealthSummary {
+  total_targets: number
+  healthy_targets: number
+  unhealthy_targets: number
+  overall_health: number
+}
+
 export default function DashboardPage() {
   const [metrics, setMetrics] = useState<Metrics | null>(null)
+  const [healthSummary, setHealthSummary] = useState<HealthSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const { toast } = useToast()
@@ -92,11 +100,37 @@ export default function DashboardPage() {
     }
   }, [router, toast])
 
+  const fetchHealthSummary = useCallback(async () => {
+    try {
+      const token = localStorage.getItem("token")
+      if (!token) return
+
+      const response = await fetch("/admin/api/health/status", {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setHealthSummary(data.summary)
+      }
+    } catch (error) {
+      // 忽略健康检查错误,不影响主界面
+      console.error("Failed to fetch health summary:", error)
+    }
+  }, [])
+
   useEffect(() => {
     fetchMetrics()
-    const interval = setInterval(fetchMetrics, 1000)
-    return () => clearInterval(interval)
-  }, [fetchMetrics])
+    fetchHealthSummary()
+    const metricsInterval = setInterval(fetchMetrics, 1000)
+    const healthInterval = setInterval(fetchHealthSummary, 5000)
+    return () => {
+      clearInterval(metricsInterval)
+      clearInterval(healthInterval)
+    }
+  }, [fetchMetrics, fetchHealthSummary])
 
   if (loading) {
     return (
@@ -132,6 +166,45 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
+      {/* 健康检查快捷卡片 */}
+      {healthSummary && (
+        <Card style={{ backgroundColor: healthSummary.overall_health >= 90 ? '#F4E8E0' : healthSummary.overall_health >= 70 ? '#fcfce0' : '#fce8e8' }}>
+          <CardHeader>
+            <CardTitle className="flex items-center justify-between">
+              <span>服务健康状态</span>
+              <Link href="/dashboard/health" className="text-sm hover:underline" style={{ color: '#C08259' }}>
+                查看详情 →
+              </Link>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-4 gap-4">
+              <div>
+                <div className="text-sm font-medium text-gray-500">总体健康度</div>
+                <div className="text-2xl font-bold" style={{
+                  color: healthSummary.overall_health >= 90 ? '#518751' :
+                         healthSummary.overall_health >= 70 ? '#ecec70' : '#b85e48'
+                }}>
+                  {healthSummary.overall_health.toFixed(1)}%
+                </div>
+              </div>
+              <div>
+                <div className="text-sm font-medium text-gray-500">总目标数</div>
+                <div className="text-2xl font-bold">{healthSummary.total_targets}</div>
+              </div>
+              <div>
+                <div className="text-sm font-medium text-gray-500">健康目标</div>
+                <div className="text-2xl font-bold" style={{ color: '#518751' }}>{healthSummary.healthy_targets}</div>
+              </div>
+              <div>
+                <div className="text-sm font-medium text-gray-500">不健康目标</div>
+                <div className="text-2xl font-bold" style={{ color: '#b85e48' }}>{healthSummary.unhealthy_targets}</div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
