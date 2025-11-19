@@ -124,6 +124,63 @@ func (s *SecurityService) CheckIPStatus(ip string, fallbackIP string) (*IPStatus
 	return result, nil
 }
 
+// BanHistoryResponse 封禁历史响应
+type BanHistoryResponse struct {
+	History []BanHistoryItem `json:"history"`
+	Total   int              `json:"total"`
+}
+
+// BanHistoryItem 封禁历史项
+type BanHistoryItem struct {
+	IP          string `json:"ip"`
+	BanTime     string `json:"ban_time"`
+	BanEndTime  string `json:"ban_end_time"`
+	Reason      string `json:"reason"`
+	ErrorCount  int    `json:"error_count"`
+	IsActive    bool   `json:"is_active"`
+	UnbanTime   string `json:"unban_time,omitempty"`
+	UnbanReason string `json:"unban_reason,omitempty"`
+}
+
+// GetBanHistory 获取封禁历史记录
+func (s *SecurityService) GetBanHistory(limit int) (*BanHistoryResponse, error) {
+	if s.banManager == nil {
+		return nil, ErrSecurityManagerNotEnabled
+	}
+
+	history, err := s.banManager.GetBanHistory(limit)
+	if err != nil {
+		return nil, err
+	}
+
+	// 转换为前端友好的格式
+	items := make([]BanHistoryItem, 0, len(history))
+	for _, record := range history {
+		item := BanHistoryItem{
+			IP:         record.IP,
+			BanTime:    record.BanTime.Format("2006-01-02 15:04:05"),
+			BanEndTime: record.BanEndTime.Format("2006-01-02 15:04:05"),
+			Reason:     record.Reason,
+			ErrorCount: record.ErrorCount,
+			IsActive:   record.IsActive,
+		}
+
+		if !record.UnbanTime.IsZero() {
+			item.UnbanTime = record.UnbanTime.Format("2006-01-02 15:04:05")
+		}
+		if record.UnbanReason != "" {
+			item.UnbanReason = record.UnbanReason
+		}
+
+		items = append(items, item)
+	}
+
+	return &BanHistoryResponse{
+		History: items,
+		Total:   len(items),
+	}, nil
+}
+
 
 // 定义错误
 var (

@@ -51,14 +51,27 @@ interface IPStatus {
   remaining_seconds?: number
 }
 
+interface BanHistoryItem {
+  ip: string
+  ban_time: string
+  ban_end_time: string
+  reason: string
+  error_count: number
+  is_active: boolean
+  unban_time?: string
+  unban_reason?: string
+}
+
 export default function SecurityPage() {
   const [bannedIPs, setBannedIPs] = useState<BannedIP[]>([])
   const [stats, setStats] = useState<SecurityStats | null>(null)
+  const [banHistory, setBanHistory] = useState<BanHistoryItem[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [checkingIP, setCheckingIP] = useState("")
   const [ipStatus, setIPStatus] = useState<IPStatus | null>(null)
   const [unbanning, setUnbanning] = useState<string | null>(null)
+  const [historyLimit, setHistoryLimit] = useState(50)
   const { toast } = useToast()
   const router = useRouter()
 
@@ -70,16 +83,19 @@ export default function SecurityPage() {
         return
       }
 
-      const [bannedResponse, statsResponse] = await Promise.all([
+      const [bannedResponse, statsResponse, historyResponse] = await Promise.all([
         fetch("/admin/api/security/banned-ips", {
           headers: { 'Authorization': `Bearer ${token}` }
         }),
         fetch("/admin/api/security/stats", {
           headers: { 'Authorization': `Bearer ${token}` }
+        }),
+        fetch(`/admin/api/security/ban-history?limit=${historyLimit}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
         })
       ])
 
-      if (bannedResponse.status === 401 || statsResponse.status === 401) {
+      if (bannedResponse.status === 401 || statsResponse.status === 401 || historyResponse.status === 401) {
         localStorage.removeItem("token")
         router.push("/login")
         return
@@ -94,6 +110,11 @@ export default function SecurityPage() {
         const statsData = await statsResponse.json()
         setStats(statsData)
       }
+
+      if (historyResponse.ok) {
+        const historyData = await historyResponse.json()
+        setBanHistory(historyData.history || [])
+      }
     } catch (error) {
       console.error("获取安全数据失败:", error)
       toast({
@@ -105,7 +126,7 @@ export default function SecurityPage() {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [router, toast])
+  }, [router, toast, historyLimit])
 
   useEffect(() => {
     fetchData()
@@ -361,6 +382,76 @@ export default function SecurityPage() {
                 ))}
               </TableBody>
             </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>封禁历史记录</CardTitle>
+          <div className="flex items-center gap-2 text-sm text-muted-foreground mt-2">
+            显示最近
+            <select
+              value={historyLimit}
+              onChange={(e) => setHistoryLimit(Number(e.target.value))}
+              className="border rounded px-2 py-1"
+            >
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+              <option value={200}>200</option>
+              <option value={0}>全部</option>
+            </select>
+            条记录
+          </div>
+        </CardHeader>
+        <CardContent>
+          {banHistory.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              暂无封禁历史记录
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>IP地址</TableHead>
+                    <TableHead>状态</TableHead>
+                    <TableHead>封禁时间</TableHead>
+                    <TableHead>封禁结束时间</TableHead>
+                    <TableHead>原因</TableHead>
+                    <TableHead>错误次数</TableHead>
+                    <TableHead>解封时间</TableHead>
+                    <TableHead>解封原因</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {banHistory.map((item, index) => (
+                    <TableRow key={`${item.ip}-${index}`}>
+                      <TableCell className="font-mono">{item.ip}</TableCell>
+                      <TableCell>
+                        <span className={`px-2 py-1 rounded text-xs ${
+                          item.is_active
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-gray-100 text-gray-800'
+                        }`}>
+                          {item.is_active ? '封禁中' : '已解封'}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-sm">{item.ban_time}</TableCell>
+                      <TableCell className="text-sm">{item.ban_end_time}</TableCell>
+                      <TableCell className="text-sm">{item.reason}</TableCell>
+                      <TableCell className="text-center">{item.error_count}</TableCell>
+                      <TableCell className="text-sm">
+                        {item.unban_time || '-'}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {item.unban_reason || '-'}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>

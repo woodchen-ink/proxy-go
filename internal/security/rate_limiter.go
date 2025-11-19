@@ -14,6 +14,8 @@ type IPBanManager struct {
 	bannedIPs sync.Map
 	// 配置参数
 	config *IPBanConfig
+	// 持久化存储
+	storage *BanStorage
 	// 清理任务停止信号
 	stopCleanup chan struct{}
 	// 清理任务等待组
@@ -55,10 +57,17 @@ func NewIPBanManager(config *IPBanConfig) *IPBanManager {
 		config = DefaultIPBanConfig()
 	}
 
+	// 创建持久化存储
+	storage := NewBanStorage("data/banned_ips.json")
+
 	manager := &IPBanManager{
 		config:      config,
+		storage:     storage,
 		stopCleanup: make(chan struct{}),
 	}
+
+	// 加载历史封禁数据
+	manager.loadBannedIPs()
 
 	// 启动清理任务
 	manager.startCleanupTask()
@@ -69,6 +78,35 @@ func NewIPBanManager(config *IPBanConfig) *IPBanManager {
 		float64(config.BanDurationMinutes))
 
 	return manager
+}
+
+// loadBannedIPs 从持久化存储加载封禁数据
+func (m *IPBanManager) loadBannedIPs() {
+	activeBans, err := m.storage.GetActiveBans()
+	if err != nil {
+		log.Printf("[Security] 加载封禁数据失败: %v", err)
+		return
+	}
+
+	now := time.Now()
+	loadedCount := 0
+	expiredCount := 0
+
+	for ip, record := range activeBans {
+		// 检查是否已过期
+		if now.After(record.BanEndTime) {
+			expiredCount++
+			// 标记为已过期
+			m.storage.RemoveBan(ip, "自动解封（启动时检测到已过期）")
+			continue
+		}
+
+		// 加载到内存
+		m.bannedIPs.Store(ip, record.BanEndTime)
+		loadedCount++
+	}
+
+	log.Printf("[Security] 已加载 %d 个活跃封禁记录, 跳过 %d 个过期记录", loadedCount, expiredCount)
 }
 
 // RecordError 记录404错误
@@ -110,6 +148,19 @@ func (m *IPBanManager) RecordError(ip string) {
 func (m *IPBanManager) banIP(ip string, banTime time.Time) {
 	banEndTime := banTime.Add(time.Duration(m.config.BanDurationMinutes) * time.Minute)
 	m.bannedIPs.Store(ip, banEndTime)
+
+	// 获取错误计数
+	errorCount := 0
+	if value, ok := m.errorCounts.Load(ip); ok {
+		record := value.(*errorRecord)
+		errorCount = record.count
+	}
+
+	// 持久化封禁记录
+	reason := "404错误次数超过阈值"
+	if err := m.storage.AddBan(ip, banTime, banEndTime, reason, errorCount); err != nil {
+		log.Printf("[Security] 保存封禁记录失败: %v", err)
+	}
 
 	log.Printf("[Security] IP已被封禁: %s, 封禁至: %s (%.0f分钟)",
 		ip, banEndTime.Format("15:04:05"), float64(m.config.BanDurationMinutes))
@@ -158,6 +209,12 @@ func (m *IPBanManager) UnbanIP(ip string) bool {
 	_, exists := m.bannedIPs.Load(ip)
 	if exists {
 		m.bannedIPs.Delete(ip)
+
+		// 持久化解封操作
+		if err := m.storage.RemoveBan(ip, "手动解封"); err != nil {
+			log.Printf("[Security] 保存解封记录失败: %v", err)
+		}
+
 		log.Printf("[Security] 手动解封IP: %s", ip)
 		return true
 	}
@@ -262,12 +319,31 @@ func (m *IPBanManager) cleanup() {
 
 	for _, ip := range expiredBans {
 		m.bannedIPs.Delete(ip)
+		// 持久化解封操作
+		if err := m.storage.RemoveBan(ip, "自动解封（封禁时间已过期）"); err != nil {
+			log.Printf("[Security] 保存自动解封记录失败: %v", err)
+		}
+	}
+
+	// 清理持久化存储中的过期记录
+	if err := m.storage.CleanupExpired(); err != nil {
+		log.Printf("[Security] 清理持久化存储失败: %v", err)
 	}
 
 	if len(expiredIPs) > 0 || len(expiredBans) > 0 {
 		log.Printf("[Security] 清理任务完成 - 清理错误记录: %d, 清理过期封禁: %d",
 			len(expiredIPs), len(expiredBans))
 	}
+}
+
+// GetBanHistory 获取封禁历史记录
+func (m *IPBanManager) GetBanHistory(limit int) ([]BanRecord, error) {
+	return m.storage.GetHistory(limit)
+}
+
+// GetStorage 获取存储实例（用于S3同步）
+func (m *IPBanManager) GetStorage() *BanStorage {
+	return m.storage
 }
 
 // Stop 停止IP封禁管理器

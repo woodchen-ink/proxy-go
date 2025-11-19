@@ -47,6 +47,7 @@ func SetupAdminRoutes(proxyHandler *handler.ProxyHandler, authHandler *handler.A
 			{http.MethodPost, "/admin/api/security/unban", securityHandler.UnbanIP, true},
 			{http.MethodGet, "/admin/api/security/stats", securityHandler.GetSecurityStats, true},
 			{http.MethodGet, "/admin/api/security/check-ip", securityHandler.CheckIPStatus, true},
+			{http.MethodGet, "/admin/api/security/ban-history", securityHandler.GetBanHistory, true},
 		}
 		apiRoutes = append(apiRoutes, securityRoutes...)
 	}

@@ -89,3 +89,23 @@ func (sh *SecurityHandler) CheckIPStatus(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
 }
+
+// GetBanHistory 获取封禁历史记录
+func (sh *SecurityHandler) GetBanHistory(w http.ResponseWriter, r *http.Request) {
+	// 从查询参数获取limit，默认100条
+	limit := 100
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsedLimit, err := json.Number(limitStr).Int64(); err == nil && parsedLimit > 0 {
+			limit = int(parsedLimit)
+		}
+	}
+
+	result, err := sh.securityService.GetBanHistory(limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
