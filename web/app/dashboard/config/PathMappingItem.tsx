@@ -2,7 +2,7 @@ import React, { useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Edit, Trash2, Database, Shield, FileText } from "lucide-react"
+import { Edit, Trash2, Database, Shield, FileText, ChevronDown, ChevronUp } from "lucide-react"
 import PathStatsCard from "./PathStatsCard"
 import PathCacheConfigDialog from "./PathCacheConfigDialog"
 import {
@@ -15,6 +15,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 
 interface CacheConfig {
   max_age: number
@@ -47,6 +52,15 @@ interface PathStats {
   bytes_saved: number
 }
 
+interface ExtRuleConfig {
+  Extensions: string
+  Target: string
+  SizeThreshold?: number
+  MaxSize?: number
+  RedirectMode?: boolean
+  Domains?: string
+}
+
 interface PathMappingItemProps {
   path: string
   mapping: PathMapping | string
@@ -56,6 +70,8 @@ interface PathMappingItemProps {
   onDelete: (path: string) => void
   onCacheConfigUpdate: (path: string, config: CacheConfig | null) => void
   onExtensionMapEdit?: (path: string) => void
+  onExtensionRuleEdit?: (path: string, index?: number, rule?: ExtRuleConfig) => void
+  onExtensionRuleDelete?: (path: string, index: number) => void
 }
 
 export default function PathMappingItem({
@@ -67,9 +83,12 @@ export default function PathMappingItem({
   onDelete,
   onCacheConfigUpdate,
   onExtensionMapEdit,
+  onExtensionRuleEdit,
+  onExtensionRuleDelete,
 }: PathMappingItemProps) {
   const [cacheDialogOpen, setCacheDialogOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [extensionRulesOpen, setExtensionRulesOpen] = useState(false)
 
   // 处理字符串格式的映射
   const mappingObj: PathMapping =
@@ -81,6 +100,15 @@ export default function PathMappingItem({
 
   const handleCacheSave = (config: CacheConfig | null) => {
     onCacheConfigUpdate(path, config)
+  }
+
+  // 格式化字节大小
+  const formatBytes = (bytes: number): string => {
+    if (bytes === 0) return "0 B"
+    const k = 1024
+    const sizes = ["B", "KB", "MB", "GB"]
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`
   }
 
   return (
@@ -166,6 +194,82 @@ export default function PathMappingItem({
 
             {/* 统计信息 */}
             <PathStatsCard stats={stats} />
+
+            {/* 扩展名规则列表 */}
+            {mappingObj.ExtensionMap && mappingObj.ExtensionMap.length > 0 && (
+              <Collapsible open={extensionRulesOpen} onOpenChange={setExtensionRulesOpen}>
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" size="sm" className="w-full justify-start px-0 hover:bg-transparent">
+                    {extensionRulesOpen ? (
+                      <ChevronUp className="h-4 w-4 mr-2" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4 mr-2" />
+                    )}
+                    <span className="text-sm font-medium">
+                      扩展名规则 ({mappingObj.ExtensionMap.length} 条)
+                    </span>
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="mt-2 space-y-2">
+                  {mappingObj.ExtensionMap.map((rule, index) => (
+                    <div
+                      key={index}
+                      className="border rounded-md p-3 bg-muted/50 space-y-2"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1 space-y-1">
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline" className="font-mono text-xs">
+                              {rule.Extensions}
+                            </Badge>
+                            {rule.RedirectMode && (
+                              <Badge variant="secondary" className="text-xs">
+                                302重定向
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="text-xs text-muted-foreground break-all">
+                            目标: {rule.Target}
+                          </div>
+                          {rule.Domains && (
+                            <div className="text-xs text-muted-foreground">
+                              域名限制: {rule.Domains}
+                            </div>
+                          )}
+                          {(rule.SizeThreshold || rule.MaxSize) && (
+                            <div className="text-xs text-muted-foreground">
+                              大小范围: {rule.SizeThreshold ? formatBytes(rule.SizeThreshold) : "0"} - {rule.MaxSize ? formatBytes(rule.MaxSize) : "无限制"}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex gap-1 ml-2">
+                          {onExtensionRuleEdit && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => onExtensionRuleEdit(path, index, rule)}
+                              className="h-8 w-8 p-0"
+                            >
+                              <Edit className="h-3 w-3" />
+                            </Button>
+                          )}
+                          {onExtensionRuleDelete && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => onExtensionRuleDelete(path, index)}
+                              className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </CollapsibleContent>
+              </Collapsible>
+            )}
           </div>
         </CardContent>
       </Card>

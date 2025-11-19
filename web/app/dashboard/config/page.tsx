@@ -228,7 +228,10 @@ export default function ConfigPage() {
         })
         if (statsResponse.ok) {
           const statsData = await statsResponse.json()
+          console.log("路径统计数据:", statsData)
           setPathStats(statsData.path_stats || [])
+        } else {
+          console.error("获取路径统计失败，状态码:", statsResponse.status)
         }
       } catch (error) {
         console.error("获取路径统计失败:", error)
@@ -984,6 +987,8 @@ export default function ConfigPage() {
                       onDelete={deletePath}
                       onCacheConfigUpdate={handleCacheConfigUpdate}
                       onExtensionMapEdit={handleExtensionMapEdit}
+                      onExtensionRuleEdit={handleExtensionRuleEdit}
+                      onExtensionRuleDelete={deleteExtensionRule}
                     />
                   )
                 })}
