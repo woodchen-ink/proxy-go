@@ -2,7 +2,7 @@ import React, { useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Edit, Trash2, Database, Shield, FileText, ChevronDown, ChevronUp } from "lucide-react"
+import { Edit, Trash2, Database, Shield, FileText, ChevronDown, ChevronUp, Eraser } from "lucide-react"
 import PathStatsCard from "./PathStatsCard"
 import PathCacheConfigDialog from "./PathCacheConfigDialog"
 import {
@@ -72,6 +72,7 @@ interface PathMappingItemProps {
   onExtensionMapEdit?: (path: string) => void
   onExtensionRuleEdit?: (path: string, index?: number, rule?: ExtRuleConfig) => void
   onExtensionRuleDelete?: (path: string, index: number) => void
+  onClearCache?: (path: string) => void
 }
 
 export default function PathMappingItem({
@@ -85,6 +86,7 @@ export default function PathMappingItem({
   onExtensionMapEdit,
   onExtensionRuleEdit,
   onExtensionRuleDelete,
+  onClearCache,
 }: PathMappingItemProps) {
   const [cacheDialogOpen, setCacheDialogOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -170,6 +172,17 @@ export default function PathMappingItem({
                 >
                   <Database className="h-4 w-4" />
                 </Button>
+                {onClearCache && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onClearCache(path)}
+                    title="清理此路径缓存"
+                    className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                  >
+                    <Eraser className="h-4 w-4" />
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   size="sm"

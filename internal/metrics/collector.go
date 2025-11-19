@@ -201,6 +201,9 @@ type Collector struct {
 		lastUpdate time.Time     // 最后更新时间
 		current    int64         // 当前桶的请求数
 	}
+
+	// 新增：路径统计持久化存储
+	pathStatsStorage *PathStatsStorage
 }
 
 type RequestMetric struct {
@@ -225,14 +228,15 @@ var (
 func InitCollector(cfg *config.Config) error {
 	once.Do(func() {
 		instance = &Collector{
-			startTime:       time.Now(),
-			recentRequests:  models.NewRequestQueue(100),
-			config:          cfg,
-			minLatency:      math.MaxInt64,
-			statusCodeStats: NewStatusCodeStats(),
-			latencyBuckets:  &LatencyBuckets{},
-			refererStats:    NewRefererStats(),
-			pathStats:       NewRefererStats(), // 初始化路径统计
+			startTime:        time.Now(),
+			recentRequests:   models.NewRequestQueue(100),
+			config:           cfg,
+			minLatency:       math.MaxInt64,
+			statusCodeStats:  NewStatusCodeStats(),
+			latencyBuckets:   &LatencyBuckets{},
+			refererStats:     NewRefererStats(),
+			pathStats:        NewRefererStats(), // 初始化路径统计
+			pathStatsStorage: NewPathStatsStorage("data/path_stats.json"),
 		}
 
 		// 初始化带宽统计
@@ -267,6 +271,11 @@ func InitCollector(cfg *config.Config) error {
 			}
 		}
 
+		// 加载持久化的路径统计数据
+		if err := instance.loadPathStats(); err != nil {
+			log.Printf("[Collector] 加载路径统计数据失败: %v", err)
+		}
+
 		// 初始化异步指标收集通道
 		requestChan = make(chan RequestMetric, 10000)
 		instance.startAsyncMetricsUpdater()
@@ -276,6 +285,9 @@ func InitCollector(cfg *config.Config) error {
 
 		// 启动定期清理任务
 		instance.startCleanupTask()
+
+		// 启动定期持久化任务
+		instance.startPersistenceTask()
 	})
 	return nil
 }
@@ -923,4 +935,73 @@ func (c *Collector) GetPathStatByPath(path string) *models.PathMetricsJSON {
 		}
 	}
 	return nil
+}
+
+// loadPathStats 加载持久化的路径统计数据
+func (c *Collector) loadPathStats() error {
+	loadedStats, err := c.pathStatsStorage.LoadPathStats()
+	if err != nil {
+		return fmt.Errorf("failed to load path stats: %w", err)
+	}
+
+	if len(loadedStats) == 0 {
+		log.Printf("[Collector] 没有找到持久化的路径统计数据，从空开始")
+		return nil
+	}
+
+	// 将加载的数据恢复到内存中
+	for _, stat := range loadedStats {
+		pathMetrics := &models.PathMetrics{
+			Path: stat.Path,
+		}
+
+		// 恢复计数器
+		pathMetrics.RequestCount.Store(stat.RequestCount)
+		pathMetrics.ErrorCount.Store(stat.ErrorCount)
+		pathMetrics.BytesTransferred.Store(stat.BytesTransferred)
+		pathMetrics.TotalLatency.Store(0) // 延迟重新累计
+		pathMetrics.LastAccessTime.Store(stat.LastAccessTime)
+
+		// 恢复状态码统计
+		pathMetrics.Status2xx.Store(stat.Status2xx)
+		pathMetrics.Status3xx.Store(stat.Status3xx)
+		pathMetrics.Status4xx.Store(stat.Status4xx)
+		pathMetrics.Status5xx.Store(stat.Status5xx)
+
+		// 恢复缓存统计
+		pathMetrics.CacheHits.Store(stat.CacheHits)
+		pathMetrics.CacheMisses.Store(stat.CacheMisses)
+		pathMetrics.BytesSaved.Store(stat.BytesSaved)
+
+		// 存储到 pathStats
+		c.pathStats.Store(stat.Path, pathMetrics)
+	}
+
+	log.Printf("[Collector] 已加载 %d 条路径统计数据", len(loadedStats))
+	return nil
+}
+
+// savePathStats 保存路径统计数据到持久化存储
+func (c *Collector) savePathStats() error {
+	stats := c.GetPathStats()
+	if err := c.pathStatsStorage.SavePathStats(stats); err != nil {
+		return fmt.Errorf("failed to save path stats: %w", err)
+	}
+	return nil
+}
+
+// startPersistenceTask 启动定期持久化任务
+func (c *Collector) startPersistenceTask() {
+	go func() {
+		// 每5分钟持久化一次路径统计数据
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+
+		for {
+			<-ticker.C
+			if err := c.savePathStats(); err != nil {
+				log.Printf("[Collector] 定期持久化路径统计失败: %v", err)
+			}
+		}
+	}()
 }

@@ -196,8 +196,13 @@ func (ds *DirectorySync) shouldSyncFile(filePath string) bool {
 			}
 		}
 	} else {
-		// data目录：只同步主配置文件
-		return relativePath == "config.json"
+		// data目录：同步配置文件和持久化数据
+		allowedDataFiles := []string{"config.json", "path_stats.json", "banned_ips.json"}
+		for _, allowedFile := range allowedDataFiles {
+			if relativePath == allowedFile {
+				return true
+			}
+		}
 	}
 
 	return false
@@ -279,8 +284,13 @@ func (ds *DirectorySync) shouldSyncRemoteFile(relativePath string) bool {
 		}
 		return false
 	} else {
-		// data目录：只同步主配置文件
-		return relativePath == "config.json"
+		// data目录：同步配置文件和持久化数据
+		allowedDataFiles := []string{"config.json", "path_stats.json", "banned_ips.json"}
+		for _, allowedFile := range allowedDataFiles {
+			if relativePath == allowedFile {
+				return true
+			}
+		}
 	}
 
 	return false

@@ -457,6 +457,51 @@ export default function ConfigPage() {
     updateConfig(newConfig)
   }
 
+  const handleClearPathCache = async (path: string) => {
+    try {
+      const token = localStorage.getItem("token")
+      if (!token) {
+        router.push("/login")
+        return
+      }
+
+      const response = await fetch("/admin/api/cache/clear-by-path", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          type: "all",
+          path_prefix: path
+        }),
+      })
+
+      if (response.status === 401) {
+        localStorage.removeItem("token")
+        router.push("/login")
+        return
+      }
+
+      if (!response.ok) {
+        throw new Error("清理缓存失败")
+      }
+
+      const result = await response.json()
+
+      toast({
+        title: "清理成功",
+        description: result.message || `已清理路径 ${path} 的缓存`,
+      })
+    } catch (error) {
+      toast({
+        title: "清理失败",
+        description: error instanceof Error ? error.message : "清理缓存失败",
+        variant: "destructive",
+      })
+    }
+  }
+
   const updateSecurity = (field: keyof SecurityConfig['IPBan'], value: boolean | number) => {
     if (!config) return
     const newConfig = { ...config }
@@ -989,6 +1034,7 @@ export default function ConfigPage() {
                       onExtensionMapEdit={handleExtensionMapEdit}
                       onExtensionRuleEdit={handleExtensionRuleEdit}
                       onExtensionRuleDelete={deleteExtensionRule}
+                      onClearCache={handleClearPathCache}
                     />
                   )
                 })}

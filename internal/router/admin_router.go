@@ -33,6 +33,7 @@ func SetupAdminRoutes(proxyHandler *handler.ProxyHandler, authHandler *handler.A
 		{http.MethodGet, "/admin/api/cache/stats", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).GetCacheStats, true},
 		{http.MethodPost, "/admin/api/cache/enable", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).SetCacheEnabled, true},
 		{http.MethodPost, "/admin/api/cache/clear", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).ClearCache, true},
+		{http.MethodPost, "/admin/api/cache/clear-by-path", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).ClearCacheByPath, true},
 		{http.MethodGet, "/admin/api/cache/config", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).GetCacheConfig, true},
 		{http.MethodPost, "/admin/api/cache/config", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).UpdateCacheConfig, true},
 		{http.MethodGet, "/admin/api/health/status", healthHandler.GetHealthStatus, true},
