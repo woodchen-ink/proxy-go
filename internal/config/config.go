@@ -63,7 +63,40 @@ func (cm *ConfigManager) loadConfigFromFile() (*Config, error) {
 		return nil, err
 	}
 
+	// 确保 /mirror 系统路径存在
+	cm.ensureMirrorPath(&config)
+
 	return &config, nil
+}
+
+// ensureMirrorPath 确保 mirror 系统路径存在于配置中
+func (cm *ConfigManager) ensureMirrorPath(config *Config) {
+	if config.MAP == nil {
+		config.MAP = make(map[string]PathConfig)
+	}
+
+	// 检查是否已经存在 mirror 功能的路径（DefaultTarget 为 "mirror"）
+	hasMirrorPath := false
+	for _, pathConfig := range config.MAP {
+		if pathConfig.DefaultTarget == "mirror" {
+			hasMirrorPath = true
+			break
+		}
+	}
+
+	// 如果不存在 mirror 路径，添加默认的 /mirror 配置
+	if !hasMirrorPath {
+		config.MAP["/mirror"] = PathConfig{
+			DefaultTarget: "mirror", // 特殊标记，表示这是 mirror 功能
+			Enabled:       true,
+			CacheConfig: &CacheConfig{
+				MaxAge:       30,
+				CleanupTick:  5,
+				MaxCacheSize: 10,
+			},
+		}
+		log.Printf("[ConfigManager] 自动添加 /mirror 系统路径")
+	}
 }
 
 // createDefaultConfig 创建默认配置文件

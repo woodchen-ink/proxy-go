@@ -28,6 +28,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import PathMappingItem from "./PathMappingItem"
 
 interface ExtRuleConfig {
   Extensions: string;    // 逗号分隔的扩展名
@@ -38,12 +39,20 @@ interface ExtRuleConfig {
   Domains?: string;      // 逗号分隔的域名列表，为空表示匹配所有域名
 }
 
+interface CacheConfig {
+  max_age: number;        // 最大缓存时间（分钟）
+  cleanup_tick: number;   // 清理间隔（分钟）
+  max_cache_size: number; // 最大缓存大小（GB）
+}
+
 interface PathMapping {
   DefaultTarget: string
   ExtensionMap?: ExtRuleConfig[]  // 只支持新格式
   SizeThreshold?: number  // 保留全局阈值字段（向后兼容）
   MaxSize?: number       // 保留全局阈值字段（向后兼容）
   RedirectMode?: boolean  // 是否使用302跳转模式
+  Enabled?: boolean       // 是否启用此路径
+  CacheConfig?: CacheConfig // 独立缓存配置
 }
 
 interface CompressionConfig {
@@ -61,6 +70,23 @@ interface SecurityConfig {
   }
 }
 
+interface PathStats {
+  path: string;
+  request_count: number;
+  error_count: number;
+  bytes_transferred: number;
+  avg_latency: string;
+  last_access_time: number;
+  status_2xx: number;
+  status_3xx: number;
+  status_4xx: number;
+  status_5xx: number;
+  cache_hits: number;
+  cache_misses: number;
+  cache_hit_rate: number;
+  bytes_saved: number;
+}
+
 interface Config {
   MAP: Record<string, PathMapping | string>
   Compression: {
@@ -72,6 +98,7 @@ interface Config {
 
 export default function ConfigPage() {
   const [config, setConfig] = useState<Config | null>(null)
+  const [pathStats, setPathStats] = useState<PathStats[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const { toast } = useToast()
@@ -190,6 +217,22 @@ export default function ConfigPage() {
       
       isConfigFromApiRef.current = true // 标记配置来自API
       setConfig(data)
+
+      // 获取路径统计信息
+      try {
+        const statsResponse = await fetch("/admin/api/path-stats", {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        })
+        if (statsResponse.ok) {
+          const statsData = await statsResponse.json()
+          setPathStats(statsData.path_stats || [])
+        }
+      } catch (error) {
+        console.error("获取路径统计失败:", error)
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "获取配置失败"
       toast({
@@ -386,6 +429,29 @@ export default function ConfigPage() {
     delete newConfig.MAP[deletingPath]
     updateConfig(newConfig)
     setDeletingPath(null)
+  }
+
+  const handleCacheConfigUpdate = (path: string, cacheConfig: CacheConfig | null) => {
+    if (!config) return
+    const newConfig = { ...config }
+    const mapping = newConfig.MAP[path]
+
+    if (typeof mapping === 'string') {
+      // 将字符串格式转换为对象格式
+      newConfig.MAP[path] = {
+        DefaultTarget: mapping,
+        Enabled: true,
+        CacheConfig: cacheConfig || undefined,
+      }
+    } else {
+      // 更新对象格式的缓存配置
+      newConfig.MAP[path] = {
+        ...mapping,
+        CacheConfig: cacheConfig || undefined,
+      }
+    }
+
+    updateConfig(newConfig)
   }
 
   const updateSecurity = (field: keyof SecurityConfig['IPBan'], value: boolean | number) => {
@@ -902,117 +968,24 @@ export default function ConfigPage() {
                 </Dialog>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {config && Object.entries(config.MAP).map(([path, target]) => (
-                  <Card key={`${path}-card`} className="overflow-hidden">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-lg flex justify-between items-center">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium truncate" title={path}>{path}</span>
-                          {(typeof target === 'object' && target.RedirectMode) && (
-                            <span className="text-xs bg-green-100 text-green-800 px-1.5 py-0.5 rounded">
-                              302
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex space-x-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => handleEditPath(path, target)}
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => deletePath(path)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="pb-3">
-                      <div className="text-sm text-muted-foreground mb-3">
-                        <span className="font-medium text-primary">默认目标: </span>
-                        <span className="break-all">{typeof target === 'string' ? target : target.DefaultTarget}</span>
-                      </div>
-                      
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={() => handleExtensionMapEdit(path)}
-                      >
-                        <Plus className="w-4 h-4 mr-2" />
-                        添加规则
-                      </Button>
-                      
-                      {typeof target === 'object' && target.ExtensionMap && Array.isArray(target.ExtensionMap) && target.ExtensionMap.length > 0 && (
-                        <div className="mt-4">
-                          <div className="text-sm font-semibold mb-2">扩展名映射规则</div>
-                          <div className="space-y-2 max-h-[250px] overflow-y-auto pr-1">
-                            {target.ExtensionMap.map((rule, index) => (
-                              <div 
-                                key={`${path}-rule-${index}`} 
-                                className="bg-muted/30 rounded-md p-2 text-xs"
-                              >
-                                <div className="flex justify-between mb-1">
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-semibold">{rule.Extensions}</span>
-                                    {rule.RedirectMode && (
-                                      <span className="text-xs bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">
-                                        302
-                                      </span>
-                                    )}
-                                    {rule.Domains && (
-                                      <span className="text-xs bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded" title={`限制域名: ${rule.Domains}`}>
-                                        域名
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="flex space-x-1">
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-5 w-5"
-                                      onClick={() => handleExtensionRuleEdit(path, index, rule)}
-                                    >
-                                      <Edit className="h-3 w-3" />
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-5 w-5"
-                                      onClick={() => deleteExtensionRule(path, index)}
-                                    >
-                                      <Trash2 className="h-3 w-3" />
-                                    </Button>
-                                  </div>
-                                </div>
-                                <div className="text-muted-foreground truncate" title={rule.Target}>
-                                  目标: {truncateUrl(rule.Target)}
-                                </div>
-                                {rule.Domains && (
-                                  <div className="text-muted-foreground truncate" title={rule.Domains}>
-                                    域名: {rule.Domains}
-                                  </div>
-                                )}
-                                <div className="flex justify-between mt-1 text-muted-foreground">
-                                  <div>阈值: {formatBytes(rule.SizeThreshold || 0)}</div>
-                                  <div>最大: {formatBytes(rule.MaxSize || 0)}</div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))}
+              <div className="space-y-4">
+                {config && Object.entries(config.MAP).map(([path, mapping]) => {
+                  const stats = pathStats.find(s => s.path === path)
+                  const isSystemPath = path === '/mirror'
+
+                  return (
+                    <PathMappingItem
+                      key={path}
+                      path={path}
+                      mapping={mapping}
+                      stats={stats}
+                      isSystemPath={isSystemPath}
+                      onEdit={(p) => handleEditPath(p, mapping)}
+                      onDelete={deletePath}
+                      onCacheConfigUpdate={handleCacheConfigUpdate}
+                    />
+                  )
+                })}
               </div>
             </TabsContent>
 

@@ -178,6 +178,7 @@ type Collector struct {
 	statusCodeStats *StatusCodeStats
 	latencyBuckets  *LatencyBuckets // 使用结构体替代 sync.Map
 	refererStats    *RefererStats   // 使用分片哈希表
+	pathStats       *RefererStats   // 路径统计（复用RefererStats的分片结构）
 	bandwidthStats  struct {
 		sync.RWMutex
 		window     time.Duration
@@ -203,12 +204,14 @@ type Collector struct {
 }
 
 type RequestMetric struct {
-	Path     string
-	Status   int
-	Latency  time.Duration
-	Bytes    int64
-	ClientIP string
-	Request  *http.Request
+	Path       string
+	Status     int
+	Latency    time.Duration
+	Bytes      int64
+	ClientIP   string
+	Request    *http.Request
+	CacheHit   bool  // 是否缓存命中
+	BytesSaved int64 // 通过缓存节省的字节数
 }
 
 var requestChan chan RequestMetric
@@ -229,6 +232,7 @@ func InitCollector(cfg *config.Config) error {
 			statusCodeStats: NewStatusCodeStats(),
 			latencyBuckets:  &LatencyBuckets{},
 			refererStats:    NewRefererStats(),
+			pathStats:       NewRefererStats(), // 初始化路径统计
 		}
 
 		// 初始化带宽统计
@@ -300,6 +304,26 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 		Bytes:    bytes,
 		ClientIP: clientIP,
 		Request:  r,
+	}
+	select {
+	case requestChan <- metric:
+		// ok
+	default:
+		// channel 满了，丢弃或降级处理
+	}
+}
+
+// RecordRequestWithCache 记录带缓存信息的请求（异步写入channel）
+func (c *Collector) RecordRequestWithCache(path string, status int, latency time.Duration, bytes int64, clientIP string, r *http.Request, cacheHit bool, bytesSaved int64) {
+	metric := RequestMetric{
+		Path:       path,
+		Status:     status,
+		Latency:    latency,
+		Bytes:      bytes,
+		ClientIP:   clientIP,
+		Request:    r,
+		CacheHit:   cacheHit,
+		BytesSaved: bytesSaved,
 	}
 	select {
 	case requestChan <- metric:
@@ -758,6 +782,43 @@ func (c *Collector) updateMetricsBatch(batch []RequestMetric) {
 			atomic.AddInt64(&c.latencyBuckets.gt1s, 1)
 		}
 
+		// 记录路径统计
+		var pathMetrics *models.PathMetrics
+		if existingMetrics, ok := c.pathStats.Load(m.Path); ok {
+			pathMetrics = existingMetrics
+		} else {
+			pathMetrics = &models.PathMetrics{Path: m.Path}
+			c.pathStats.Store(m.Path, pathMetrics)
+		}
+
+		pathMetrics.AddRequest()
+		if m.Status >= 400 {
+			pathMetrics.AddError()
+		}
+		pathMetrics.AddBytes(m.Bytes)
+		pathMetrics.AddLatency(m.Latency.Nanoseconds())
+		pathMetrics.LastAccessTime.Store(time.Now().Unix())
+
+		// 更新状态码统计
+		switch {
+		case m.Status >= 200 && m.Status < 300:
+			pathMetrics.Status2xx.Add(1)
+		case m.Status >= 300 && m.Status < 400:
+			pathMetrics.Status3xx.Add(1)
+		case m.Status >= 400 && m.Status < 500:
+			pathMetrics.Status4xx.Add(1)
+		case m.Status >= 500:
+			pathMetrics.Status5xx.Add(1)
+		}
+
+		// 更新缓存统计
+		if m.CacheHit {
+			pathMetrics.CacheHits.Add(1)
+			pathMetrics.BytesSaved.Add(m.BytesSaved)
+		} else {
+			pathMetrics.CacheMisses.Add(1)
+		}
+
 		// 记录引用来源
 		if m.Request != nil {
 			referer := m.Request.Referer()
@@ -813,4 +874,53 @@ func (c *Collector) RecordStatusCodeBatch(code int, count int64) {
 		*counter = count
 		c.statusCodeStats.stats[code] = counter
 	}
+}
+
+// GetPathStats 获取所有路径的统计信息
+func (c *Collector) GetPathStats() []models.PathMetricsJSON {
+	var pathMetrics []*models.PathMetrics
+	c.pathStats.Range(func(key string, value *models.PathMetrics) bool {
+		stats := value
+		requestCount := stats.GetRequestCount()
+		if requestCount > 0 {
+			totalLatency := stats.GetTotalLatency()
+			avgLatencyMs := float64(totalLatency) / float64(requestCount) / float64(time.Millisecond)
+			stats.AvgLatency = fmt.Sprintf("%.2fms", avgLatencyMs)
+			pathMetrics = append(pathMetrics, stats)
+		}
+		return true
+	})
+
+	// 按请求数降序排序
+	sort.Slice(pathMetrics, func(i, j int) bool {
+		countI := pathMetrics[i].GetRequestCount()
+		countJ := pathMetrics[j].GetRequestCount()
+		if countI != countJ {
+			return countI > countJ
+		}
+		return pathMetrics[i].Path < pathMetrics[j].Path
+	})
+
+	// 转换为 JSON 格式
+	result := make([]models.PathMetricsJSON, len(pathMetrics))
+	for i, metric := range pathMetrics {
+		result[i] = metric.ToJSON()
+	}
+
+	return result
+}
+
+// GetPathStatByPath 获取指定路径的统计信息
+func (c *Collector) GetPathStatByPath(path string) *models.PathMetricsJSON {
+	if stats, ok := c.pathStats.Load(path); ok {
+		requestCount := stats.GetRequestCount()
+		if requestCount > 0 {
+			totalLatency := stats.GetTotalLatency()
+			avgLatencyMs := float64(totalLatency) / float64(requestCount) / float64(time.Millisecond)
+			stats.AvgLatency = fmt.Sprintf("%.2fms", avgLatencyMs)
+			result := stats.ToJSON()
+			return &result
+		}
+	}
+	return nil
 }

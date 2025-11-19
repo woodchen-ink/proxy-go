@@ -17,7 +17,7 @@ type Route struct {
 }
 
 // SetupAdminRoutes 设置管理员路由
-func SetupAdminRoutes(proxyHandler *handler.ProxyHandler, authHandler *handler.AuthHandler, metricsHandler *handler.MetricsHandler, mirrorHandler *handler.MirrorProxyHandler, configHandler *handler.ConfigHandler, securityHandler *handler.SecurityHandler, healthHandler *handler.HealthHandler) ([]Route, RouteHandler) {
+func SetupAdminRoutes(proxyHandler *handler.ProxyHandler, authHandler *handler.AuthHandler, metricsHandler *handler.MetricsHandler, mirrorHandler *handler.MirrorProxyHandler, configHandler *handler.ConfigHandler, securityHandler *handler.SecurityHandler, healthHandler *handler.HealthHandler, pathStatsHandler *handler.PathStatsHandler) ([]Route, RouteHandler) {
 	// 定义API路由
 	apiRoutes := []Route{
 		{http.MethodGet, "/admin/api/auth", authHandler.LoginHandler, false},
@@ -37,6 +37,7 @@ func SetupAdminRoutes(proxyHandler *handler.ProxyHandler, authHandler *handler.A
 		{http.MethodPost, "/admin/api/cache/config", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).UpdateCacheConfig, true},
 		{http.MethodGet, "/admin/api/health/status", healthHandler.GetHealthStatus, true},
 		{http.MethodPost, "/admin/api/health/reset", healthHandler.ResetTargetHealth, true},
+		{http.MethodGet, "/admin/api/path-stats", pathStatsHandler.GetAllPathStats, true},
 	}
 
 	// 添加安全API路由（如果启用了安全功能）

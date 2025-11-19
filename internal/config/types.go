@@ -17,6 +17,8 @@ type PathConfig struct {
 	ExtensionMap  []ExtRuleConfig `json:"ExtensionMap"`  // 扩展名映射规则
 	ExtRules      []ExtensionRule `json:"-"`             // 内部使用，存储处理后的扩展名规则
 	RedirectMode  bool            `json:"RedirectMode"`  // 是否使用302跳转模式
+	Enabled       bool            `json:"Enabled"`       // 是否启用此路径映射，默认true
+	CacheConfig   *CacheConfig    `json:"CacheConfig"`   // 独立缓存配置，为nil则使用全局配置
 }
 
 // ExtensionRule 表示一个扩展名映射规则（内部使用）
