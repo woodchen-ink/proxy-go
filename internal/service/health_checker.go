@@ -30,6 +30,8 @@ type HealthCheckConfig struct {
 	FailThreshold     int           // 失败阈值（连续失败多少次标记为不健康）
 	SuccessThreshold  int           // 成功阈值（连续成功多少次恢复健康）
 	UnhealthyDuration time.Duration // 不健康持续时间（超过此时间后重新检查）
+	CleanupInterval   time.Duration // 清理间隔
+	RecordTTL         time.Duration // 记录保留时间（超过此时间未访问的记录将被清理）
 }
 
 // DefaultHealthCheckConfig 默认健康检查配置
@@ -40,6 +42,8 @@ var DefaultHealthCheckConfig = HealthCheckConfig{
 	FailThreshold:     3,                // 连续失败3次标记为不健康
 	SuccessThreshold:  2,                // 连续成功2次恢复健康
 	UnhealthyDuration: 5 * time.Minute,  // 不健康5分钟后重新检查
+	CleanupInterval:   10 * time.Minute, // 每10分钟清理一次
+	RecordTTL:         1 * time.Hour,    // 1小时未访问的记录将被清理
 }
 
 // HealthChecker 健康检查器
@@ -67,6 +71,7 @@ func NewHealthChecker(config HealthCheckConfig) *HealthChecker {
 	// 如果启用了主动健康检查，启动后台检查协程
 	if config.Enabled {
 		go hc.startBackgroundCheck()
+		go hc.startCleanupTask()
 	}
 
 	return hc
@@ -297,4 +302,76 @@ func (hc *HealthChecker) Stop() {
 func (hc *HealthChecker) ResetTarget(url string) {
 	hc.targets.Delete(url)
 	log.Printf("[Health] Reset health status for %s", url)
+}
+
+// ClearAllTargets 清理所有目标的健康状态
+func (hc *HealthChecker) ClearAllTargets() int {
+	count := 0
+	hc.targets.Range(func(key, value interface{}) bool {
+		hc.targets.Delete(key)
+		count++
+		return true
+	})
+	log.Printf("[Health] Cleared all health records (%d targets)", count)
+	return count
+}
+
+// startCleanupTask 启动定期清理任务
+func (hc *HealthChecker) startCleanupTask() {
+	if hc.config.CleanupInterval == 0 {
+		return
+	}
+
+	ticker := time.NewTicker(hc.config.CleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			hc.cleanupOldRecords()
+		case <-hc.stopCh:
+			log.Println("[Health] Cleanup task stopped")
+			return
+		}
+	}
+}
+
+// cleanupOldRecords 清理长时间未访问的记录
+func (hc *HealthChecker) cleanupOldRecords() {
+	if hc.config.RecordTTL == 0 {
+		return
+	}
+
+	now := time.Now()
+	cleanedCount := 0
+	toDelete := []string{}
+
+	hc.targets.Range(func(key, value interface{}) bool {
+		url := key.(string)
+		health := value.(*TargetHealth)
+
+		hc.mu.RLock()
+		lastCheck := health.LastCheck
+		isHealthy := health.IsHealthy
+		hc.mu.RUnlock()
+
+		// 清理条件：
+		// 1. 超过TTL未检查
+		// 2. 状态为健康（不健康的保留以便跟踪）
+		if now.Sub(lastCheck) > hc.config.RecordTTL && isHealthy {
+			toDelete = append(toDelete, url)
+		}
+
+		return true
+	})
+
+	// 删除记录
+	for _, url := range toDelete {
+		hc.targets.Delete(url)
+		cleanedCount++
+	}
+
+	if cleanedCount > 0 {
+		log.Printf("[Health] Cleaned up %d old health records (TTL: %v)", cleanedCount, hc.config.RecordTTL)
+	}
 }

@@ -153,6 +153,29 @@ func (h *HealthHandler) ResetTargetHealth(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// ClearAllHealth 清理所有健康检查记录
+func (h *HealthHandler) ClearAllHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	healthChecker := h.proxyService.GetHealthChecker()
+	if healthChecker == nil {
+		http.Error(w, "Health checker not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	count := healthChecker.ClearAllTargets()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "All health records cleared successfully",
+		"count":   count,
+	})
+}
+
 // formatTime 格式化时间
 func formatTime(t time.Time) string {
 	if t.IsZero() {

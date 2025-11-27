@@ -47,6 +47,7 @@ export default function HealthPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [resetTarget, setResetTarget] = useState<string | null>(null)
+  const [showClearDialog, setShowClearDialog] = useState(false)
   const { toast } = useToast()
   const router = useRouter()
 
@@ -120,6 +121,39 @@ export default function HealthPage() {
       })
     } finally {
       setResetTarget(null)
+    }
+  }
+
+  const handleClearAll = async () => {
+    try {
+      const token = localStorage.getItem("token")
+      const response = await fetch("/admin/api/health/clear", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      })
+
+      if (!response.ok) {
+        throw new Error("清理失败")
+      }
+
+      const data = await response.json()
+      toast({
+        title: "成功",
+        description: `已清理 ${data.count} 条健康检查记录`,
+      })
+
+      fetchHealthStatus()
+    } catch (error) {
+      toast({
+        title: "错误",
+        description: error instanceof Error ? error.message : "清理失败",
+        variant: "destructive",
+      })
+    } finally {
+      setShowClearDialog(false)
     }
   }
 
@@ -217,9 +251,26 @@ export default function HealthPage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>目标健康状态</CardTitle>
-          <Button onClick={fetchHealthStatus} variant="outline" size="sm">
-            刷新
-          </Button>
+          <div className="flex gap-2">
+            <Button onClick={fetchHealthStatus} variant="outline" size="sm">
+              刷新
+            </Button>
+            {targets.length > 0 && (
+              <Button
+                onClick={() => setShowClearDialog(true)}
+                variant="outline"
+                size="sm"
+                style={{
+                  backgroundColor: '#b85e48',
+                  color: '#F8F7F6',
+                  borderColor: '#b85e48'
+                }}
+                className="hover:opacity-90"
+              >
+                清理所有记录
+              </Button>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           {targets.length === 0 ? (
@@ -385,6 +436,33 @@ export default function HealthPage() {
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* 清理所有记录确认对话框 */}
+      <AlertDialog open={showClearDialog} onOpenChange={setShowClearDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认清理所有记录</AlertDialogTitle>
+            <AlertDialogDescription>
+              确定要清理所有健康检查记录吗？
+              <br />
+              这将删除 <span className="font-semibold">{targets.length}</span> 个目标的所有健康检查历史数据。
+              <br />
+              <span className="text-sm text-gray-500 mt-2 block">
+                注意：健康的目标记录会在1小时未访问后自动清理，不健康的目标会保留以便跟踪问题。
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleClearAll}
+              style={{ backgroundColor: '#b85e48', color: '#F8F7F6' }}
+            >
+              确认清理
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* 说明卡片 */}
       <Card style={{ backgroundColor: '#F4E8E0' }}>
         <CardHeader>
@@ -399,6 +477,15 @@ export default function HealthPage() {
             <li>连续成功 <strong>2次</strong> 恢复为健康</li>
             <li>不健康超过 <strong>5分钟</strong> 后自动重试</li>
             <li>每 <strong>30秒</strong> 主动检查不健康的目标</li>
+          </ul>
+          <p className="mt-4">
+            <strong>自动清理机制:</strong>
+          </p>
+          <ul className="list-disc list-inside space-y-1 ml-2">
+            <li>每 <strong>10分钟</strong> 自动清理一次过期记录</li>
+            <li>超过 <strong>1小时</strong> 未访问的健康目标记录将被清理</li>
+            <li>不健康的目标会保留以便跟踪问题</li>
+            <li>支持手动清理所有记录</li>
           </ul>
           <p className="mt-4">
             <strong>成功率颜色:</strong>
