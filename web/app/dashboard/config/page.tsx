@@ -6,18 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useToast } from "@/components/ui/use-toast"
 import { useRouter } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog"
-import { Switch } from "@/components/ui/switch"
-import { Plus, Trash2, Edit, Download, Upload, Shield } from "lucide-react"
-import Link from "next/link"
+import { Download, Upload } from "lucide-react"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,6 +18,10 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import PathMappingItem from "./PathMappingItem"
+import SecurityConfigPanel from "./SecurityConfigPanel"
+import PathDialogForm from "./PathDialogForm"
+import ExtensionRuleDialog from "./ExtensionRuleDialog"
+import { convertToBytes, convertBytesToUnit } from "./utils"
 
 interface ExtRuleConfig {
   Extensions: string;    // 逗号分隔的扩展名
@@ -529,7 +522,7 @@ export default function ConfigPage() {
     }
 
     // 重新获取统计数据
-    await fetchPathStats()
+    await fetchConfig()
   }
 
   const updateSecurity = (field: keyof SecurityConfig['IPBan'], value: boolean | number) => {
@@ -985,65 +978,16 @@ export default function ConfigPage() {
 
             <TabsContent value="paths" className="space-y-4">
               <div className="flex justify-end">
-                <Dialog open={pathDialogOpen} onOpenChange={handlePathDialogOpenChange}>
-                  <DialogTrigger asChild>
-                    <Button onClick={openAddPathDialog}>
-                      <Plus className="w-4 h-4 mr-2" />
-                      添加路径
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>{editingPathData ? "编辑路径映射" : "添加路径映射"}</DialogTitle>
-                    </DialogHeader>
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <Label>路径 (如: /images)</Label>
-                        <Input
-                          value={editingPathData ? editingPathData.path : newPathData.path}
-                          onChange={(e) => editingPathData 
-                            ? setEditingPathData({ ...editingPathData, path: e.target.value })
-                            : setNewPathData({ ...newPathData, path: e.target.value })
-                          }
-                          placeholder="/example"
-                        />
-                        <p className="text-sm text-muted-foreground">
-                          请输入需要代理的路径
-                        </p>
-                      </div>
-                      <div className="space-y-2">
-                        <Label>默认目标</Label>
-                        <Input
-                          value={editingPathData ? editingPathData.defaultTarget : newPathData.defaultTarget}
-                          onChange={(e) => editingPathData
-                            ? setEditingPathData({ ...editingPathData, defaultTarget: e.target.value })
-                            : setNewPathData({ ...newPathData, defaultTarget: e.target.value })
-                          }
-                          placeholder="https://example.com"
-                        />
-                        <p className="text-sm text-muted-foreground">
-                          默认的回源地址，所有请求都会转发到这个地址
-                        </p>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <Label>使用302跳转</Label>
-                        <Switch
-                          checked={editingPathData ? editingPathData.redirectMode : newPathData.redirectMode}
-                          onCheckedChange={(checked) => editingPathData
-                            ? setEditingPathData({ ...editingPathData, redirectMode: checked })
-                            : setNewPathData({ ...newPathData, redirectMode: checked })
-                          }
-                        />
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        启用后，访问此路径时将302跳转到目标URL，而不是代理转发
-                      </p>
-                      <Button onClick={addOrUpdatePath}>
-                        {editingPathData ? "保存" : "添加"}
-                      </Button>
-                    </div>
-                  </DialogContent>
-                </Dialog>
+                <PathDialogForm
+                  open={pathDialogOpen}
+                  onOpenChange={handlePathDialogOpenChange}
+                  editingPathData={editingPathData}
+                  newPathData={newPathData}
+                  onNewPathDataChange={setNewPathData}
+                  onEditingPathDataChange={setEditingPathData}
+                  onSubmit={addOrUpdatePath}
+                  onOpenAddDialog={openAddPathDialog}
+                />
               </div>
 
               <div className="space-y-4">
@@ -1073,91 +1017,10 @@ export default function ConfigPage() {
             </TabsContent>
 
             <TabsContent value="security" className="space-y-6">
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between">
-                  <CardTitle>IP 封禁策略</CardTitle>
-                  <Button variant="outline" asChild>
-                    <Link href="/dashboard/security">
-                      <Shield className="w-4 h-4 mr-2" />
-                      安全管理
-                    </Link>
-                  </Button>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label>启用 IP 封禁</Label>
-                      <p className="text-sm text-muted-foreground">
-                        当 IP 频繁访问不存在的资源时自动封禁
-                      </p>
-                    </div>
-                    <Switch
-                      checked={config?.Security?.IPBan?.Enabled || false}
-                      onCheckedChange={(checked) => updateSecurity('Enabled', checked)}
-                    />
-                  </div>
-                  
-                  {config?.Security?.IPBan?.Enabled && (
-                    <>
-                      <div className="space-y-2">
-                        <Label>404 错误阈值</Label>
-                        <Input
-                          type="number"
-                          min={1}
-                          max={100}
-                          value={config?.Security?.IPBan?.ErrorThreshold || 10}
-                          onChange={(e) => updateSecurity('ErrorThreshold', parseInt(e.target.value) || 10)}
-                        />
-                        <p className="text-sm text-muted-foreground">
-                          在指定时间窗口内，IP 访问不存在资源的次数超过此值将被封禁
-                        </p>
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <Label>统计窗口时间（分钟）</Label>
-                        <Input
-                          type="number"
-                          min={1}
-                          max={60}
-                          value={config?.Security?.IPBan?.WindowMinutes || 5}
-                          onChange={(e) => updateSecurity('WindowMinutes', parseInt(e.target.value) || 5)}
-                        />
-                        <p className="text-sm text-muted-foreground">
-                          统计 404 错误的时间窗口长度
-                        </p>
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <Label>封禁时长（分钟）</Label>
-                        <Input
-                          type="number"
-                          min={1}
-                          max={1440}
-                          value={config?.Security?.IPBan?.BanDurationMinutes || 5}
-                          onChange={(e) => updateSecurity('BanDurationMinutes', parseInt(e.target.value) || 5)}
-                        />
-                        <p className="text-sm text-muted-foreground">
-                          IP 被封禁的持续时间
-                        </p>
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <Label>清理间隔（分钟）</Label>
-                        <Input
-                          type="number"
-                          min={1}
-                          max={60}
-                          value={config?.Security?.IPBan?.CleanupIntervalMinutes || 1}
-                          onChange={(e) => updateSecurity('CleanupIntervalMinutes', parseInt(e.target.value) || 1)}
-                        />
-                        <p className="text-sm text-muted-foreground">
-                          清理过期记录的间隔时间
-                        </p>
-                      </div>
-                    </>
-                  )}
-                </CardContent>
-              </Card>
+              <SecurityConfigPanel
+                config={config?.Security || null}
+                onUpdate={updateSecurity}
+              />
             </TabsContent>
           </Tabs>
         </CardContent>
@@ -1181,124 +1044,14 @@ export default function ConfigPage() {
         </AlertDialogContent>
       </AlertDialog>
       
-      <Dialog open={extensionRuleDialogOpen} onOpenChange={handleExtensionRuleDialogOpenChange}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {editingExtensionRule ? "编辑扩展名规则" : "添加扩展名规则"}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>扩展名</Label>
-              <Input
-                value={newExtensionRule.extensions}
-                onChange={(e) => setNewExtensionRule({ ...newExtensionRule, extensions: e.target.value })}
-                placeholder="jpg,png,webp"
-              />
-              <p className="text-sm text-muted-foreground">
-                多个扩展名用逗号分隔，不需要包含点号。使用星号 * 表示匹配所有未指定的扩展名。
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label>目标 URL</Label>
-              <Input
-                value={newExtensionRule.target}
-                onChange={(e) => setNewExtensionRule({ ...newExtensionRule, target: e.target.value })}
-                placeholder="https://example.com"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>限制域名（可选）</Label>
-              <Input
-                value={newExtensionRule.domains}
-                onChange={(e) => setNewExtensionRule({ ...newExtensionRule, domains: e.target.value })}
-                placeholder="a.com,b.com"
-              />
-              <p className="text-sm text-muted-foreground">
-                指定该规则适用的域名，多个域名用逗号分隔。留空表示适用于所有域名。
-              </p>
-            </div>
-            <div className="flex items-center justify-between">
-              <Label>使用302跳转</Label>
-              <Switch
-                checked={newExtensionRule.redirectMode}
-                onCheckedChange={(checked) => setNewExtensionRule({ ...newExtensionRule, redirectMode: checked })}
-              />
-            </div>
-            <p className="text-sm text-muted-foreground">
-              启用后，匹配此扩展名的请求将302跳转到目标URL，而不是代理转发
-            </p>
-            <div className="grid gap-4">
-              <div className="grid gap-2">
-                <Label htmlFor="ruleSizeThreshold">最小阈值</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="ruleSizeThreshold"
-                    type="number"
-                    value={newExtensionRule.sizeThreshold}
-                    onChange={(e) => {
-                      setNewExtensionRule({
-                        ...newExtensionRule,
-                        sizeThreshold: Number(e.target.value),
-                      });
-                    }}
-                  />
-                  <select
-                    className="w-24 rounded-md border border-input bg-background px-3"
-                    value={newExtensionRule.sizeThresholdUnit}
-                    onChange={(e) => {
-                      setNewExtensionRule({
-                        ...newExtensionRule,
-                        sizeThresholdUnit: e.target.value as 'B' | 'KB' | 'MB' | 'GB',
-                      });
-                    }}
-                  >
-                    <option value="B">B</option>
-                    <option value="KB">KB</option>
-                    <option value="MB">MB</option>
-                    <option value="GB">GB</option>
-                  </select>
-                </div>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="ruleMaxSize">最大阈值</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="ruleMaxSize"
-                    type="number"
-                    value={newExtensionRule.maxSize}
-                    onChange={(e) => {
-                      setNewExtensionRule({
-                        ...newExtensionRule,
-                        maxSize: Number(e.target.value),
-                      });
-                    }}
-                  />
-                  <select
-                    className="w-24 rounded-md border border-input bg-background px-3"
-                    value={newExtensionRule.maxSizeUnit}
-                    onChange={(e) => {
-                      setNewExtensionRule({
-                        ...newExtensionRule,
-                        maxSizeUnit: e.target.value as 'B' | 'KB' | 'MB' | 'GB',
-                      });
-                    }}
-                  >
-                    <option value="B">B</option>
-                    <option value="KB">KB</option>
-                    <option value="MB">MB</option>
-                    <option value="GB">GB</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-            <Button onClick={addOrUpdateExtensionRule}>
-              {editingExtensionRule ? "保存" : "添加"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ExtensionRuleDialog
+        open={extensionRuleDialogOpen}
+        onOpenChange={handleExtensionRuleDialogOpenChange}
+        editingRule={editingExtensionRule}
+        newRule={newExtensionRule}
+        onNewRuleChange={setNewExtensionRule}
+        onSubmit={addOrUpdateExtensionRule}
+      />
 
       <AlertDialog 
         open={!!deletingExtensionRule} 
@@ -1319,44 +1072,4 @@ export default function ConfigPage() {
       </AlertDialog>
     </div>
   )
-}
-
-// 辅助函数：格式化字节大小
-const formatBytes = (bytes: number) => {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`
-}
-
-// 辅助函数：截断 URL
-const truncateUrl = (url: string) => {
-  if (url.length > 30) {
-    return url.substring(0, 27) + '...'
-  }
-  return url
-}
-
-// 辅助函数：单位转换
-const convertToBytes = (value: number, unit: 'B' | 'KB' | 'MB' | 'GB'): number => {
-  if (value < 0) return 0
-  const multipliers = {
-    'B': 1,
-    'KB': 1024,
-    'MB': 1024 * 1024,
-    'GB': 1024 * 1024 * 1024
-  }
-  return Math.floor(value * multipliers[unit])
-}
-
-const convertBytesToUnit = (bytes: number): { value: number, unit: 'B' | 'KB' | 'MB' | 'GB' } => {
-  if (bytes <= 0) return { value: 0, unit: 'MB' }
-  const k = 1024
-  const sizes: Array<'B' | 'KB' | 'MB' | 'GB'> = ['B', 'KB', 'MB', 'GB']
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1)
-  return {
-    value: Number((bytes / Math.pow(k, i)).toFixed(2)),
-    unit: sizes[i]
-  }
 }

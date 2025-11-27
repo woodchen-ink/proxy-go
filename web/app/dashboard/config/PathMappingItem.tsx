@@ -126,7 +126,11 @@ export default function PathMappingItem({
                 <div className="flex items-center gap-2">
                   <span className="font-mono font-semibold text-lg">{path}</span>
                   {isSystemPath && (
-                    <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                    <Badge variant="outline" style={{
+                      backgroundColor: '#F4E8E0',
+                      color: '#C08259',
+                      borderColor: '#C08259'
+                    }}>
                       <Shield className="h-3 w-3 mr-1" />
                       系统路径
                     </Badge>
@@ -138,7 +142,11 @@ export default function PathMappingItem({
                     <Badge variant="outline">302重定向</Badge>
                   )}
                   {mappingObj.CacheConfig && (
-                    <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
+                    <Badge variant="outline" style={{
+                      backgroundColor: '#F4E8E0',
+                      color: '#C08259',
+                      borderColor: '#C08259'
+                    }}>
                       <Database className="h-3 w-3 mr-1" />
                       自定义缓存
                     </Badge>

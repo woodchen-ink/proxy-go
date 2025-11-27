@@ -336,7 +336,7 @@ export default function CachePage() {
     return (
       <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
         <div className="text-center">
-          <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-4 text-blue-500" />
+          <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-4" style={{ color: '#C08259' }} />
           <div className="text-lg font-medium">加载中...</div>
           <div className="text-sm text-gray-500 mt-1">正在获取缓存统计信息</div>
         </div>
@@ -349,7 +349,7 @@ export default function CachePage() {
       <div className="space-y-6">
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-2">
-            <Database className="h-6 w-6 text-blue-600" />
+            <Database className="h-6 w-6" style={{ color: '#C08259' }} />
             <h1 className="text-2xl font-bold">缓存管理</h1>
           </div>
           <Button 
@@ -363,9 +363,9 @@ export default function CachePage() {
         </div>
 
         {/* 智能缓存汇总 */}
-        <Card className="border-2 border-blue-100 bg-gradient-to-r from-blue-50 to-purple-50">
+        <Card style={{ border: '2px solid #EEEDEC', backgroundColor: '#F8F7F6' }}>
           <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-blue-800">
+            <CardTitle className="flex items-center gap-2" style={{ color: '#C08259' }}>
               <Zap className="h-5 w-5" />
               智能缓存汇总
             </CardTitle>
@@ -374,15 +374,15 @@ export default function CachePage() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="text-center p-4 bg-white rounded-lg shadow-sm border cursor-help hover:shadow-md transition-shadow">
+                  <div className="text-center p-4 rounded-lg shadow-sm border cursor-help hover:shadow-md transition-shadow" style={{ backgroundColor: 'white' }}>
                     <div className="flex items-center justify-center gap-2 mb-2">
-                      <FileText className="h-5 w-5 text-blue-600" />
-                      <Info className="h-3 w-3 text-gray-400" />
+                      <FileText className="h-5 w-5" style={{ color: '#C08259' }} />
+                      <Info className="h-3 w-3" style={{ color: '#999' }} />
                     </div>
-                    <div className="text-2xl font-bold text-blue-600">
+                    <div className="text-2xl font-bold" style={{ color: '#C08259' }}>
                       {(stats?.proxy.regular_cache_hit ?? 0) + (stats?.mirror.regular_cache_hit ?? 0)}
                     </div>
-                    <div className="text-sm text-gray-600 font-medium">常规缓存命中</div>
+                    <div className="text-sm font-medium" style={{ color: '#666' }}>常规缓存命中</div>
                   </div>
                 </TooltipTrigger>
                 <TooltipContent>
@@ -392,15 +392,15 @@ export default function CachePage() {
 
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="text-center p-4 bg-white rounded-lg shadow-sm border cursor-help hover:shadow-md transition-shadow">
+                  <div className="text-center p-4 rounded-lg shadow-sm border cursor-help hover:shadow-md transition-shadow" style={{ backgroundColor: 'white' }}>
                     <div className="flex items-center justify-center gap-2 mb-2">
-                      <ImageIcon className="h-5 w-5 text-green-600" aria-hidden="true" />
-                      <Info className="h-3 w-3 text-gray-400" />
+                      <ImageIcon className="h-5 w-5" style={{ color: '#518751' }} aria-hidden="true" />
+                      <Info className="h-3 w-3" style={{ color: '#999' }} />
                     </div>
-                    <div className="text-2xl font-bold text-green-600">
+                    <div className="text-2xl font-bold" style={{ color: '#518751' }}>
                       {(stats?.proxy.image_cache_hit ?? 0) + (stats?.mirror.image_cache_hit ?? 0)}
                     </div>
-                    <div className="text-sm text-gray-600 font-medium">图片精确命中</div>
+                    <div className="text-sm font-medium" style={{ color: '#666' }}>图片精确命中</div>
                   </div>
                 </TooltipTrigger>
                 <TooltipContent>
@@ -410,15 +410,15 @@ export default function CachePage() {
 
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="text-center p-4 bg-white rounded-lg shadow-sm border cursor-help hover:shadow-md transition-shadow">
+                  <div className="text-center p-4 rounded-lg shadow-sm border cursor-help hover:shadow-md transition-shadow" style={{ backgroundColor: 'white' }}>
                     <div className="flex items-center justify-center gap-2 mb-2">
-                      <RotateCcw className="h-5 w-5 text-orange-600" />
-                      <Info className="h-3 w-3 text-gray-400" />
+                      <RotateCcw className="h-5 w-5" style={{ color: '#b85e48' }} />
+                      <Info className="h-3 w-3" style={{ color: '#999' }} />
                     </div>
-                    <div className="text-2xl font-bold text-orange-600">
+                    <div className="text-2xl font-bold" style={{ color: '#b85e48' }}>
                       {(stats?.proxy.format_fallback_hit ?? 0) + (stats?.mirror.format_fallback_hit ?? 0)}
                     </div>
-                    <div className="text-sm text-gray-600 font-medium">格式回退命中</div>
+                    <div className="text-sm font-medium" style={{ color: '#666' }}>格式回退命中</div>
                   </div>
                 </TooltipTrigger>
                 <TooltipContent>
@@ -428,19 +428,19 @@ export default function CachePage() {
 
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="text-center p-4 bg-white rounded-lg shadow-sm border cursor-help hover:shadow-md transition-shadow">
+                  <div className="text-center p-4 rounded-lg shadow-sm border cursor-help hover:shadow-md transition-shadow" style={{ backgroundColor: 'white' }}>
                     <div className="flex items-center justify-center gap-2 mb-2">
-                      <Target className="h-5 w-5 text-purple-600" />
-                      <Info className="h-3 w-3 text-gray-400" />
+                      <Target className="h-5 w-5" style={{ color: '#C08259' }} />
+                      <Info className="h-3 w-3" style={{ color: '#999' }} />
                     </div>
-                    <div className="text-2xl font-bold text-purple-600">
+                    <div className="text-2xl font-bold" style={{ color: '#C08259' }}>
                       {(() => {
                         const totalImageRequests = (stats?.proxy.image_cache_hit ?? 0) + (stats?.mirror.image_cache_hit ?? 0) + (stats?.proxy.format_fallback_hit ?? 0) + (stats?.mirror.format_fallback_hit ?? 0)
                         const fallbackHits = (stats?.proxy.format_fallback_hit ?? 0) + (stats?.mirror.format_fallback_hit ?? 0)
                         return totalImageRequests > 0 ? ((fallbackHits / totalImageRequests) * 100).toFixed(1) : '0.0'
                       })()}%
                     </div>
-                    <div className="text-sm text-gray-600 font-medium">格式回退率</div>
+                    <div className="text-sm font-medium" style={{ color: '#666' }}>格式回退率</div>
                   </div>
                 </TooltipTrigger>
                 <TooltipContent>
@@ -453,10 +453,10 @@ export default function CachePage() {
 
         <div className="grid gap-6 md:grid-cols-2">
           {/* 代理缓存 */}
-          <Card className="border-l-4 border-l-blue-500">
+          <Card style={{ borderLeft: '4px solid #C08259' }}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="flex items-center gap-2">
-                <HardDrive className="h-5 w-5 text-blue-600" />
+                <HardDrive className="h-5 w-5" style={{ color: '#C08259' }} />
                 代理缓存
               </CardTitle>
               <div className="flex items-center space-x-2">
@@ -505,19 +505,19 @@ export default function CachePage() {
                   </dt>
                   <dd className="text-sm font-semibold text-red-800">{stats?.proxy.miss_count ?? 0}</dd>
                 </div>
-                <div className="flex justify-between items-center p-2 bg-blue-50 rounded">
-                  <dt className="text-sm font-medium text-blue-700 flex items-center gap-2">
+                <div className="flex justify-between items-center p-2 bg-[#F4E8E0] rounded">
+                  <dt className="text-sm font-medium text-[#666] flex items-center gap-2">
                     <Activity className="h-4 w-4" />
                     命中率
                   </dt>
-                  <dd className="text-sm font-semibold text-blue-800">{(stats?.proxy.hit_rate ?? 0).toFixed(2)}%</dd>
+                  <dd className="text-sm font-semibold text-[#C08259]">{(stats?.proxy.hit_rate ?? 0).toFixed(2)}%</dd>
                 </div>
-                <div className="flex justify-between items-center p-2 bg-purple-50 rounded">
-                  <dt className="text-sm font-medium text-purple-700 flex items-center gap-2">
+                <div className="flex justify-between items-center p-2 bg-[#F4E8E0] rounded">
+                  <dt className="text-sm font-medium text-[#666] flex items-center gap-2">
                     <Zap className="h-4 w-4" />
                     节省带宽
                   </dt>
-                  <dd className="text-sm font-semibold text-purple-800">{formatBytes(stats?.proxy.bytes_saved ?? 0)}</dd>
+                  <dd className="text-sm font-semibold text-[#C08259]">{formatBytes(stats?.proxy.bytes_saved ?? 0)}</dd>
                 </div>
               </dl>
               
@@ -529,10 +529,10 @@ export default function CachePage() {
                 <div className="grid grid-cols-3 gap-3">
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div className="text-center p-3 bg-blue-50 rounded-lg border cursor-help hover:bg-blue-100 transition-colors">
-                        <FileText className="h-4 w-4 mx-auto mb-1 text-blue-600" />
-                        <div className="text-lg font-bold text-blue-600">{stats?.proxy.regular_cache_hit ?? 0}</div>
-                        <div className="text-xs text-blue-700">常规命中</div>
+                      <div className="text-center p-3 bg-[#F4E8E0] rounded-lg border cursor-help hover:bg-blue-100 transition-colors">
+                        <FileText className="h-4 w-4 mx-auto mb-1 text-[#C08259]" />
+                        <div className="text-lg font-bold text-[#C08259]">{stats?.proxy.regular_cache_hit ?? 0}</div>
+                        <div className="text-xs text-[#666]">常规命中</div>
                       </div>
                     </TooltipTrigger>
                     <TooltipContent>
@@ -572,7 +572,7 @@ export default function CachePage() {
           </Card>
 
           {/* 镜像缓存 */}
-          <Card className="border-l-4 border-l-green-500">
+          <Card style={{ borderLeft: '4px solid #518751' }}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="flex items-center gap-2">
                 <Database className="h-5 w-5 text-green-600" />
@@ -624,19 +624,19 @@ export default function CachePage() {
                   </dt>
                   <dd className="text-sm font-semibold text-red-800">{stats?.mirror.miss_count ?? 0}</dd>
                 </div>
-                <div className="flex justify-between items-center p-2 bg-blue-50 rounded">
-                  <dt className="text-sm font-medium text-blue-700 flex items-center gap-2">
+                <div className="flex justify-between items-center p-2 bg-[#F4E8E0] rounded">
+                  <dt className="text-sm font-medium text-[#666] flex items-center gap-2">
                     <Activity className="h-4 w-4" />
                     命中率
                   </dt>
-                  <dd className="text-sm font-semibold text-blue-800">{(stats?.mirror.hit_rate ?? 0).toFixed(2)}%</dd>
+                  <dd className="text-sm font-semibold text-[#C08259]">{(stats?.mirror.hit_rate ?? 0).toFixed(2)}%</dd>
                 </div>
-                <div className="flex justify-between items-center p-2 bg-purple-50 rounded">
-                  <dt className="text-sm font-medium text-purple-700 flex items-center gap-2">
+                <div className="flex justify-between items-center p-2 bg-[#F4E8E0] rounded">
+                  <dt className="text-sm font-medium text-[#666] flex items-center gap-2">
                     <Zap className="h-4 w-4" />
                     节省带宽
                   </dt>
-                  <dd className="text-sm font-semibold text-purple-800">{formatBytes(stats?.mirror.bytes_saved ?? 0)}</dd>
+                  <dd className="text-sm font-semibold text-[#C08259]">{formatBytes(stats?.mirror.bytes_saved ?? 0)}</dd>
                 </div>
               </dl>
               
@@ -648,10 +648,10 @@ export default function CachePage() {
                 <div className="grid grid-cols-3 gap-3">
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div className="text-center p-3 bg-blue-50 rounded-lg border cursor-help hover:bg-blue-100 transition-colors">
-                        <FileText className="h-4 w-4 mx-auto mb-1 text-blue-600" />
-                        <div className="text-lg font-bold text-blue-600">{stats?.mirror.regular_cache_hit ?? 0}</div>
-                        <div className="text-xs text-blue-700">常规命中</div>
+                      <div className="text-center p-3 bg-[#F4E8E0] rounded-lg border cursor-help hover:bg-blue-100 transition-colors">
+                        <FileText className="h-4 w-4 mx-auto mb-1 text-[#C08259]" />
+                        <div className="text-lg font-bold text-[#C08259]">{stats?.mirror.regular_cache_hit ?? 0}</div>
+                        <div className="text-xs text-[#666]">常规命中</div>
                       </div>
                     </TooltipTrigger>
                     <TooltipContent>
