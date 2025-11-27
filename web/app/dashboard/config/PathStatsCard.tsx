@@ -1,6 +1,9 @@
-import React from "react"
+import React, { useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { RotateCcw } from "lucide-react"
+import { toast } from "sonner"
 
 interface PathStats {
   path: string
@@ -21,6 +24,7 @@ interface PathStats {
 
 interface PathStatsCardProps {
   stats: PathStats | undefined
+  onReset?: () => void
 }
 
 function formatBytes(bytes: number): string {
@@ -35,7 +39,9 @@ function formatNumber(num: number): string {
   return num.toLocaleString()
 }
 
-export default function PathStatsCard({ stats }: PathStatsCardProps) {
+export default function PathStatsCard({ stats, onReset }: PathStatsCardProps) {
+  const [isResetting, setIsResetting] = useState(false)
+
   if (!stats || stats.request_count === 0) {
     return (
       <div className="text-sm text-muted-foreground">
@@ -51,8 +57,37 @@ export default function PathStatsCard({ stats }: PathStatsCardProps) {
   const cacheHitRate = (stats.cache_hit_rate * 100).toFixed(1)
   const totalCacheRequests = stats.cache_hits + stats.cache_misses
 
+  const handleReset = async () => {
+    if (!onReset) return
+
+    setIsResetting(true)
+    try {
+      await onReset()
+      toast.success("统计数据已重置")
+    } catch (error) {
+      toast.error("重置失败: " + (error as Error).message)
+    } finally {
+      setIsResetting(false)
+    }
+  }
+
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 relative">
+      {/* 重置按钮 */}
+      {onReset && (
+        <div className="absolute top-0 right-0">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleReset}
+            disabled={isResetting}
+            className="h-7 px-2 text-muted-foreground hover:text-foreground"
+          >
+            <RotateCcw className={`h-3.5 w-3.5 ${isResetting ? 'animate-spin' : ''}`} />
+            <span className="ml-1.5 text-xs">重置</span>
+          </Button>
+        </div>
+      )}
       {/* 第一行：请求统计 */}
       <div className="flex flex-wrap gap-4 text-sm">
         <div className="flex items-center gap-2">

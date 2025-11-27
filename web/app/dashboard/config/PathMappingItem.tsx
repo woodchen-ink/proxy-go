@@ -73,6 +73,7 @@ interface PathMappingItemProps {
   onExtensionRuleEdit?: (path: string, index?: number, rule?: ExtRuleConfig) => void
   onExtensionRuleDelete?: (path: string, index: number) => void
   onClearCache?: (path: string) => void
+  onResetStats?: (path: string) => Promise<void>
 }
 
 export default function PathMappingItem({
@@ -87,6 +88,7 @@ export default function PathMappingItem({
   onExtensionRuleEdit,
   onExtensionRuleDelete,
   onClearCache,
+  onResetStats,
 }: PathMappingItemProps) {
   const [cacheDialogOpen, setCacheDialogOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -206,7 +208,10 @@ export default function PathMappingItem({
             </div>
 
             {/* 统计信息 */}
-            <PathStatsCard stats={stats} />
+            <PathStatsCard
+              stats={stats}
+              onReset={onResetStats ? () => onResetStats(path) : undefined}
+            />
 
             {/* 扩展名规则列表 */}
             {mappingObj.ExtensionMap && mappingObj.ExtensionMap.length > 0 && (

@@ -502,6 +502,36 @@ export default function ConfigPage() {
     }
   }
 
+  const handleResetPathStats = async (path: string) => {
+    const token = localStorage.getItem("token")
+    if (!token) {
+      router.push("/login")
+      return
+    }
+
+    const response = await fetch("/admin/api/path-stats/reset", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ path }),
+    })
+
+    if (response.status === 401) {
+      localStorage.removeItem("token")
+      router.push("/login")
+      throw new Error("未授权")
+    }
+
+    if (!response.ok) {
+      throw new Error("重置统计失败")
+    }
+
+    // 重新获取统计数据
+    await fetchPathStats()
+  }
+
   const updateSecurity = (field: keyof SecurityConfig['IPBan'], value: boolean | number) => {
     if (!config) return
     const newConfig = { ...config }
@@ -1035,6 +1065,7 @@ export default function ConfigPage() {
                       onExtensionRuleEdit={handleExtensionRuleEdit}
                       onExtensionRuleDelete={deleteExtensionRule}
                       onClearCache={handleClearPathCache}
+                      onResetStats={handleResetPathStats}
                     />
                   )
                 })}

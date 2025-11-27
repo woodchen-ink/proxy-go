@@ -1005,3 +1005,63 @@ func (c *Collector) startPersistenceTask() {
 		}
 	}()
 }
+
+// ResetPathStats 重置指定路径的统计数据
+func (c *Collector) ResetPathStats(path string) error {
+	if stats, ok := c.pathStats.Load(path); ok {
+		// 重置所有计数器
+		stats.RequestCount.Store(0)
+		stats.ErrorCount.Store(0)
+		stats.BytesTransferred.Store(0)
+		stats.TotalLatency.Store(0)
+		stats.Status2xx.Store(0)
+		stats.Status3xx.Store(0)
+		stats.Status4xx.Store(0)
+		stats.Status5xx.Store(0)
+		stats.CacheHits.Store(0)
+		stats.CacheMisses.Store(0)
+		stats.BytesSaved.Store(0)
+		stats.LastAccessTime.Store(time.Now().Unix())
+
+		log.Printf("[Collector] 已重置路径统计: %s", path)
+
+		// 立即持久化
+		if err := c.savePathStats(); err != nil {
+			log.Printf("[Collector] 重置后持久化失败: %v", err)
+		}
+
+		return nil
+	}
+	return fmt.Errorf("路径 %s 的统计数据不存在", path)
+}
+
+// ResetAllPathStats 重置所有路径的统计数据
+func (c *Collector) ResetAllPathStats() error {
+	count := 0
+	c.pathStats.Range(func(key string, value *models.PathMetrics) bool {
+		// 重置所有计数器
+		value.RequestCount.Store(0)
+		value.ErrorCount.Store(0)
+		value.BytesTransferred.Store(0)
+		value.TotalLatency.Store(0)
+		value.Status2xx.Store(0)
+		value.Status3xx.Store(0)
+		value.Status4xx.Store(0)
+		value.Status5xx.Store(0)
+		value.CacheHits.Store(0)
+		value.CacheMisses.Store(0)
+		value.BytesSaved.Store(0)
+		value.LastAccessTime.Store(time.Now().Unix())
+		count++
+		return true
+	})
+
+	log.Printf("[Collector] 已重置所有路径统计，共 %d 条", count)
+
+	// 立即持久化
+	if err := c.savePathStats(); err != nil {
+		log.Printf("[Collector] 重置后持久化失败: %v", err)
+	}
+
+	return nil
+}

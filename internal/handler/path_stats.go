@@ -124,3 +124,45 @@ func findMatchingPrefix(requestPath string, configMap map[string]config.PathConf
 
 	return longestMatch
 }
+
+// ResetPathStats 重置指定路径的统计数据
+func (h *PathStatsHandler) ResetPathStats(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Path string `json:"path"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Path == "" {
+		http.Error(w, "Path is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.collector.ResetPathStats(req.Path); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "路径统计已重置",
+	})
+}
+
+// ResetAllPathStats 重置所有路径的统计数据
+func (h *PathStatsHandler) ResetAllPathStats(w http.ResponseWriter, r *http.Request) {
+	if err := h.collector.ResetAllPathStats(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "所有路径统计已重置",
+	})
+}

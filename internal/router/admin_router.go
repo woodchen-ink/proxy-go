@@ -40,6 +40,8 @@ func SetupAdminRoutes(proxyHandler *handler.ProxyHandler, authHandler *handler.A
 		{http.MethodPost, "/admin/api/health/reset", healthHandler.ResetTargetHealth, true},
 		{http.MethodPost, "/admin/api/health/clear", healthHandler.ClearAllHealth, true},
 		{http.MethodGet, "/admin/api/path-stats", pathStatsHandler.GetAllPathStats, true},
+		{http.MethodPost, "/admin/api/path-stats/reset", pathStatsHandler.ResetPathStats, true},
+		{http.MethodPost, "/admin/api/path-stats/reset-all", pathStatsHandler.ResetAllPathStats, true},
 	}
 
 	// 添加安全API路由（如果启用了安全功能）
