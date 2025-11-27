@@ -324,8 +324,8 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 记录统计信息
-	collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(start), written, iputil.GetClientIP(r), r)
+	// 记录统计信息（缓存未命中）
+	collector.RecordRequestWithCache(r.URL.Path, resp.StatusCode, time.Since(start), written, iputil.GetClientIP(r), r, false, 0)
 }
 
 // handleWelcome 处理根路径欢迎消息
@@ -360,10 +360,13 @@ func (h *ProxyHandler) handleCacheHit(w http.ResponseWriter, r *http.Request, it
 
 	if notModified {
 		w.WriteHeader(http.StatusNotModified)
+		// 记录缓存命中（304响应也算命中，节省了带宽）
+		collector.RecordRequestWithCache(r.URL.Path, http.StatusNotModified, time.Since(start), 0, iputil.GetClientIP(r), r, true, item.Size)
 		return
 	}
 	http.ServeFile(w, r, item.FilePath)
-	collector.RecordRequest(r.URL.Path, http.StatusOK, time.Since(start), item.Size, iputil.GetClientIP(r), r)
+	// 记录缓存命中，节省的字节数等于文件大小
+	collector.RecordRequestWithCache(r.URL.Path, http.StatusOK, time.Since(start), item.Size, iputil.GetClientIP(r), r, true, item.Size)
 }
 
 // handleMissedCache 处理缓存未命中或缓存失效的情况，重新执行代理请求
@@ -415,6 +418,6 @@ func (h *ProxyHandler) handleMissedCache(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	// 记录统计信息
-	collector.RecordRequest(r.URL.Path, resp.StatusCode, time.Since(start), written, iputil.GetClientIP(r), r)
+	// 记录统计信息（缓存未命中）
+	collector.RecordRequestWithCache(r.URL.Path, resp.StatusCode, time.Since(start), written, iputil.GetClientIP(r), r, false, 0)
 }
