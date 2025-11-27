@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1006,33 +1007,48 @@ func (c *Collector) startPersistenceTask() {
 	}()
 }
 
-// ResetPathStats 重置指定路径的统计数据
-func (c *Collector) ResetPathStats(path string) error {
-	if stats, ok := c.pathStats.Load(path); ok {
-		// 重置所有计数器
-		stats.RequestCount.Store(0)
-		stats.ErrorCount.Store(0)
-		stats.BytesTransferred.Store(0)
-		stats.TotalLatency.Store(0)
-		stats.Status2xx.Store(0)
-		stats.Status3xx.Store(0)
-		stats.Status4xx.Store(0)
-		stats.Status5xx.Store(0)
-		stats.CacheHits.Store(0)
-		stats.CacheMisses.Store(0)
-		stats.BytesSaved.Store(0)
-		stats.LastAccessTime.Store(time.Now().Unix())
+// ResetPathStats 重置指定路径前缀的统计数据
+// 会重置所有以该前缀开头的路径
+func (c *Collector) ResetPathStats(pathPrefix string) error {
+	resetCount := 0
 
-		log.Printf("[Collector] 已重置路径统计: %s", path)
-
-		// 立即持久化
-		if err := c.savePathStats(); err != nil {
-			log.Printf("[Collector] 重置后持久化失败: %v", err)
+	// 遍历所有路径统计
+	c.pathStats.Range(func(key string, stats *models.PathMetrics) bool {
+		// 检查路径是否以指定前缀开头
+		if strings.HasPrefix(key, pathPrefix) {
+			// 确保匹配的是完整的路径段（避免 /abc 匹配到 /abcd）
+			if len(key) == len(pathPrefix) || (len(key) > len(pathPrefix) && key[len(pathPrefix)] == '/') {
+				// 重置所有计数器
+				stats.RequestCount.Store(0)
+				stats.ErrorCount.Store(0)
+				stats.BytesTransferred.Store(0)
+				stats.TotalLatency.Store(0)
+				stats.Status2xx.Store(0)
+				stats.Status3xx.Store(0)
+				stats.Status4xx.Store(0)
+				stats.Status5xx.Store(0)
+				stats.CacheHits.Store(0)
+				stats.CacheMisses.Store(0)
+				stats.BytesSaved.Store(0)
+				stats.LastAccessTime.Store(time.Now().Unix())
+				resetCount++
+			}
 		}
+		return true
+	})
 
-		return nil
+	if resetCount == 0 {
+		return fmt.Errorf("路径前缀 %s 下没有找到统计数据", pathPrefix)
 	}
-	return fmt.Errorf("路径 %s 的统计数据不存在", path)
+
+	log.Printf("[Collector] 已重置路径前缀 %s 的统计，共 %d 条", pathPrefix, resetCount)
+
+	// 立即持久化
+	if err := c.savePathStats(); err != nil {
+		log.Printf("[Collector] 重置后持久化失败: %v", err)
+	}
+
+	return nil
 }
 
 // ResetAllPathStats 重置所有路径的统计数据

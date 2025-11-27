@@ -522,7 +522,20 @@ export default function ConfigPage() {
     }
 
     // 重新获取统计数据
-    await fetchConfig()
+    try {
+      const statsResponse = await fetch("/admin/api/path-stats", {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+      if (statsResponse.ok) {
+        const statsData = await statsResponse.json()
+        setPathStats(statsData.path_stats || [])
+      }
+    } catch (error) {
+      console.error("刷新路径统计失败:", error)
+    }
   }
 
   const updateSecurity = (field: keyof SecurityConfig['IPBan'], value: boolean | number) => {
