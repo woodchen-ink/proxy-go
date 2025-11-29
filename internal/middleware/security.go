@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"proxy-go/internal/security"
+	"strings"
 	"time"
 
 	"github.com/woodchen-ink/go-web-utils/iputil"
@@ -21,10 +22,34 @@ func NewSecurityMiddleware(banManager *security.IPBanManager) *SecurityMiddlewar
 	}
 }
 
+// isAdminPath 判断是否是管理后台路径
+func isAdminPath(path string) bool {
+	// 管理后台路径前缀
+	adminPrefixes := []string{
+		"/admin/",
+		"/admin",
+	}
+
+	for _, prefix := range adminPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // IPBanMiddleware IP封禁中间件
 func (sm *SecurityMiddleware) IPBanMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		clientIP := iputil.GetClientIP(r)
+
+		// 管理后台路径不受IP封禁限制
+		if isAdminPath(r.URL.Path) {
+			// 直接放行管理后台请求
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		// 检查IP是否被封禁
 		if sm.banManager.IsIPBanned(clientIP) {
