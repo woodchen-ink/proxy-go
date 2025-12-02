@@ -61,12 +61,6 @@ export function Nav() {
           >
             安全
           </Link>
-          <Link
-            href="/dashboard/health"
-            className={pathname === "/dashboard/health" ? "text-primary" : "text-muted-foreground"}
-          >
-            健康检查
-          </Link>
         </div>
         <Button variant="ghost" onClick={handleLogout}>
           退出登录

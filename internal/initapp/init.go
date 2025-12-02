@@ -38,7 +38,6 @@ type AppComponents struct {
 	SecurityHandler  *handler.SecurityHandler
 	AuthHandler      *handler.AuthHandler
 	MetricsHandler   *handler.MetricsHandler
-	HealthHandler    *handler.HealthHandler
 	PathStatsHandler *handler.PathStatsHandler
 	// Routes
 	AdminHandler router.RouteHandler
@@ -203,9 +202,6 @@ func createHandlers(components *AppComponents) error {
 	// 创建指标处理器
 	components.MetricsHandler = handler.NewMetricsHandler(components.MetricsService)
 
-	// 创建健康检查处理器
-	components.HealthHandler = handler.NewHealthHandler(components.ProxyHandler.GetProxyService())
-
 	// 创建路径统计处理器
 	components.PathStatsHandler = handler.NewPathStatsHandler(metrics.GetCollector())
 
@@ -225,7 +221,6 @@ func setupRoutes(components *AppComponents) error {
 		components.MirrorHandler,
 		components.ConfigHandler,
 		components.SecurityHandler,
-		components.HealthHandler,
 		components.PathStatsHandler,
 	)
 	components.MainRoutes = router.SetupMainRoutes(components.MirrorHandler, components.ProxyHandler)

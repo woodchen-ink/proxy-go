@@ -17,7 +17,7 @@ type Route struct {
 }
 
 // SetupAdminRoutes 设置管理员路由
-func SetupAdminRoutes(proxyHandler *handler.ProxyHandler, authHandler *handler.AuthHandler, metricsHandler *handler.MetricsHandler, mirrorHandler *handler.MirrorProxyHandler, configHandler *handler.ConfigHandler, securityHandler *handler.SecurityHandler, healthHandler *handler.HealthHandler, pathStatsHandler *handler.PathStatsHandler) ([]Route, RouteHandler) {
+func SetupAdminRoutes(proxyHandler *handler.ProxyHandler, authHandler *handler.AuthHandler, metricsHandler *handler.MetricsHandler, mirrorHandler *handler.MirrorProxyHandler, configHandler *handler.ConfigHandler, securityHandler *handler.SecurityHandler, pathStatsHandler *handler.PathStatsHandler) ([]Route, RouteHandler) {
 	// 定义API路由
 	apiRoutes := []Route{
 		{http.MethodGet, "/admin/api/auth", authHandler.LoginHandler, false},
@@ -36,9 +36,6 @@ func SetupAdminRoutes(proxyHandler *handler.ProxyHandler, authHandler *handler.A
 		{http.MethodPost, "/admin/api/cache/clear-by-path", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).ClearCacheByPath, true},
 		{http.MethodGet, "/admin/api/cache/config", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).GetCacheConfig, true},
 		{http.MethodPost, "/admin/api/cache/config", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).UpdateCacheConfig, true},
-		{http.MethodGet, "/admin/api/health/status", healthHandler.GetHealthStatus, true},
-		{http.MethodPost, "/admin/api/health/reset", healthHandler.ResetTargetHealth, true},
-		{http.MethodPost, "/admin/api/health/clear", healthHandler.ClearAllHealth, true},
 		{http.MethodGet, "/admin/api/path-stats", pathStatsHandler.GetAllPathStats, true},
 		{http.MethodPost, "/admin/api/path-stats/reset", pathStatsHandler.ResetPathStats, true},
 		{http.MethodPost, "/admin/api/path-stats/reset-all", pathStatsHandler.ResetAllPathStats, true},
