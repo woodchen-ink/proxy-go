@@ -38,3 +38,4 @@ data/config.json
 data/cache
 CLAUDE.md
 .claude/
+cloudflare-worker/wrangler.toml
