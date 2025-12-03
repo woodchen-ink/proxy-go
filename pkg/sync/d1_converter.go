@@ -203,18 +203,23 @@ func ConvertConfigFromFile(filePath string) ([]ConfigMap, []ConfigOther, error) 
 
 			// 提取基本字段
 			defaultTarget, _ := mapConfig["DefaultTarget"].(string)
-			enabled, _ := mapConfig["Enabled"].(bool)
+
+			// Enabled 字段：如果不存在则默认为 true
+			enabled := true
+			if enabledVal, ok := mapConfig["Enabled"]; ok {
+				enabled, _ = enabledVal.(bool)
+			}
 
 			// 转换 ExtensionMap 为 JSON 字符串
 			var extensionRules string
-			if extMap, ok := mapConfig["ExtensionMap"].(map[string]any); ok && len(extMap) > 0 {
+			if extMap, ok := mapConfig["ExtensionMap"]; ok && extMap != nil {
 				extJSON, _ := json.Marshal(extMap)
 				extensionRules = string(extJSON)
 			}
 
 			// 转换 CacheConfig 为 JSON 字符串
 			var cacheConfig string
-			if cc, ok := mapConfig["CacheConfig"].(map[string]any); ok && len(cc) > 0 {
+			if cc, ok := mapConfig["CacheConfig"]; ok && cc != nil {
 				ccJSON, _ := json.Marshal(cc)
 				cacheConfig = string(ccJSON)
 			}
