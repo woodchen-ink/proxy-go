@@ -24,9 +24,9 @@ func main() {
 	}
 
 	// 初始化应用程序（完整初始化：同步、配置、服务、处理器、路由）
-	configPath := "data/config.json"
+	// 注意: configPath 仅作为 fallback，优先使用 D1 配置
 	components, err := initapp.InitApp(initapp.InitOptions{
-		ConfigPath:  configPath,
+		ConfigPath:  "data/config.json", // fallback 本地配置路径
 		SyncTimeout: 30 * time.Second,
 	})
 	if err != nil {
