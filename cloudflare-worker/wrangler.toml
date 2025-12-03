@@ -10,4 +10,4 @@ database_id = "82cccf42-4ec2-4299-a571-8e02fbc9fa95" # 部署时需要填写实�
 
 # 可选: 添加环境变量用于 API 认证
 [vars]
-# API_TOKEN = "your-secure-token"
+API_TOKEN = "your-secure-token-change-this"  # 改为你的实际 token

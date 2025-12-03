@@ -147,7 +147,7 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Printf(h.mirrorService.CreateLogEntry(mirrorReq, resp.StatusCode, time.Since(startTime), written))
 
 	// 记录统计信息（缓存未命中）
-	collector.RecordRequestWithCache(r.URL.Path, resp.StatusCode, time.Since(startTime), written, iputil.GetClientIP(r), r, false, 0)
+	collector.RecordRequestWithCache("/mirror", resp.StatusCode, time.Since(startTime), written, iputil.GetClientIP(r), r, false, 0)
 }
 
 // handleCORSPreflight 处理CORS预检请求
@@ -177,11 +177,11 @@ func (h *MirrorProxyHandler) handleCacheHit(w http.ResponseWriter, r *http.Reque
 	if notModified {
 		w.WriteHeader(http.StatusNotModified)
 		// 记录缓存命中（304响应也算命中，节省了带宽）
-		collector.RecordRequestWithCache(r.URL.Path, http.StatusNotModified, time.Since(startTime), 0, iputil.GetClientIP(r), r, true, item.Size)
+		collector.RecordRequestWithCache("/mirror", http.StatusNotModified, time.Since(startTime), 0, iputil.GetClientIP(r), r, true, item.Size)
 		return
 	}
 
 	http.ServeFile(w, r, item.FilePath)
 	// 记录缓存命中，节省的字节数等于文件大小
-	collector.RecordRequestWithCache(r.URL.Path, http.StatusOK, time.Since(startTime), item.Size, iputil.GetClientIP(r), r, true, item.Size)
+	collector.RecordRequestWithCache("/mirror", http.StatusOK, time.Since(startTime), item.Size, iputil.GetClientIP(r), r, true, item.Size)
 }

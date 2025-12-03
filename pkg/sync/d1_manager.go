@@ -102,13 +102,13 @@ func (m *D1Manager) SyncNow(ctx context.Context) error {
 	}
 
 	// 同步路径统计
-	if err := m.syncFileToD1(ctx, "data/path_stats.json"); err != nil {
+	if err := m.syncPathStatsToD1(ctx); err != nil {
 		log.Printf("[D1Sync] Warning: Path stats sync failed: %v", err)
 		// 不中断流程
 	}
 
 	// 同步封禁IP
-	if err := m.syncFileToD1(ctx, "data/banned_ips.json"); err != nil {
+	if err := m.syncBannedIPsToD1(ctx); err != nil {
 		log.Printf("[D1Sync] Warning: Banned IPs sync failed: %v", err)
 		// 不中断流程
 	}
@@ -132,16 +132,40 @@ func (m *D1Manager) SyncNow(ctx context.Context) error {
 	return nil
 }
 
-// UploadConfig 上传配置
+// UploadConfig 上传配置（转换为列式存储）
 func (m *D1Manager) UploadConfig(ctx context.Context, config any) error {
-	// 直接上传配置JSON
+	// 保存配置到临时文件以便转换
+	tempFile := "data/config.json.temp"
 	configJson, err := json.Marshal(config)
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := m.storage.Upload(ctx, "data/config.json", configJson); err != nil {
-		return fmt.Errorf("failed to upload config to D1: %w", err)
+	if err := os.WriteFile(tempFile, configJson, 0644); err != nil {
+		return fmt.Errorf("failed to write temp config: %w", err)
+	}
+	defer os.Remove(tempFile)
+
+	// 转换为列式存储格式
+	maps, others, err := ConvertConfigFromFile(tempFile)
+	if err != nil {
+		return fmt.Errorf("failed to convert config: %w", err)
+	}
+
+	// 批量上传 ConfigMaps
+	if len(maps) > 0 {
+		if err := m.storage.BatchUpsertConfigMaps(ctx, maps); err != nil {
+			return fmt.Errorf("failed to upload config maps: %w", err)
+		}
+		log.Printf("[D1Sync] Uploaded %d config maps", len(maps))
+	}
+
+	// 批量上传 ConfigOther
+	if len(others) > 0 {
+		if err := m.storage.BatchUpsertConfigOther(ctx, others); err != nil {
+			return fmt.Errorf("failed to upload config other: %w", err)
+		}
+		log.Printf("[D1Sync] Uploaded %d other configs", len(others))
 	}
 
 	return nil
@@ -192,18 +216,62 @@ func (m *D1Manager) syncConfigToD1(ctx context.Context) error {
 	return m.UploadConfig(ctx, config)
 }
 
-// syncFileToD1 同步文件到D1
-func (m *D1Manager) syncFileToD1(ctx context.Context, filePath string) error {
-	// 读取文件内容
-	data, err := readFile(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to read file %s: %w", filePath, err)
+// syncPathStatsToD1 同步路径统计到D1
+func (m *D1Manager) syncPathStatsToD1(ctx context.Context) error {
+	filePath := "data/path_stats.json"
+
+	// 检查文件是否存在
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		log.Printf("[D1Sync] Path stats file not found, skipping")
+		return nil
 	}
 
-	// 上传到D1
-	if err := m.storage.Upload(ctx, filePath, data); err != nil {
-		return fmt.Errorf("failed to upload %s to D1: %w", filePath, err)
+	// 转换为列式存储格式
+	stats, err := ConvertPathStatsFromFile(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to convert path stats: %w", err)
 	}
+
+	if len(stats) == 0 {
+		log.Printf("[D1Sync] No path stats to sync")
+		return nil
+	}
+
+	// 批量上传
+	if err := m.storage.BatchUpsertPathStats(ctx, stats); err != nil {
+		return fmt.Errorf("failed to upload path stats: %w", err)
+	}
+
+	log.Printf("[D1Sync] Uploaded %d path stats", len(stats))
+	return nil
+}
+
+// syncBannedIPsToD1 同步封禁IP到D1
+func (m *D1Manager) syncBannedIPsToD1(ctx context.Context) error {
+	filePath := "data/banned_ips.json"
+
+	// 检查文件是否存在
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		log.Printf("[D1Sync] Banned IPs file not found, skipping")
+		return nil
+	}
+
+	// 转换为列式存储格式
+	bans, err := ConvertBannedIPsFromFile(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to convert banned IPs: %w", err)
+	}
+
+	if len(bans) > 0 {
+		// 批量上传当前封禁
+		if err := m.storage.BatchUpsertBannedIPs(ctx, bans); err != nil {
+			return fmt.Errorf("failed to upload banned IPs: %w", err)
+		}
+		log.Printf("[D1Sync] Uploaded %d banned IPs", len(bans))
+	}
+
+	// 注意: 历史记录暂不同步，避免重复写入
+	// 如果需要同步历史记录，可以在 Worker 端添加历史记录批量插入接口
 
 	return nil
 }
@@ -212,10 +280,13 @@ func (m *D1Manager) syncFileToD1(ctx context.Context, filePath string) error {
 func (m *D1Manager) downloadConfigWithFallback(ctx context.Context) error {
 	log.Printf("[D1Sync] Checking for remote config...")
 
-	// 尝试下载远程配置
-	configData, err := m.storage.Download(ctx, "data/config.json")
-	if err != nil {
-		log.Printf("[D1Sync] Remote config not found, uploading local config as initial version: %v", err)
+	// 尝试下载远程 ConfigMaps 和 ConfigOther
+	maps, mapsErr := m.storage.GetConfigMaps(ctx, false)
+	others, othersErr := m.storage.GetConfigOther(ctx, "")
+
+	// 如果两个都失败，说明远程没有配置
+	if mapsErr != nil && othersErr != nil {
+		log.Printf("[D1Sync] Remote config not found, uploading local config as initial version")
 
 		// 远程不存在，上传本地配置作为初始版本
 		config, loadErr := m.configLoader.LoadConfig()
@@ -231,19 +302,58 @@ func (m *D1Manager) downloadConfigWithFallback(ctx context.Context) error {
 		return nil
 	}
 
-	// 远程存在，保存到本地
+	// 远程存在，重建配置对象并保存到本地
 	log.Printf("[D1Sync] Remote config found, downloading...")
 
-	var config map[string]any
-	if err := json.Unmarshal(configData, &config); err != nil {
-		return fmt.Errorf("failed to unmarshal config JSON: %w", err)
+	config := make(map[string]any)
+
+	// 重建 MAP 配置
+	if mapsErr == nil && len(maps) > 0 {
+		mapConfig := make(map[string]any)
+		for _, cm := range maps {
+			pathConfig := map[string]any{
+				"DefaultTarget": cm.DefaultTarget,
+				"Enabled":       cm.Enabled,
+			}
+
+			// 解析 ExtensionRules JSON
+			if cm.ExtensionRules != "" {
+				var extRules map[string]any
+				if err := json.Unmarshal([]byte(cm.ExtensionRules), &extRules); err == nil {
+					pathConfig["ExtensionMap"] = extRules
+				}
+			}
+
+			// 解析 CacheConfig JSON
+			if cm.CacheConfig != "" {
+				var cacheConf map[string]any
+				if err := json.Unmarshal([]byte(cm.CacheConfig), &cacheConf); err == nil {
+					pathConfig["CacheConfig"] = cacheConf
+				}
+			}
+
+			mapConfig[cm.Path] = pathConfig
+		}
+		config["MAP"] = mapConfig
 	}
 
+	// 重建其他配置
+	if othersErr == nil {
+		for _, other := range others {
+			var value any
+			if err := json.Unmarshal([]byte(other.Value), &value); err == nil {
+				config[other.Key] = value
+			}
+		}
+	}
+
+	// 保存到本地
 	if err := m.configLoader.SaveConfig(config); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	log.Printf("[D1Sync] Successfully downloaded remote config")
+	log.Printf("[D1Sync] Successfully downloaded remote config (%d maps, %d others)",
+		len(maps), len(others))
 	return nil
 }
 
@@ -261,7 +371,3 @@ func (m *D1Manager) sendEvent(event SyncEvent) {
 	}
 }
 
-// readFile 读取文件内容（辅助函数）
-func readFile(path string) ([]byte, error) {
-	return os.ReadFile(path)
-}

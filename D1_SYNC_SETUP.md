@@ -38,11 +38,46 @@ database_id = "你的-database-id"  # 替换为实际 ID
 
 ### 3. 运行数据库迁移
 
+**重要**: D1 有本地和远程两个数据库环境,Worker 部署后访问的是**远程数据库**,所以必须对远程数据库运行迁移!
+
 ```bash
-npm run d1:migrations
+# ⚠️ 对远程数据库运行迁移 (正确方式)
+wrangler d1 migrations apply proxy-go-data --remote
+
+# 或者使用完整命令
+npx wrangler d1 migrations apply proxy-go-data --remote
 ```
 
-这将创建 `config`, `path_stats`, `banned_ips` 三个表。
+**验证迁移成功**:
+
+```bash
+# 查看远程数据库的表 (注意 --remote 标志)
+wrangler d1 execute proxy-go-data --remote --command "SELECT name FROM sqlite_master WHERE type='table'"
+
+# 应该看到输出:
+# 🌀 Executing on remote database proxy-go-data...
+# ┌─────────────────┐
+# │ name            │
+# ├─────────────────┤
+# │ config          │
+# │ path_stats      │
+# │ banned_ips      │
+# └─────────────────┘
+```
+
+**常见错误**:
+
+❌ **错误**: 忘记 `--remote` 标志
+```bash
+# 这只会在本地数据库创建表,Worker 无法访问!
+wrangler d1 migrations apply proxy-go-data  # 缺少 --remote
+```
+
+✅ **正确**: 使用 `--remote` 标志
+```bash
+# Worker 可以访问远程数据库的表
+wrangler d1 migrations apply proxy-go-data --remote
+```
 
 ### 4. 设置 API Token (推荐)
 
@@ -190,14 +225,55 @@ curl https://your-worker.workers.dev/banned_ips \
 ```bash
 cd cloudflare-worker
 
-# 查询数据
-wrangler d1 execute proxy-go-data \
+# ⚠️ 查询远程数据库 (别忘了 --remote)
+wrangler d1 execute proxy-go-data --remote \
   --command "SELECT * FROM config"
+
+# 查看所有表
+wrangler d1 execute proxy-go-data --remote \
+  --command "SELECT name FROM sqlite_master WHERE type='table'"
+
+# 查看更新时间
+wrangler d1 execute proxy-go-data --remote \
+  --command "SELECT updated_at FROM config"
 ```
 
 ## 故障排查
 
-### 1. 无法连接到 Worker
+### 1. D1 表不存在错误
+
+**症状**:
+```
+D1_ERROR: no such table: config: SQLITE_ERROR
+```
+
+**原因**: 没有对**远程数据库**运行迁移,只在本地数据库创建了表
+
+**解决**:
+```bash
+cd cloudflare-worker
+
+# 1. 对远程数据库运行迁移 (重要!)
+wrangler d1 migrations apply proxy-go-data --remote
+
+# 2. 验证表已创建
+wrangler d1 execute proxy-go-data --remote \
+  --command "SELECT name FROM sqlite_master WHERE type='table'"
+
+# 3. 重新部署 Worker
+wrangler deploy
+
+# 4. 重启 proxy-go
+cd ..
+./proxy-go
+```
+
+**说明**:
+- 本地数据库 (`.wrangler/state/v3/d1/`) 只用于本地开发
+- Worker 部署后访问的是远程数据库 (Cloudflare 云端)
+- 必须使用 `--remote` 标志对远程数据库运行迁移!
+
+### 2. 无法连接到 Worker
 
 **症状**: 日志显示 "failed to send request"
 
@@ -206,7 +282,7 @@ wrangler d1 execute proxy-go-data \
 - 确认 Worker 已成功部署
 - 测试 Worker URL: `curl https://your-worker.workers.dev/`
 
-### 2. 认证失败
+### 3. 认证失败
 
 **症状**: 日志显示 "Unauthorized" 或 "401"
 

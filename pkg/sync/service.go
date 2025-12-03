@@ -121,19 +121,31 @@ func StartSyncService(ctx context.Context) error {
 	return nil
 }
 
-// StopSyncService 停止同步服务
+// StopSyncService 停止同步服务（退出前执行一次完整同步）
 func StopSyncService() error {
 	globalSyncMutex.RLock()
 	defer globalSyncMutex.RUnlock()
-	
+
 	if globalSyncService == nil || !globalSyncService.isEnabled {
 		return nil
 	}
-	
+
+	// 退出前执行一次完整同步
+	log.Printf("[Sync] Performing final sync before shutdown...")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := globalSyncService.manager.SyncNow(ctx); err != nil {
+		log.Printf("[Sync] Warning: Final sync failed: %v", err)
+		// 即使同步失败也继续停止服务
+	} else {
+		log.Printf("[Sync] Final sync completed successfully")
+	}
+
 	if err := globalSyncService.manager.Stop(); err != nil {
 		return fmt.Errorf("failed to stop sync manager: %w", err)
 	}
-	
+
 	log.Printf("[Sync] Sync service stopped")
 	return nil
 }
