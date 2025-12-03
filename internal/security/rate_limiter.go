@@ -57,6 +57,21 @@ func NewIPBanManager(config *IPBanConfig) *IPBanManager {
 		config = DefaultIPBanConfig()
 	}
 
+	// 确保配置值有效，使用默认值填充零值
+	defaultConfig := DefaultIPBanConfig()
+	if config.ErrorThreshold <= 0 {
+		config.ErrorThreshold = defaultConfig.ErrorThreshold
+	}
+	if config.WindowMinutes <= 0 {
+		config.WindowMinutes = defaultConfig.WindowMinutes
+	}
+	if config.BanDurationMinutes <= 0 {
+		config.BanDurationMinutes = defaultConfig.BanDurationMinutes
+	}
+	if config.CleanupIntervalMinutes <= 0 {
+		config.CleanupIntervalMinutes = defaultConfig.CleanupIntervalMinutes
+	}
+
 	// 创建持久化存储
 	storage := NewBanStorage("data/banned_ips.json")
 
