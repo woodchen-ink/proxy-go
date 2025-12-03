@@ -56,8 +56,10 @@ func (m *D1Manager) Start(ctx context.Context) error {
 
 	log.Printf("[D1Sync] Skipping initial sync at startup (already downloaded config)")
 
-	// 启动定时同步（仅同步config.json）
-	go m.syncLoop(ctx)
+	// 注意: 不再需要定时同步循环
+	// - Config: 通过 ConfigUpdateCallback 在修改时立即同步
+	// - Path Stats/Metrics: 由 MetricsStorage 每 30 分钟自动同步
+	// - Banned IPs: 在封禁/解封时立即同步
 
 	return nil
 }
@@ -203,31 +205,6 @@ func (m *D1Manager) GetEventChannel() <-chan SyncEvent {
 	return m.eventChan
 }
 
-// syncLoop 同步循环
-func (m *D1Manager) syncLoop(ctx context.Context) {
-	ticker := time.NewTicker(10 * time.Minute)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			if err := m.SyncNow(ctx); err != nil {
-				log.Printf("[D1Sync] Scheduled sync failed: %v", err)
-				m.sendEvent(SyncEvent{
-					Type:      SyncEventError,
-					Timestamp: time.Now(),
-					Message:   "Scheduled sync failed",
-					Error:     err,
-				})
-			}
-		case <-m.stopChan:
-			return
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
 // syncConfigToD1 同步配置到D1
 func (m *D1Manager) syncConfigToD1(ctx context.Context) error {
 	config, err := m.configLoader.LoadConfig()
@@ -316,6 +293,20 @@ func (m *D1Manager) LoadLatencyDistribution(ctx context.Context) (map[string]int
 
 	log.Printf("[D1Sync] Loaded %d latency buckets", len(result))
 	return result, nil
+}
+
+// SavePathStats 保存路径统计到 D1
+func (m *D1Manager) SavePathStats(ctx context.Context, stats []PathStat) error {
+	if len(stats) == 0 {
+		return nil
+	}
+
+	if err := m.storage.BatchUpsertPathStats(ctx, stats); err != nil {
+		return fmt.Errorf("failed to save path stats: %w", err)
+	}
+
+	log.Printf("[D1Sync] Saved %d path stats", len(stats))
+	return nil
 }
 
 // downloadConfigWithFallback 下载配置，如果远程不存在则上传本地配置

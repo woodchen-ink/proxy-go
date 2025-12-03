@@ -26,6 +26,8 @@ func (h *ConfigHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleGetConfig(w, r)
 	case "/admin/api/config/save":
 		h.handleSaveConfig(w, r)
+	case "/admin/api/config/pull":
+		h.handlePullConfig(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -66,5 +68,23 @@ func (h *ConfigHandler) handleSaveConfig(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"message": "配置已更新并生效"}`))
+}
+
+// handlePullConfig 处理从 D1 拉取配置请求
+func (h *ConfigHandler) handlePullConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 从 D1 拉取配置
+	configData, err := h.configService.PullConfigFromD1()
+	if err != nil {
+		http.Error(w, "从 D1 拉取配置失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(configData)
 }
 

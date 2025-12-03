@@ -8,7 +8,8 @@
     "deploy": "wrangler deploy",
     "tail": "wrangler tail",
     "d1:create": "wrangler d1 create proxy-go-data",
-    "d1:migrations": "wrangler d1 migrations apply proxy-go-data"
+    "d1:migrations": "wrangler d1 migrations apply proxy-go-data",
+    "d1:remote": "wrangler d1 migrations apply proxy-go-data --remote"
   },
   "keywords": [],
   "author": "",

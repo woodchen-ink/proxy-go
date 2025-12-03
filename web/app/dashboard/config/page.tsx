@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useToast } from "@/components/ui/use-toast"
 import { useRouter } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Download, Upload } from "lucide-react"
+import { Download, RefreshCw } from "lucide-react"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -624,84 +624,34 @@ export default function ConfigPage() {
     URL.revokeObjectURL(url)
   }
 
-  const importConfig = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (!file) return
+  const pullConfigFromD1 = async () => {
+    try {
+      const response = await fetch('/admin/api/config/pull', {
+        method: 'POST',
+      })
 
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      try {
-        const content = e.target?.result as string
-        const newConfig = JSON.parse(content)
-
-        // 验证配置结构
-        if (!newConfig.MAP || typeof newConfig.MAP !== 'object') {
-          throw new Error('配置文件缺少 MAP 字段或格式不正确')
-        }
-
-        if (!newConfig.Compression || 
-            typeof newConfig.Compression !== 'object' ||
-            !newConfig.Compression.Gzip ||
-            !newConfig.Compression.Brotli) {
-          throw new Error('配置文件压缩设置格式不正确')
-        }
-
-        // 如果没有安全配置，添加默认配置
-        if (!newConfig.Security) {
-          newConfig.Security = {
-            IPBan: {
-              Enabled: false,
-              ErrorThreshold: 10,
-              WindowMinutes: 5,
-              BanDurationMinutes: 5,
-              CleanupIntervalMinutes: 1
-            }
-          }
-        }
-
-        // 验证路径映射
-        for (const [path, target] of Object.entries(newConfig.MAP)) {
-          if (!path.startsWith('/')) {
-            throw new Error(`路径 ${path} 必须以/开头`)
-          }
-
-          if (typeof target === 'string') {
-            try {
-              new URL(target)
-            } catch {
-              throw new Error(`路径 ${path} 的目标URL格式不正确`)
-            }
-          } else if (target && typeof target === 'object') {
-            const mapping = target as PathMapping
-            if (!mapping.DefaultTarget || typeof mapping.DefaultTarget !== 'string') {
-              throw new Error(`路径 ${path} 的默认目标格式不正确`)
-            }
-            try {
-              new URL(mapping.DefaultTarget)
-            } catch {
-              throw new Error(`路径 ${path} 的默认目标URL格式不正确`)
-            }
-          } else {
-            throw new Error(`路径 ${path} 的目标格式不正确`)
-          }
-        }
-
-        // 使用setConfig而不是updateConfig，因为导入的配置不应触发自动保存
-        isConfigFromApiRef.current = true
-        setConfig(newConfig)
-        toast({
-          title: "成功",
-          description: "配置已导入",
-        })
-      } catch (error) {
-        toast({
-          title: "错误",
-          description: error instanceof Error ? error.message : "配置文件格式错误",
-          variant: "destructive",
-        })
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(errorText || '从 D1 拉取配置失败')
       }
+
+      const pulledConfig = await response.json()
+
+      // 使用 setConfig 而不是 updateConfig，因为拉取的配置已经在服务端更新过了
+      isConfigFromApiRef.current = true
+      setConfig(pulledConfig)
+
+      toast({
+        title: "成功",
+        description: "已从 D1 拉取最新配置",
+      })
+    } catch (error) {
+      toast({
+        title: "错误",
+        description: error instanceof Error ? error.message : "从 D1 拉取配置失败",
+        variant: "destructive",
+      })
     }
-    reader.readAsText(file)
   }
 
   const handleEditPath = (path: string, target: PathMapping | string) => {
@@ -986,18 +936,10 @@ export default function ConfigPage() {
               <Download className="w-4 h-4 mr-2" />
               导出配置
             </Button>
-            <label>
-              <Button variant="outline" className="cursor-pointer">
-                <Upload className="w-4 h-4 mr-2" />
-                导入配置
-              </Button>
-              <input
-                type="file"
-                className="hidden"
-                accept=".json"
-                onChange={importConfig}
-              />
-            </label>
+            <Button onClick={pullConfigFromD1} variant="outline">
+              <RefreshCw className="w-4 h-4 mr-2" />
+              从 D1 拉取配置
+            </Button>
             {saving && (
               <div className="flex items-center text-sm text-muted-foreground">
                 <span className="animate-pulse mr-2">●</span>

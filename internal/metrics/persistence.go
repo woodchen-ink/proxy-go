@@ -109,6 +109,14 @@ func (ms *MetricsStorage) SaveMetrics() error {
 		}
 	}
 
+	// 获取路径统计
+	pathStats := ms.getPathStatsArray()
+	if len(pathStats) > 0 {
+		if err := sync.SavePathStats(ctx, pathStats); err != nil {
+			log.Printf("[MetricsStorage] 保存路径统计失败: %v", err)
+		}
+	}
+
 	// 更新最后保存时间
 	ms.mutex.Lock()
 	ms.lastSaveTime = time.Now()
@@ -227,4 +235,37 @@ func (ms *MetricsStorage) getLatencyDistributionMap() map[string]int64 {
 		"200-1000ms": atomic.LoadInt64(&ms.collector.latencyBuckets.ms200_1000),
 		"gt1s":       atomic.LoadInt64(&ms.collector.latencyBuckets.gt1s),
 	}
+}
+
+// getPathStatsArray 获取路径统计数组（转换为 sync.PathStat 格式）
+func (ms *MetricsStorage) getPathStatsArray() []sync.PathStat {
+	pathMetrics := ms.collector.GetPathStats()
+	if len(pathMetrics) == 0 {
+		return nil
+	}
+
+	now := time.Now().UnixMilli()
+	result := make([]sync.PathStat, 0, len(pathMetrics))
+
+	for _, pm := range pathMetrics {
+		result = append(result, sync.PathStat{
+			Path:             pm.Path,
+			RequestCount:     pm.RequestCount,
+			ErrorCount:       pm.ErrorCount,
+			BytesTransferred: pm.BytesTransferred,
+			Status2xx:        pm.Status2xx,
+			Status3xx:        pm.Status3xx,
+			Status4xx:        pm.Status4xx,
+			Status5xx:        pm.Status5xx,
+			CacheHits:        pm.CacheHits,
+			CacheMisses:      pm.CacheMisses,
+			CacheHitRate:     pm.CacheHitRate,
+			BytesSaved:       pm.BytesSaved,
+			AvgLatency:       pm.AvgLatency,
+			LastAccessTime:   pm.LastAccessTime,
+			UpdatedAt:        now,
+		})
+	}
+
+	return result
 }

@@ -271,3 +271,15 @@ func LoadPathStats(ctx context.Context) ([]PathStat, error) {
 	// 调用 D1Client 的 GetPathStats 方法
 	return globalSyncService.manager.storage.GetPathStats(ctx, "")
 }
+
+// SavePathStats 保存路径统计到 D1
+func SavePathStats(ctx context.Context, stats []PathStat) error {
+	globalSyncMutex.RLock()
+	defer globalSyncMutex.RUnlock()
+
+	if globalSyncService == nil || !globalSyncService.isEnabled {
+		return nil
+	}
+
+	return globalSyncService.manager.SavePathStats(ctx, stats)
+}
