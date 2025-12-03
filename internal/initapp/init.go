@@ -69,6 +69,8 @@ func InitWithOptions(opts InitOptions) (*AppComponents, error) {
 
 	components := &AppComponents{}
 	var err error
+	var remoteConfigData map[string]any
+	var useRemoteConfig bool
 
 	// 1. 尝试初始化同步服务
 	if opts.EnableSync {
@@ -85,23 +87,37 @@ func InitWithOptions(opts InitOptions) (*AppComponents, error) {
 			// 2. 从远程下载最新配置
 			log.Printf("[Init] 正在从远程下载最新配置...")
 			ctx, cancel := context.WithTimeout(context.Background(), opts.SyncTimeout)
-			if err := sync.DownloadConfigOnly(ctx); err != nil {
-				log.Printf("[Init] 下载远程配置失败: %v", err)
+			configData, usedLocal, downloadErr := sync.DownloadConfigOnly(ctx)
+			cancel()
+
+			if downloadErr != nil {
+				log.Printf("[Init] 下载远程配置失败: %v", downloadErr)
 				if !opts.FallbackOnError {
-					cancel()
-					return nil, err
+					return nil, downloadErr
 				}
 				log.Printf("[Init] 将使用本地配置")
 			} else {
-				log.Printf("[Init] 远程配置下载完成")
+				remoteConfigData = configData
+				useRemoteConfig = true
+				if usedLocal {
+					log.Printf("[Init] 远程配置为空，已上传本地配置")
+				} else {
+					log.Printf("[Init] 远程配置下载完成")
+				}
 			}
-			cancel()
 		}
 	}
 
-	// 3. 初始化配置管理器（使用已下载的配置或本地配置）
+	// 3. 初始化配置管理器
 	log.Printf("[Init] 正在初始化配置管理器...")
-	components.ConfigManager, err = config.NewConfigManager(opts.ConfigPath)
+	if useRemoteConfig && remoteConfigData != nil {
+		// 使用远程配置数据初始化（不依赖本地文件）
+		config.SetRemoteMode(true)
+		components.ConfigManager, err = config.NewConfigManagerFromData(opts.ConfigPath, remoteConfigData)
+	} else {
+		// 使用本地配置文件初始化
+		components.ConfigManager, err = config.NewConfigManager(opts.ConfigPath)
+	}
 	if err != nil {
 		log.Printf("[Init] 配置管理器初始化失败: %v", err)
 		return nil, err

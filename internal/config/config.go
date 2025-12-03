@@ -12,12 +12,24 @@ import (
 var (
 	configCallbacks []func(*Config)
 	callbackMutex   sync.RWMutex
+	// remoteMode 标记是否使用远程配置模式（不保存本地文件）
+	remoteMode bool
 )
 
 type ConfigManager struct {
 	config     atomic.Value
 	configPath string
 	mu         sync.RWMutex
+}
+
+// SetRemoteMode 设置远程配置模式
+func SetRemoteMode(enabled bool) {
+	remoteMode = enabled
+}
+
+// IsRemoteMode 检查是否为远程配置模式
+func IsRemoteMode() bool {
+	return remoteMode
 }
 
 func NewConfigManager(configPath string) (*ConfigManager, error) {
@@ -41,6 +53,57 @@ func NewConfigManager(configPath string) (*ConfigManager, error) {
 	log.Printf("[ConfigManager] 配置已加载: %d 个路径映射", len(config.MAP))
 
 	return cm, nil
+}
+
+// NewConfigManagerFromData 从已有的配置数据创建 ConfigManager（远程配置模式）
+func NewConfigManagerFromData(configPath string, configData map[string]any) (*ConfigManager, error) {
+	cm := &ConfigManager{
+		configPath: configPath,
+	}
+
+	// 将 map[string]any 转换为 Config 结构
+	config, err := cm.convertMapToConfig(configData)
+	if err != nil {
+		return nil, err
+	}
+
+	// 规范化配置
+	cm.normalizeConfig(config)
+
+	// 确保 /mirror 系统路径存在
+	cm.ensureMirrorPath(config)
+
+	// 确保所有路径配置的扩展名规则都已更新
+	for path, pc := range config.MAP {
+		pc.ProcessExtensionMap()
+		config.MAP[path] = pc
+	}
+
+	cm.config.Store(config)
+	log.Printf("[ConfigManager] 从远程数据加载配置: %d 个路径映射", len(config.MAP))
+
+	return cm, nil
+}
+
+// convertMapToConfig 将 map[string]any 转换为 Config 结构
+func (cm *ConfigManager) convertMapToConfig(data map[string]any) (*Config, error) {
+	// 先序列化为 JSON，再反序列化为 Config
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+
+	var config Config
+	if err := json.Unmarshal(jsonData, &config); err != nil {
+		return nil, err
+	}
+
+	// 确保 MAP 不为 nil
+	if config.MAP == nil {
+		config.MAP = make(map[string]PathConfig)
+	}
+
+	return &config, nil
 }
 
 // loadConfigFromFile 从文件加载配置
@@ -223,15 +286,19 @@ func (cm *ConfigManager) UpdateConfig(newConfig *Config) error {
 		newConfig.MAP[path] = pc // 更新回原始map
 	}
 
-	// 保存到文件
-	if err := cm.saveConfigToFile(newConfig); err != nil {
-		return err
+	// 远程模式下不保存到本地文件
+	if !remoteMode {
+		if err := cm.saveConfigToFile(newConfig); err != nil {
+			return err
+		}
+	} else {
+		log.Printf("[ConfigManager] 远程模式: 跳过本地文件保存")
 	}
 
 	// 更新内存中的配置
 	cm.config.Store(newConfig)
 
-	// 触发回调
+	// 触发回调（会自动同步到远程）
 	TriggerCallbacks(newConfig)
 
 	log.Printf("[ConfigManager] 配置已更新: %d 个路径映射", len(newConfig.MAP))

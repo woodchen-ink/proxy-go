@@ -163,18 +163,32 @@ func SyncNow(ctx context.Context) error {
 }
 
 // DownloadConfigOnly 仅下载配置（启动时使用）
+// 返回: 配置数据，是否使用了本地配置，错误
 // 如果远程不存在配置，则上传本地配置作为初始版本
-func DownloadConfigOnly(ctx context.Context) error {
+func DownloadConfigOnly(ctx context.Context) (map[string]any, bool, error) {
 	globalSyncMutex.RLock()
 	defer globalSyncMutex.RUnlock()
 
 	if globalSyncService == nil || !globalSyncService.isEnabled {
-		return fmt.Errorf("sync service not available")
+		return nil, false, fmt.Errorf("sync service not available")
 	}
 
-	// 支持 S3 Manager
+	// 支持 S3 Manager (保持原有行为，从文件加载)
 	if manager, ok := globalSyncService.manager.(*Manager); ok {
-		return manager.downloadConfigWithFallback(ctx)
+		err := manager.downloadConfigWithFallback(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+		// S3 模式下从文件加载配置
+		config, loadErr := globalSyncService.configAdapter.LoadConfig()
+		if loadErr != nil {
+			return nil, false, loadErr
+		}
+		configMap, ok := config.(map[string]any)
+		if !ok {
+			return nil, false, fmt.Errorf("config is not map[string]any")
+		}
+		return configMap, false, nil
 	}
 
 	// 支持 D1 Manager
@@ -182,7 +196,7 @@ func DownloadConfigOnly(ctx context.Context) error {
 		return manager.downloadConfigWithFallback(ctx)
 	}
 
-	return fmt.Errorf("sync manager type mismatch")
+	return nil, false, fmt.Errorf("sync manager type mismatch")
 }
 
 // SyncConfigOnly 仅同步主配置文件（快速同步）

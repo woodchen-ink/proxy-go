@@ -223,11 +223,16 @@ func (c *D1Client) BatchUpsertBannedIPs(ctx context.Context, bans []BannedIP) er
 type ConfigMap struct {
 	Path           string `json:"path"`
 	DefaultTarget  string `json:"default_target"`
-	Enabled        bool   `json:"enabled"`
+	Enabled        int    `json:"enabled"` // D1 返回整数 0/1
 	ExtensionRules string `json:"extension_rules,omitempty"` // JSON
 	CacheConfig    string `json:"cache_config,omitempty"`    // JSON
 	CreatedAt      int64  `json:"created_at"`
 	UpdatedAt      int64  `json:"updated_at"`
+}
+
+// IsEnabled 返回是否启用
+func (c ConfigMap) IsEnabled() bool {
+	return c.Enabled == 1
 }
 
 func (c *D1Client) GetConfigMaps(ctx context.Context, enabledOnly bool) ([]ConfigMap, error) {

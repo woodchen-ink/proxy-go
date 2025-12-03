@@ -39,3 +39,5 @@ data/cache
 CLAUDE.md
 .claude/
 cloudflare-worker/wrangler.toml
+data/banned_ips.json
+data/path_stats.json

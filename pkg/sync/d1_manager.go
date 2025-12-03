@@ -277,33 +277,53 @@ func (m *D1Manager) syncBannedIPsToD1(ctx context.Context) error {
 }
 
 // downloadConfigWithFallback 下载配置，如果远程不存在则上传本地配置
-func (m *D1Manager) downloadConfigWithFallback(ctx context.Context) error {
+// 返回: 远程配置数据（如果存在），是否使用了本地配置，错误
+func (m *D1Manager) downloadConfigWithFallback(ctx context.Context) (map[string]any, bool, error) {
 	log.Printf("[D1Sync] Checking for remote config...")
 
 	// 尝试下载远程 ConfigMaps 和 ConfigOther
 	maps, mapsErr := m.storage.GetConfigMaps(ctx, false)
 	others, othersErr := m.storage.GetConfigOther(ctx, "")
 
-	// 如果两个都失败，说明远程没有配置
-	if mapsErr != nil && othersErr != nil {
-		log.Printf("[D1Sync] Remote config not found, uploading local config as initial version")
+	// 判断远程是否有有效配置：
+	// 1. API调用失败（mapsErr/othersErr != nil）表示网络或权限问题
+	// 2. API调用成功但返回空数据（len == 0）表示远程数据库为空
+	// 两种情况都应该上传本地配置作为初始版本
+	remoteHasConfig := (mapsErr == nil && len(maps) > 0) || (othersErr == nil && len(others) > 0)
 
-		// 远程不存在，上传本地配置作为初始版本
-		config, loadErr := m.configLoader.LoadConfig()
+	if !remoteHasConfig {
+		// 远程配置为空或API调用失败
+		if mapsErr != nil || othersErr != nil {
+			log.Printf("[D1Sync] Remote config check failed (maps: %v, others: %v), uploading local config", mapsErr, othersErr)
+		} else {
+			log.Printf("[D1Sync] Remote config is empty, uploading local config as initial version")
+		}
+
+		// 加载本地配置
+		localConfigAny, loadErr := m.configLoader.LoadConfig()
 		if loadErr != nil {
-			return fmt.Errorf("failed to load local config: %w", loadErr)
+			return nil, false, fmt.Errorf("failed to load local config: %w", loadErr)
 		}
 
-		if uploadErr := m.UploadConfig(ctx, config); uploadErr != nil {
-			return fmt.Errorf("failed to upload initial config: %w", uploadErr)
+		// 类型断言
+		localConfig, ok := localConfigAny.(map[string]any)
+		if !ok {
+			return nil, false, fmt.Errorf("local config is not map[string]any")
 		}
 
-		log.Printf("[D1Sync] Successfully uploaded local config as initial version")
-		return nil
+		// 上传本地配置作为初始版本
+		if uploadErr := m.UploadConfig(ctx, localConfigAny); uploadErr != nil {
+			log.Printf("[D1Sync] Warning: failed to upload initial config: %v", uploadErr)
+			// 即使上传失败，也返回本地配置
+		} else {
+			log.Printf("[D1Sync] Successfully uploaded local config as initial version")
+		}
+
+		return localConfig, true, nil
 	}
 
-	// 远程存在，重建配置对象并保存到本地
-	log.Printf("[D1Sync] Remote config found, downloading...")
+	// 远程存在有效配置，重建配置对象
+	log.Printf("[D1Sync] Remote config found (%d maps, %d others), downloading...", len(maps), len(others))
 
 	config := make(map[string]any)
 
@@ -313,7 +333,7 @@ func (m *D1Manager) downloadConfigWithFallback(ctx context.Context) error {
 		for _, cm := range maps {
 			pathConfig := map[string]any{
 				"DefaultTarget": cm.DefaultTarget,
-				"Enabled":       cm.Enabled,
+				"Enabled":       cm.IsEnabled(), // 使用方法转换为 bool
 			}
 
 			// 解析 ExtensionRules JSON
@@ -347,14 +367,10 @@ func (m *D1Manager) downloadConfigWithFallback(ctx context.Context) error {
 		}
 	}
 
-	// 保存到本地
-	if err := m.configLoader.SaveConfig(config); err != nil {
-		return fmt.Errorf("failed to save config: %w", err)
-	}
-
+	// 不再保存到本地文件，直接返回配置数据
 	log.Printf("[D1Sync] Successfully downloaded remote config (%d maps, %d others)",
 		len(maps), len(others))
-	return nil
+	return config, false, nil
 }
 
 // sendEvent 发送事件

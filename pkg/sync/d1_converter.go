@@ -204,10 +204,16 @@ func ConvertConfigFromFile(filePath string) ([]ConfigMap, []ConfigOther, error) 
 			// 提取基本字段
 			defaultTarget, _ := mapConfig["DefaultTarget"].(string)
 
-			// Enabled 字段：如果不存在则默认为 true
-			enabled := true
+			// Enabled 字段：如果不存在则默认为 true (1)
+			enabled := 1
 			if enabledVal, ok := mapConfig["Enabled"]; ok {
-				enabled, _ = enabledVal.(bool)
+				if boolVal, ok := enabledVal.(bool); ok {
+					if boolVal {
+						enabled = 1
+					} else {
+						enabled = 0
+					}
+				}
 			}
 
 			// 转换 ExtensionMap 为 JSON 字符串
