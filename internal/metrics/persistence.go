@@ -1,29 +1,25 @@
 package metrics
 
 import (
-	"encoding/json"
-	"fmt"
+	"context"
 	"log"
-	"os"
-	"path/filepath"
 	"proxy-go/internal/utils"
+	"proxy-go/pkg/sync"
 	"runtime"
 	"strconv"
-	"sync"
+	gosync "sync"
 	"sync/atomic"
 	"time"
 )
 
-// MetricsStorage 指标存储结构
+// MetricsStorage 指标存储结构（D1 模式）
 type MetricsStorage struct {
-	collector      *Collector
-	saveInterval   time.Duration
-	dataDir        string
-	stopChan       chan struct{}
-	wg             sync.WaitGroup
-	lastSaveTime   time.Time
-	mutex          sync.RWMutex
-	statusCodeFile string
+	collector    *Collector
+	saveInterval time.Duration
+	stopChan     chan struct{}
+	wg           gosync.WaitGroup
+	lastSaveTime time.Time
+	mutex        gosync.RWMutex
 }
 
 // NewMetricsStorage 创建新的指标存储
@@ -33,22 +29,15 @@ func NewMetricsStorage(collector *Collector, dataDir string, saveInterval time.D
 	}
 
 	return &MetricsStorage{
-		collector:      collector,
-		saveInterval:   saveInterval,
-		dataDir:        dataDir,
-		stopChan:       make(chan struct{}),
-		statusCodeFile: filepath.Join(dataDir, "status_codes.json"),
+		collector:    collector,
+		saveInterval: saveInterval,
+		stopChan:     make(chan struct{}),
 	}
 }
 
 // Start 启动定时保存任务
 func (ms *MetricsStorage) Start() error {
-	// 确保数据目录存在
-	if err := os.MkdirAll(ms.dataDir, 0755); err != nil {
-		return fmt.Errorf("创建数据目录失败: %v", err)
-	}
-
-	// 尝试加载现有数据
+	// 尝试从 D1 加载现有数据
 	if err := ms.LoadMetrics(); err != nil {
 		log.Printf("[MetricsStorage] 加载指标数据失败: %v", err)
 		// 加载失败不影响启动
@@ -92,29 +81,38 @@ func (ms *MetricsStorage) runSaveTask() {
 	}
 }
 
-// SaveMetrics 保存指标数据
+// SaveMetrics 保存指标数据到 D1
 func (ms *MetricsStorage) SaveMetrics() error {
-	start := time.Now()
-	log.Printf("[MetricsStorage] 开始保存指标数据...")
-
-	// 获取当前指标数据
-	stats := ms.collector.GetStats()
-
-	// 保存状态码统计
-	if err := saveJSONToFile(ms.statusCodeFile, stats["status_code_stats"]); err != nil {
-		return fmt.Errorf("保存状态码统计失败: %v", err)
+	if !sync.IsEnabled() {
+		return nil // D1 未启用，跳过保存
 	}
 
-	// 不再保存引用来源统计，因为它现在只保存在内存中
+	start := time.Now()
+	log.Printf("[MetricsStorage] 开始保存指标数据到 D1...")
 
-	// 单独保存延迟分布
-	if latencyStats, ok := stats["latency_stats"].(map[string]interface{}); ok {
-		if distribution, ok := latencyStats["distribution"]; ok {
-			if err := saveJSONToFile(filepath.Join(ms.dataDir, "latency_distribution.json"), distribution); err != nil {
-				log.Printf("[MetricsStorage] 保存延迟分布失败: %v", err)
-			}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// 获取状态码统计
+	statusCodes := ms.getStatusCodesMap()
+	if len(statusCodes) > 0 {
+		if err := sync.SaveStatusCodes(ctx, statusCodes); err != nil {
+			log.Printf("[MetricsStorage] 保存状态码统计失败: %v", err)
 		}
 	}
+
+	// 获取延迟分布
+	latencyDist := ms.getLatencyDistributionMap()
+	if len(latencyDist) > 0 {
+		if err := sync.SaveLatencyDistribution(ctx, latencyDist); err != nil {
+			log.Printf("[MetricsStorage] 保存延迟分布失败: %v", err)
+		}
+	}
+
+	// 更新最后保存时间
+	ms.mutex.Lock()
+	ms.lastSaveTime = time.Now()
+	ms.mutex.Unlock()
 
 	// 强制进行一次GC
 	runtime.GC()
@@ -128,84 +126,60 @@ func (ms *MetricsStorage) SaveMetrics() error {
 	return nil
 }
 
-// LoadMetrics 加载指标数据
+// LoadMetrics 从 D1 加载指标数据
 func (ms *MetricsStorage) LoadMetrics() error {
+	if !sync.IsEnabled() {
+		return nil // D1 未启用，跳过加载
+	}
+
 	start := time.Now()
-	log.Printf("[MetricsStorage] 开始加载指标数据...")
+	log.Printf("[MetricsStorage] 开始从 D1 加载指标数据...")
 
-	// 不再加载 basicMetrics（metrics.json）
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	// 1. 加载状态码统计（如果文件存在）
-	if fileExists(ms.statusCodeFile) {
-		var statusCodeStats map[string]interface{}
-		if err := loadJSONFromFile(ms.statusCodeFile, &statusCodeStats); err != nil {
-			log.Printf("[MetricsStorage] 加载状态码统计失败: %v", err)
-		} else {
-			// 由于新的 StatusCodeStats 结构，我们需要手动设置值
-			loadedCount := 0
-			for codeStr, countValue := range statusCodeStats {
-				// 解析状态码
-				if code, err := strconv.Atoi(codeStr); err == nil {
-					// 解析计数值
-					var count int64
-					switch v := countValue.(type) {
-					case float64:
-						count = int64(v)
-					case int64:
-						count = v
-					case int:
-						count = int64(v)
-					default:
-						continue
-					}
-
-					// 手动设置到新的 StatusCodeStats 结构中
-					ms.collector.statusCodeStats.mu.Lock()
-					if _, exists := ms.collector.statusCodeStats.stats[code]; !exists {
-						ms.collector.statusCodeStats.stats[code] = new(int64)
-					}
-					atomic.StoreInt64(ms.collector.statusCodeStats.stats[code], count)
-					ms.collector.statusCodeStats.mu.Unlock()
-					loadedCount++
+	// 加载状态码统计
+	statusCodes, err := sync.LoadStatusCodes(ctx)
+	if err != nil {
+		log.Printf("[MetricsStorage] 加载状态码统计失败: %v", err)
+	} else if len(statusCodes) > 0 {
+		loadedCount := 0
+		for codeStr, count := range statusCodes {
+			if code, err := strconv.Atoi(codeStr); err == nil {
+				ms.collector.statusCodeStats.mu.Lock()
+				if _, exists := ms.collector.statusCodeStats.stats[code]; !exists {
+					ms.collector.statusCodeStats.stats[code] = new(int64)
 				}
+				atomic.StoreInt64(ms.collector.statusCodeStats.stats[code], count)
+				ms.collector.statusCodeStats.mu.Unlock()
+				loadedCount++
 			}
-			log.Printf("[MetricsStorage] 成功加载了 %d 条状态码统计", loadedCount)
 		}
+		log.Printf("[MetricsStorage] 成功加载了 %d 条状态码统计", loadedCount)
 	}
 
-	// 不再加载引用来源统计，因为它现在只保存在内存中
-
-	// 3. 加载延迟分布（如果文件存在）
-	latencyDistributionFile := filepath.Join(ms.dataDir, "latency_distribution.json")
-	if fileExists(latencyDistributionFile) {
-		var distribution map[string]interface{}
-		if err := loadJSONFromFile(latencyDistributionFile, &distribution); err != nil {
-			log.Printf("[MetricsStorage] 加载延迟分布失败: %v", err)
-		} else {
-			// 由于新的 LatencyBuckets 结构，我们需要手动设置值
-			for bucket, count := range distribution {
-				countValue, ok := count.(float64)
-				if !ok {
-					continue
-				}
-
-				// 根据桶名称设置对应的值
-				switch bucket {
-				case "lt10ms":
-					atomic.StoreInt64(&ms.collector.latencyBuckets.lt10ms, int64(countValue))
-				case "10-50ms":
-					atomic.StoreInt64(&ms.collector.latencyBuckets.ms10_50, int64(countValue))
-				case "50-200ms":
-					atomic.StoreInt64(&ms.collector.latencyBuckets.ms50_200, int64(countValue))
-				case "200-1000ms":
-					atomic.StoreInt64(&ms.collector.latencyBuckets.ms200_1000, int64(countValue))
-				case "gt1s":
-					atomic.StoreInt64(&ms.collector.latencyBuckets.gt1s, int64(countValue))
-				}
+	// 加载延迟分布
+	latencyDist, err := sync.LoadLatencyDistribution(ctx)
+	if err != nil {
+		log.Printf("[MetricsStorage] 加载延迟分布失败: %v", err)
+	} else if len(latencyDist) > 0 {
+		for bucket, count := range latencyDist {
+			switch bucket {
+			case "lt10ms":
+				atomic.StoreInt64(&ms.collector.latencyBuckets.lt10ms, count)
+			case "10-50ms":
+				atomic.StoreInt64(&ms.collector.latencyBuckets.ms10_50, count)
+			case "50-200ms":
+				atomic.StoreInt64(&ms.collector.latencyBuckets.ms50_200, count)
+			case "200-1000ms":
+				atomic.StoreInt64(&ms.collector.latencyBuckets.ms200_1000, count)
+			case "gt1s":
+				atomic.StoreInt64(&ms.collector.latencyBuckets.gt1s, count)
 			}
-			log.Printf("[MetricsStorage] 加载了延迟分布数据")
 		}
+		log.Printf("[MetricsStorage] 加载了延迟分布数据")
 	}
+
 	// 强制进行一次GC
 	runtime.GC()
 
@@ -225,40 +199,32 @@ func (ms *MetricsStorage) GetLastSaveTime() time.Time {
 	return ms.lastSaveTime
 }
 
-// 辅助函数：保存JSON到文件
-func saveJSONToFile(filename string, data interface{}) error {
-	// 创建临时文件
-	tempFile := filename + ".tmp"
+// getStatusCodesMap 获取状态码统计 map
+func (ms *MetricsStorage) getStatusCodesMap() map[string]int64 {
+	result := make(map[string]int64)
 
-	// 将数据编码为JSON
-	jsonData, err := json.MarshalIndent(data, "", "  ")
-	if err != nil {
-		return err
+	ms.collector.statusCodeStats.mu.RLock()
+	defer ms.collector.statusCodeStats.mu.RUnlock()
+
+	for code, countPtr := range ms.collector.statusCodeStats.stats {
+		if countPtr != nil {
+			count := atomic.LoadInt64(countPtr)
+			if count > 0 {
+				result[strconv.Itoa(code)] = count
+			}
+		}
 	}
 
-	// 写入临时文件
-	if err := os.WriteFile(tempFile, jsonData, 0644); err != nil {
-		return err
-	}
-
-	// 重命名临时文件为目标文件（原子操作）
-	return os.Rename(tempFile, filename)
+	return result
 }
 
-// 辅助函数：从文件加载JSON
-func loadJSONFromFile(filename string, data interface{}) error {
-	// 读取文件内容
-	jsonData, err := os.ReadFile(filename)
-	if err != nil {
-		return err
+// getLatencyDistributionMap 获取延迟分布 map
+func (ms *MetricsStorage) getLatencyDistributionMap() map[string]int64 {
+	return map[string]int64{
+		"lt10ms":     atomic.LoadInt64(&ms.collector.latencyBuckets.lt10ms),
+		"10-50ms":    atomic.LoadInt64(&ms.collector.latencyBuckets.ms10_50),
+		"50-200ms":   atomic.LoadInt64(&ms.collector.latencyBuckets.ms50_200),
+		"200-1000ms": atomic.LoadInt64(&ms.collector.latencyBuckets.ms200_1000),
+		"gt1s":       atomic.LoadInt64(&ms.collector.latencyBuckets.gt1s),
 	}
-
-	// 解码JSON数据
-	return json.Unmarshal(jsonData, data)
-}
-
-// 辅助函数：检查文件是否存在
-func fileExists(filename string) bool {
-	_, err := os.Stat(filename)
-	return err == nil
 }

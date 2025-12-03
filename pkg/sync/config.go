@@ -5,41 +5,6 @@ import (
 	"os"
 )
 
-// NewConfigFromEnv 从环境变量创建配置
-func NewConfigFromEnv() (*Config, error) {
-	config := &Config{
-		Endpoint:        getEnvDefault("SYNC_S3_ENDPOINT", ""),
-		Bucket:          getEnvDefault("SYNC_S3_BUCKET", ""),
-		Region:          getEnvDefault("SYNC_S3_REGION", "us-east-1"),
-		AccessKeyID:     getEnvDefault("SYNC_S3_ACCESS_KEY_ID", ""),
-		SecretAccessKey: getEnvDefault("SYNC_S3_SECRET_ACCESS_KEY", ""),
-		UsePathStyle:    getEnvBool("SYNC_S3_USE_PATH_STYLE", false),
-		ConfigPath:      getEnvDefault("SYNC_CONFIG_PATH", "data/proxy-go"),
-	}
-
-	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid sync config: %w", err)
-	}
-
-	return config, nil
-}
-
-// SyncType 同步类型
-type SyncType string
-
-const (
-	SyncTypeS3 SyncType = "s3"
-	SyncTypeD1 SyncType = "d1"
-)
-
-// GetSyncType 获取同步类型（基于环境变量）
-func GetSyncType() SyncType {
-	if os.Getenv("D1_SYNC_ENABLED") == "true" {
-		return SyncTypeD1
-	}
-	return SyncTypeS3
-}
-
 // D1Config D1同步配置
 type D1Config struct {
 	Endpoint string // Worker URL
@@ -63,37 +28,23 @@ func NewD1ConfigFromEnv() (*D1Config, error) {
 // Validate 验证D1配置
 func (c *D1Config) Validate() error {
 	if c.Endpoint == "" {
-		return fmt.Errorf("D1 endpoint URL is required")
+		return fmt.Errorf("D1 endpoint URL is required (D1_SYNC_URL)")
 	}
 	if c.Token == "" {
-		return fmt.Errorf("D1 API token is required")
+		return fmt.Errorf("D1 API token is required (D1_SYNC_TOKEN)")
 	}
 	return nil
 }
 
-// Validate 验证配置
-func (c *Config) Validate() error {
-	if c.Bucket == "" {
-		return fmt.Errorf("bucket name is required")
-	}
+// IsD1ConfigComplete 检查D1同步配置是否完整
+func IsD1ConfigComplete() bool {
+	return os.Getenv("D1_SYNC_URL") != "" && os.Getenv("D1_SYNC_TOKEN") != ""
+}
 
-	if c.AccessKeyID == "" {
-		return fmt.Errorf("access key ID is required")
-	}
-
-	if c.SecretAccessKey == "" {
-		return fmt.Errorf("secret access key is required")
-	}
-
-	if c.Region == "" {
-		return fmt.Errorf("region is required")
-	}
-
-	if c.ConfigPath == "" {
-		return fmt.Errorf("config path is required")
-	}
-
-	return nil
+// IsEnabled 检查同步功能是否启用（基于环境变量）
+// 为了兼容旧代码，保留此函数
+func IsConfigComplete() bool {
+	return IsD1ConfigComplete()
 }
 
 // getEnvDefault 获取环境变量，如果不存在则返回默认值
@@ -102,37 +53,4 @@ func getEnvDefault(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
-}
-
-// getEnvBool 获取布尔型环境变量
-func getEnvBool(key string, defaultValue bool) bool {
-	value := os.Getenv(key)
-	if value == "" {
-		return defaultValue
-	}
-	return value == "true" || value == "1" || value == "yes"
-}
-
-// IsConfigComplete 检查同步配置是否完整（基于环境变量）
-func IsConfigComplete() bool {
-	// 检查D1同步
-	if os.Getenv("D1_SYNC_ENABLED") == "true" {
-		return os.Getenv("D1_SYNC_URL") != ""
-	}
-
-	// 检查S3同步
-	requiredEnvs := []string{
-		"SYNC_S3_BUCKET",
-		"SYNC_S3_ACCESS_KEY_ID",
-		"SYNC_S3_SECRET_ACCESS_KEY",
-		"SYNC_S3_REGION",
-	}
-
-	for _, env := range requiredEnvs {
-		if os.Getenv(env) == "" {
-			return false
-		}
-	}
-
-	return true
 }

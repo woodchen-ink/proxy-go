@@ -26,10 +26,8 @@ func main() {
 	// 初始化应用程序（完整初始化：同步、配置、服务、处理器、路由）
 	configPath := "data/config.json"
 	components, err := initapp.InitApp(initapp.InitOptions{
-		ConfigPath:      configPath,
-		SyncTimeout:     30 * time.Second,
-		EnableSync:      true,
-		FallbackOnError: true,
+		ConfigPath:  configPath,
+		SyncTimeout: 30 * time.Second,
 	})
 	if err != nil {
 		log.Fatal("Error initializing application:", err)

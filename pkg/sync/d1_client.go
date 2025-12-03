@@ -383,3 +383,159 @@ func (c *D1Client) BatchUpsertConfigOther(ctx context.Context, configs []ConfigO
 
 	return nil
 }
+
+// ============================================
+// Metrics (status_codes, latency_distribution)
+// ============================================
+
+type StatusCodeMetric struct {
+	StatusCode string `json:"status_code"`
+	Count      int64  `json:"count"`
+	UpdatedAt  int64  `json:"updated_at"`
+}
+
+type LatencyMetric struct {
+	Bucket    string `json:"bucket"`
+	Count     int64  `json:"count"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
+func (c *D1Client) GetStatusCodes(ctx context.Context) ([]StatusCodeMetric, error) {
+	url := fmt.Sprintf("%s/metrics/status-codes", c.endpoint)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if c.token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.token))
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("D1 API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Success bool               `json:"success"`
+		Data    []StatusCodeMetric `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.Data, nil
+}
+
+func (c *D1Client) BatchUpsertStatusCodes(ctx context.Context, metrics []StatusCodeMetric) error {
+	if len(metrics) == 0 {
+		return nil
+	}
+
+	reqBody := map[string]any{"metrics": metrics}
+	reqData, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/metrics/status-codes", c.endpoint)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.token))
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("D1 API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+func (c *D1Client) GetLatencyDistribution(ctx context.Context) ([]LatencyMetric, error) {
+	url := fmt.Sprintf("%s/metrics/latency", c.endpoint)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if c.token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.token))
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("D1 API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Success bool            `json:"success"`
+		Data    []LatencyMetric `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.Data, nil
+}
+
+func (c *D1Client) BatchUpsertLatencyDistribution(ctx context.Context, metrics []LatencyMetric) error {
+	if len(metrics) == 0 {
+		return nil
+	}
+
+	reqBody := map[string]any{"metrics": metrics}
+	reqData, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/metrics/latency", c.endpoint)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.token))
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("D1 API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}

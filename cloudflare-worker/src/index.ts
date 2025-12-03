@@ -133,16 +133,44 @@ export default {
 			}
 
 			// ============================================
-			// 兼容旧 API (JSON 格式)
+			// Metrics API (status_codes, latency_distribution)
 			// ============================================
-			// 保留旧的 /config, /path_stats, /banned_ips 端点用于向后兼容
+			if (path === '/metrics/status-codes' && request.method === 'GET') {
+				const metrics = await db.getStatusCodes(env.DB);
+				return jsonResponse({ success: true, data: metrics }, 200, corsHeaders);
+			}
 
+			if (path === '/metrics/status-codes' && request.method === 'POST') {
+				const body = await request.json<{ metrics: db.StatusCodeMetric[] }>();
+				if (!body.metrics || !Array.isArray(body.metrics)) {
+					return jsonResponse({ error: 'Invalid request: metrics array required' }, 400, corsHeaders);
+				}
+				await db.batchUpsertStatusCodes(env.DB, body.metrics);
+				return jsonResponse({ success: true, updated: body.metrics.length }, 200, corsHeaders);
+			}
+
+			if (path === '/metrics/latency' && request.method === 'GET') {
+				const metrics = await db.getLatencyDistribution(env.DB);
+				return jsonResponse({ success: true, data: metrics }, 200, corsHeaders);
+			}
+
+			if (path === '/metrics/latency' && request.method === 'POST') {
+				const body = await request.json<{ metrics: db.LatencyMetric[] }>();
+				if (!body.metrics || !Array.isArray(body.metrics)) {
+					return jsonResponse({ error: 'Invalid request: metrics array required' }, 400, corsHeaders);
+				}
+				await db.batchUpsertLatencyDistribution(env.DB, body.metrics);
+				return jsonResponse({ success: true, updated: body.metrics.length }, 200, corsHeaders);
+			}
+
+			// ============================================
 			// 根路径 - API 信息
+			// ============================================
 			if (path === '/' || path === '') {
 				return jsonResponse(
 					{
 						name: 'proxy-go-sync API v2',
-						version: '2.0.0',
+						version: '2.1.0',
 						endpoints: {
 							'Path Stats': {
 								'GET /path-stats': 'Get all path statistics',
@@ -167,6 +195,12 @@ export default {
 								'GET /config-other': 'Get all system configs',
 								'GET /config-other?key=xxx': 'Get specific config',
 								'POST /config-other': 'Batch update system configs',
+							},
+							'Metrics': {
+								'GET /metrics/status-codes': 'Get HTTP status code statistics',
+								'POST /metrics/status-codes': 'Batch update status code stats',
+								'GET /metrics/latency': 'Get latency distribution',
+								'POST /metrics/latency': 'Batch update latency distribution',
 							},
 						},
 					},

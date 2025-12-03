@@ -1,7 +1,6 @@
 package constants
 
 import (
-	"proxy-go/internal/config"
 	"time"
 )
 
@@ -19,8 +18,3 @@ var (
 	KB int64 = 1024
 	MB int64 = 1024 * KB
 )
-
-// UpdateFromConfig 从配置文件更新常量
-func UpdateFromConfig(cfg *config.Config) {
-	// 空实现,不再需要更新监控相关配置
-}

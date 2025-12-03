@@ -12,24 +12,12 @@ import (
 var (
 	configCallbacks []func(*Config)
 	callbackMutex   sync.RWMutex
-	// remoteMode 标记是否使用远程配置模式（不保存本地文件）
-	remoteMode bool
 )
 
 type ConfigManager struct {
 	config     atomic.Value
 	configPath string
 	mu         sync.RWMutex
-}
-
-// SetRemoteMode 设置远程配置模式
-func SetRemoteMode(enabled bool) {
-	remoteMode = enabled
-}
-
-// IsRemoteMode 检查是否为远程配置模式
-func IsRemoteMode() bool {
-	return remoteMode
 }
 
 func NewConfigManager(configPath string) (*ConfigManager, error) {
@@ -55,7 +43,7 @@ func NewConfigManager(configPath string) (*ConfigManager, error) {
 	return cm, nil
 }
 
-// NewConfigManagerFromData 从已有的配置数据创建 ConfigManager（远程配置模式）
+// NewConfigManagerFromData 从已有的配置数据创建 ConfigManager（D1 模式）
 func NewConfigManagerFromData(configPath string, configData map[string]any) (*ConfigManager, error) {
 	cm := &ConfigManager{
 		configPath: configPath,
@@ -80,7 +68,7 @@ func NewConfigManagerFromData(configPath string, configData map[string]any) (*Co
 	}
 
 	cm.config.Store(config)
-	log.Printf("[ConfigManager] 从远程数据加载配置: %d 个路径映射", len(config.MAP))
+	log.Printf("[ConfigManager] 从 D1 加载配置: %d 个路径映射", len(config.MAP))
 
 	return cm, nil
 }
@@ -130,14 +118,7 @@ func (cm *ConfigManager) loadConfigFromFile() (*Config, error) {
 	cm.normalizeConfig(&config)
 
 	// 确保 /mirror 系统路径存在
-	modified := cm.ensureMirrorPath(&config)
-
-	// 如果添加了 /mirror 或修改了配置，保存到文件
-	if modified {
-		if err := cm.saveConfigToFile(&config); err != nil {
-			log.Printf("[ConfigManager] 保存配置失败: %v", err)
-		}
-	}
+	cm.ensureMirrorPath(&config)
 
 	return &config, nil
 }
@@ -286,41 +267,14 @@ func (cm *ConfigManager) UpdateConfig(newConfig *Config) error {
 		newConfig.MAP[path] = pc // 更新回原始map
 	}
 
-	// 远程模式下不保存到本地文件
-	if !remoteMode {
-		if err := cm.saveConfigToFile(newConfig); err != nil {
-			return err
-		}
-	} else {
-		log.Printf("[ConfigManager] 远程模式: 跳过本地文件保存")
-	}
-
 	// 更新内存中的配置
 	cm.config.Store(newConfig)
 
-	// 触发回调（会自动同步到远程）
+	// 触发回调（会自动同步到 D1）
 	TriggerCallbacks(newConfig)
 
 	log.Printf("[ConfigManager] 配置已更新: %d 个路径映射", len(newConfig.MAP))
 	return nil
-}
-
-// saveConfigToFile 保存配置到文件
-func (cm *ConfigManager) saveConfigToFile(config *Config) error {
-	// 将新配置格式化为JSON
-	configData, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	// 保存到临时文件
-	tempFile := cm.configPath + ".tmp"
-	if err := os.WriteFile(tempFile, configData, 0644); err != nil {
-		return err
-	}
-
-	// 重命名临时文件为正式文件
-	return os.Rename(tempFile, cm.configPath)
 }
 
 // ReloadConfig 重新加载配置文件

@@ -376,3 +376,61 @@ export async function upsertConfigOther(db: D1Database, config: ConfigOther): Pr
 		.bind(config.key, config.value, config.description || null, config.updated_at)
 		.run();
 }
+
+// ============================================
+// Metrics 操作 (status_codes, latency_distribution)
+// ============================================
+
+export interface StatusCodeMetric {
+	status_code: string;
+	count: number;
+	updated_at: number;
+}
+
+export interface LatencyMetric {
+	bucket: string;
+	count: number;
+	updated_at: number;
+}
+
+export async function getStatusCodes(db: D1Database): Promise<StatusCodeMetric[]> {
+	const result = await db.prepare('SELECT * FROM status_codes ORDER BY status_code').all<StatusCodeMetric>();
+	return result.results || [];
+}
+
+export async function batchUpsertStatusCodes(db: D1Database, metrics: StatusCodeMetric[]): Promise<void> {
+	if (metrics.length === 0) return;
+
+	const batch = metrics.map((m) =>
+		db.prepare(
+			`INSERT INTO status_codes (status_code, count, updated_at)
+       VALUES (?1, ?2, ?3)
+       ON CONFLICT(status_code) DO UPDATE SET
+         count = excluded.count,
+         updated_at = excluded.updated_at`
+		).bind(m.status_code, m.count, m.updated_at)
+	);
+
+	await db.batch(batch);
+}
+
+export async function getLatencyDistribution(db: D1Database): Promise<LatencyMetric[]> {
+	const result = await db.prepare('SELECT * FROM latency_distribution ORDER BY bucket').all<LatencyMetric>();
+	return result.results || [];
+}
+
+export async function batchUpsertLatencyDistribution(db: D1Database, metrics: LatencyMetric[]): Promise<void> {
+	if (metrics.length === 0) return;
+
+	const batch = metrics.map((m) =>
+		db.prepare(
+			`INSERT INTO latency_distribution (bucket, count, updated_at)
+       VALUES (?1, ?2, ?3)
+       ON CONFLICT(bucket) DO UPDATE SET
+         count = excluded.count,
+         updated_at = excluded.updated_at`
+		).bind(m.bucket, m.count, m.updated_at)
+	);
+
+	await db.batch(batch);
+}

@@ -1,11 +1,11 @@
 package metrics
 
 import (
-	"encoding/json"
+	"context"
 	"log"
-	"os"
 	"proxy-go/internal/models"
-	"sync"
+	"proxy-go/pkg/sync"
+	gosync "sync"
 	"time"
 )
 
@@ -19,27 +19,24 @@ type PathStatsPersistence struct {
 	Version string `json:"version"`
 }
 
-// PathStatsStorage 路径统计存储管理器
+// PathStatsStorage 路径统计存储管理器（D1 模式）
 type PathStatsStorage struct {
-	filePath string
-	mu       sync.RWMutex
+	mu gosync.RWMutex
 }
 
 // NewPathStatsStorage 创建路径统计存储管理器
 func NewPathStatsStorage(filePath string) *PathStatsStorage {
-	return &PathStatsStorage{
-		filePath: filePath,
-	}
+	// filePath 参数保留为了向后兼容，但不再使用
+	return &PathStatsStorage{}
 }
 
-// Load 加载路径统计数据
+// Load 加载路径统计数据（从 D1）
 func (pss *PathStatsStorage) Load() (*PathStatsPersistence, error) {
 	pss.mu.RLock()
 	defer pss.mu.RUnlock()
 
-	// 检查文件是否存在
-	if _, err := os.Stat(pss.filePath); os.IsNotExist(err) {
-		// 文件不存在，返回空数据
+	// 如果 D1 未启用，返回空数据
+	if !sync.IsEnabled() {
 		return &PathStatsPersistence{
 			PathStats:  make(map[string]models.PathMetricsJSON),
 			LastUpdate: time.Now(),
@@ -47,72 +44,61 @@ func (pss *PathStatsStorage) Load() (*PathStatsPersistence, error) {
 		}, nil
 	}
 
-	// 读取文件
-	data, err := os.ReadFile(pss.filePath)
+	// 从 D1 加载数据
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pathStats, err := sync.LoadPathStats(ctx)
 	if err != nil {
-		return nil, err
+		log.Printf("[PathStatsStorage] 从 D1 加载失败: %v", err)
+		return &PathStatsPersistence{
+			PathStats:  make(map[string]models.PathMetricsJSON),
+			LastUpdate: time.Now(),
+			Version:    "1.0",
+		}, nil
 	}
 
-	// 解析JSON
-	var persistence PathStatsPersistence
-	if err := json.Unmarshal(data, &persistence); err != nil {
-		return nil, err
-	}
-
-	// 确保map不为nil
-	if persistence.PathStats == nil {
-		persistence.PathStats = make(map[string]models.PathMetricsJSON)
-	}
-
-	return &persistence, nil
-}
-
-// Save 保存路径统计数据
-func (pss *PathStatsStorage) Save(persistence *PathStatsPersistence) error {
-	pss.mu.Lock()
-	defer pss.mu.Unlock()
-
-	persistence.LastUpdate = time.Now()
-	persistence.Version = "1.0"
-
-	// 序列化为JSON
-	data, err := json.MarshalIndent(persistence, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	// 写入临时文件
-	tempFile := pss.filePath + ".tmp"
-	if err := os.WriteFile(tempFile, data, 0644); err != nil {
-		return err
-	}
-
-	// 重命名为正式文件（原子操作）
-	if err := os.Rename(tempFile, pss.filePath); err != nil {
-		return err
-	}
-
-	log.Printf("[PathStatsStorage] 路径统计数据已保存: %d 条路径记录",
-		len(persistence.PathStats))
-
-	return nil
-}
-
-// SavePathStats 保存当前路径统计数据（从 Collector 调用）
-func (pss *PathStatsStorage) SavePathStats(pathStats []models.PathMetricsJSON) error {
 	// 转换为 map 格式
 	statsMap := make(map[string]models.PathMetricsJSON)
 	for _, stat := range pathStats {
-		statsMap[stat.Path] = stat
+		statsMap[stat.Path] = models.PathMetricsJSON{
+			Path:              stat.Path,
+			RequestCount:      stat.RequestCount,
+			ErrorCount:        stat.ErrorCount,
+			BytesTransferred:  stat.BytesTransferred,
+			Status2xx:         stat.Status2xx,
+			Status3xx:         stat.Status3xx,
+			Status4xx:         stat.Status4xx,
+			Status5xx:         stat.Status5xx,
+			CacheHits:         stat.CacheHits,
+			CacheMisses:       stat.CacheMisses,
+			CacheHitRate:      stat.CacheHitRate,
+			BytesSaved:        stat.BytesSaved,
+			AvgLatency:        stat.AvgLatency,
+			LastAccessTime:    stat.LastAccessTime,
+		}
 	}
 
-	persistence := &PathStatsPersistence{
+	log.Printf("[PathStatsStorage] 从 D1 加载了 %d 条路径统计", len(statsMap))
+
+	return &PathStatsPersistence{
 		PathStats:  statsMap,
 		LastUpdate: time.Now(),
 		Version:    "1.0",
-	}
+	}, nil
+}
 
-	return pss.Save(persistence)
+// Save 保存路径统计数据（废弃 - 现在通过 D1Manager.SyncNow 保存）
+func (pss *PathStatsStorage) Save(persistence *PathStatsPersistence) error {
+	// 不再保存到本地文件，数据通过 D1 sync 保存
+	// 保留方法为了向后兼容
+	return nil
+}
+
+// SavePathStats 保存路径统计数据（数组格式）（废弃）
+func (pss *PathStatsStorage) SavePathStats(pathStats []models.PathMetricsJSON) error {
+	// 不再保存到本地文件
+	return nil
 }
 
 // LoadPathStats 加载路径统计数据（返回数组格式）

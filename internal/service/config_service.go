@@ -1,9 +1,9 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
-	"os"
 	"proxy-go/internal/config"
 )
 
@@ -17,12 +17,20 @@ func NewConfigService(configManager *config.ConfigManager) *ConfigService {
 	}
 }
 
-// GetConfig 获取当前配置
+// GetConfig 获取当前配置（从内存）
 func (s *ConfigService) GetConfig() ([]byte, error) {
-	configData, err := os.ReadFile("data/config.json")
-	if err != nil {
-		return nil, fmt.Errorf("读取配置文件失败: %v", err)
+	// 从 ConfigManager 获取当前配置
+	cfg := s.configManager.GetConfig()
+	if cfg == nil {
+		return nil, fmt.Errorf("配置未初始化")
 	}
+
+	// 序列化为 JSON
+	configData, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("序列化配置失败: %v", err)
+	}
+
 	return configData, nil
 }
 

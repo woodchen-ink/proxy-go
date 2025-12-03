@@ -101,17 +101,10 @@ func (m *D1Manager) SyncNow(ctx context.Context) error {
 		return err
 	}
 
-	// 同步路径统计
-	if err := m.syncPathStatsToD1(ctx); err != nil {
-		log.Printf("[D1Sync] Warning: Path stats sync failed: %v", err)
-		// 不中断流程
-	}
-
-	// 同步封禁IP
-	if err := m.syncBannedIPsToD1(ctx); err != nil {
-		log.Printf("[D1Sync] Warning: Banned IPs sync failed: %v", err)
-		// 不中断流程
-	}
+	// 注意: Path Stats 和 Banned IPs 已通过各自的服务直接同步到 D1
+	// - Path Stats: 由 MetricsStorage 每 30 分钟自动保存
+	// - Banned IPs: 在封禁发生时立即同步
+	// 这里不再从本地文件读取同步（D1-only 模式）
 
 	// 获取本地版本信息
 	localVersion := m.configLoader.GetConfigVersion()
@@ -216,64 +209,84 @@ func (m *D1Manager) syncConfigToD1(ctx context.Context) error {
 	return m.UploadConfig(ctx, config)
 }
 
-// syncPathStatsToD1 同步路径统计到D1
-func (m *D1Manager) syncPathStatsToD1(ctx context.Context) error {
-	filePath := "data/path_stats.json"
-
-	// 检查文件是否存在
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		log.Printf("[D1Sync] Path stats file not found, skipping")
+// SaveStatusCodes 保存状态码统计到 D1
+func (m *D1Manager) SaveStatusCodes(ctx context.Context, statusCodes map[string]int64) error {
+	if len(statusCodes) == 0 {
 		return nil
 	}
 
-	// 转换为列式存储格式
-	stats, err := ConvertPathStatsFromFile(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to convert path stats: %w", err)
+	now := time.Now().UnixMilli()
+	metrics := make([]StatusCodeMetric, 0, len(statusCodes))
+	for code, count := range statusCodes {
+		metrics = append(metrics, StatusCodeMetric{
+			StatusCode: code,
+			Count:      count,
+			UpdatedAt:  now,
+		})
 	}
 
-	if len(stats) == 0 {
-		log.Printf("[D1Sync] No path stats to sync")
-		return nil
+	if err := m.storage.BatchUpsertStatusCodes(ctx, metrics); err != nil {
+		return fmt.Errorf("failed to save status codes: %w", err)
 	}
 
-	// 批量上传
-	if err := m.storage.BatchUpsertPathStats(ctx, stats); err != nil {
-		return fmt.Errorf("failed to upload path stats: %w", err)
-	}
-
-	log.Printf("[D1Sync] Uploaded %d path stats", len(stats))
+	log.Printf("[D1Sync] Saved %d status codes", len(metrics))
 	return nil
 }
 
-// syncBannedIPsToD1 同步封禁IP到D1
-func (m *D1Manager) syncBannedIPsToD1(ctx context.Context) error {
-	filePath := "data/banned_ips.json"
+// LoadStatusCodes 从 D1 加载状态码统计
+func (m *D1Manager) LoadStatusCodes(ctx context.Context) (map[string]int64, error) {
+	metrics, err := m.storage.GetStatusCodes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load status codes: %w", err)
+	}
 
-	// 检查文件是否存在
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		log.Printf("[D1Sync] Banned IPs file not found, skipping")
+	result := make(map[string]int64, len(metrics))
+	for _, m := range metrics {
+		result[m.StatusCode] = m.Count
+	}
+
+	log.Printf("[D1Sync] Loaded %d status codes", len(result))
+	return result, nil
+}
+
+// SaveLatencyDistribution 保存延迟分布到 D1
+func (m *D1Manager) SaveLatencyDistribution(ctx context.Context, distribution map[string]int64) error {
+	if len(distribution) == 0 {
 		return nil
 	}
 
-	// 转换为列式存储格式
-	bans, err := ConvertBannedIPsFromFile(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to convert banned IPs: %w", err)
+	now := time.Now().UnixMilli()
+	metrics := make([]LatencyMetric, 0, len(distribution))
+	for bucket, count := range distribution {
+		metrics = append(metrics, LatencyMetric{
+			Bucket:    bucket,
+			Count:     count,
+			UpdatedAt: now,
+		})
 	}
 
-	if len(bans) > 0 {
-		// 批量上传当前封禁
-		if err := m.storage.BatchUpsertBannedIPs(ctx, bans); err != nil {
-			return fmt.Errorf("failed to upload banned IPs: %w", err)
-		}
-		log.Printf("[D1Sync] Uploaded %d banned IPs", len(bans))
+	if err := m.storage.BatchUpsertLatencyDistribution(ctx, metrics); err != nil {
+		return fmt.Errorf("failed to save latency distribution: %w", err)
 	}
 
-	// 注意: 历史记录暂不同步，避免重复写入
-	// 如果需要同步历史记录，可以在 Worker 端添加历史记录批量插入接口
-
+	log.Printf("[D1Sync] Saved %d latency buckets", len(metrics))
 	return nil
+}
+
+// LoadLatencyDistribution 从 D1 加载延迟分布
+func (m *D1Manager) LoadLatencyDistribution(ctx context.Context) (map[string]int64, error) {
+	metrics, err := m.storage.GetLatencyDistribution(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load latency distribution: %w", err)
+	}
+
+	result := make(map[string]int64, len(metrics))
+	for _, m := range metrics {
+		result[m.Bucket] = m.Count
+	}
+
+	log.Printf("[D1Sync] Loaded %d latency buckets", len(result))
+	return result, nil
 }
 
 // downloadConfigWithFallback 下载配置，如果远程不存在则上传本地配置
