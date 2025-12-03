@@ -145,6 +145,35 @@ func (m *D1Manager) UploadConfig(ctx context.Context, config any) error {
 		return fmt.Errorf("failed to convert config: %w", err)
 	}
 
+	// 获取 D1 中现有的所有路径
+	existingMaps, err := m.storage.GetConfigMaps(ctx, false)
+	if err != nil {
+		log.Printf("[D1Sync] Warning: failed to get existing config maps: %v", err)
+		// 继续执行,不影响上传
+	} else {
+		// 构建新配置中的路径集合
+		newPaths := make(map[string]bool)
+		for _, m := range maps {
+			newPaths[m.Path] = true
+		}
+
+		// 删除 D1 中已不存在的路径
+		deletedCount := 0
+		for _, existing := range existingMaps {
+			if !newPaths[existing.Path] {
+				if err := m.storage.DeleteConfigMap(ctx, existing.Path); err != nil {
+					log.Printf("[D1Sync] Warning: failed to delete config map %s: %v", existing.Path, err)
+				} else {
+					deletedCount++
+					log.Printf("[D1Sync] Deleted config map: %s", existing.Path)
+				}
+			}
+		}
+		if deletedCount > 0 {
+			log.Printf("[D1Sync] Deleted %d config maps", deletedCount)
+		}
+	}
+
 	// 批量上传 ConfigMaps
 	if len(maps) > 0 {
 		if err := m.storage.BatchUpsertConfigMaps(ctx, maps); err != nil {
@@ -349,11 +378,13 @@ func (m *D1Manager) downloadConfigWithFallback(ctx context.Context) (map[string]
 				"Enabled":       cm.IsEnabled(), // 使用方法转换为 bool
 			}
 
-			// 解析 ExtensionRules JSON
+			// 解析 ExtensionRules JSON (应该是数组格式)
 			if cm.ExtensionRules != "" {
-				var extRules map[string]any
+				var extRules []any
 				if err := json.Unmarshal([]byte(cm.ExtensionRules), &extRules); err == nil {
 					pathConfig["ExtensionMap"] = extRules
+				} else {
+					log.Printf("[D1Sync] Warning: failed to parse ExtensionRules for path %s: %v", cm.Path, err)
 				}
 			}
 

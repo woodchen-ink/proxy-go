@@ -182,7 +182,7 @@ func (cm *ConfigManager) createDefaultConfig() error {
 	// 创建默认配置
 	defaultConfig := Config{
 		MAP: map[string]PathConfig{
-			"/": {
+			"/test": {
 				DefaultTarget: "http://localhost:8080",
 				// 添加新式扩展名规则映射示例
 				ExtensionMap: []ExtRuleConfig{

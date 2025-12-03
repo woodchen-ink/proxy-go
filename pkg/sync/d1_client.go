@@ -304,6 +304,32 @@ func (c *D1Client) BatchUpsertConfigMaps(ctx context.Context, maps []ConfigMap) 
 	return nil
 }
 
+// DeleteConfigMap 删除单个配置路径
+func (c *D1Client) DeleteConfigMap(ctx context.Context, path string) error {
+	url := fmt.Sprintf("%s/config-maps/%s", c.endpoint, path)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if c.token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.token))
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("D1 API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
 // ============================================
 // Config Other
 // ============================================
