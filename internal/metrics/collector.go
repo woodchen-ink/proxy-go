@@ -208,14 +208,15 @@ type Collector struct {
 }
 
 type RequestMetric struct {
-	Path       string
-	Status     int
-	Latency    time.Duration
-	Bytes      int64
-	ClientIP   string
-	Request    *http.Request
-	CacheHit   bool  // 是否缓存命中
-	BytesSaved int64 // 通过缓存节省的字节数
+	FullPath    string // 完整路径,用于最近请求显示
+	StatsPrefix string // 路径前缀,用于路径统计聚合
+	Status      int
+	Latency     time.Duration
+	Bytes       int64
+	ClientIP    string
+	Request     *http.Request
+	CacheHit    bool  // 是否缓存命中
+	BytesSaved  int64 // 通过缓存节省的字节数
 }
 
 var requestChan chan RequestMetric
@@ -309,14 +310,17 @@ func (c *Collector) EndRequest() {
 }
 
 // RecordRequest 记录请求（异步写入channel）
-func (c *Collector) RecordRequest(path string, status int, latency time.Duration, bytes int64, clientIP string, r *http.Request) {
+// fullPath: 完整请求路径,用于最近请求显示
+// statsPrefix: 路径前缀,用于路径统计聚合
+func (c *Collector) RecordRequest(fullPath, statsPrefix string, status int, latency time.Duration, bytes int64, clientIP string, r *http.Request) {
 	metric := RequestMetric{
-		Path:     path,
-		Status:   status,
-		Latency:  latency,
-		Bytes:    bytes,
-		ClientIP: clientIP,
-		Request:  r,
+		FullPath:    fullPath,
+		StatsPrefix: statsPrefix,
+		Status:      status,
+		Latency:     latency,
+		Bytes:       bytes,
+		ClientIP:    clientIP,
+		Request:     r,
 	}
 	select {
 	case requestChan <- metric:
@@ -327,16 +331,19 @@ func (c *Collector) RecordRequest(path string, status int, latency time.Duration
 }
 
 // RecordRequestWithCache 记录带缓存信息的请求（异步写入channel）
-func (c *Collector) RecordRequestWithCache(path string, status int, latency time.Duration, bytes int64, clientIP string, r *http.Request, cacheHit bool, bytesSaved int64) {
+// fullPath: 完整请求路径,用于最近请求显示
+// statsPrefix: 路径前缀,用于路径统计聚合
+func (c *Collector) RecordRequestWithCache(fullPath, statsPrefix string, status int, latency time.Duration, bytes int64, clientIP string, r *http.Request, cacheHit bool, bytesSaved int64) {
 	metric := RequestMetric{
-		Path:       path,
-		Status:     status,
-		Latency:    latency,
-		Bytes:      bytes,
-		ClientIP:   clientIP,
-		Request:    r,
-		CacheHit:   cacheHit,
-		BytesSaved: bytesSaved,
+		FullPath:    fullPath,
+		StatsPrefix: statsPrefix,
+		Status:      status,
+		Latency:     latency,
+		Bytes:       bytes,
+		ClientIP:    clientIP,
+		Request:     r,
+		CacheHit:    cacheHit,
+		BytesSaved:  bytesSaved,
 	}
 	select {
 	case requestChan <- metric:
@@ -795,13 +802,13 @@ func (c *Collector) updateMetricsBatch(batch []RequestMetric) {
 			atomic.AddInt64(&c.latencyBuckets.gt1s, 1)
 		}
 
-		// 记录路径统计
+		// 记录路径统计(使用路径前缀)
 		var pathMetrics *models.PathMetrics
-		if existingMetrics, ok := c.pathStats.Load(m.Path); ok {
+		if existingMetrics, ok := c.pathStats.Load(m.StatsPrefix); ok {
 			pathMetrics = existingMetrics
 		} else {
-			pathMetrics = &models.PathMetrics{Path: m.Path}
-			c.pathStats.Store(m.Path, pathMetrics)
+			pathMetrics = &models.PathMetrics{Path: m.StatsPrefix}
+			c.pathStats.Store(m.StatsPrefix, pathMetrics)
 		}
 
 		pathMetrics.AddRequest()
@@ -855,10 +862,10 @@ func (c *Collector) updateMetricsBatch(batch []RequestMetric) {
 			}
 		}
 
-		// 更新最近请求记录
+		// 更新最近请求记录(使用完整路径)
 		c.recentRequests.Push(models.RequestLog{
 			Time:      time.Now(),
-			Path:      m.Path,
+			Path:      m.FullPath,
 			Status:    m.Status,
 			Latency:   int64(m.Latency),
 			BytesSent: m.Bytes,
