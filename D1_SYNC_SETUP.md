@@ -152,37 +152,6 @@ systemctl restart proxy-go
 [Sync] Sync service initialized successfully
 ```
 
-## 数据迁移 (从 S3 迁移到 D1)
-
-如果你之前使用 S3 同步,迁移步骤:
-
-### 方法 1: 自动迁移
-
-1. 保持 S3 环境变量不变
-2. 添加 D1 环境变量
-3. 设置 `D1_SYNC_ENABLED=true`
-4. 重启服务 - 本地数据会自动上传到 D1
-
-### 方法 2: 手动迁移
-
-1. 从 S3 下载现有数据:
-   - `config.json`
-   - `path_stats.json`
-   - `banned_ips.json`
-
-2. 将文件放在 proxy-go 的 `data/` 目录
-
-3. 配置 D1 环境变量并重启 - 数据会自动上传
-
-### 方法 3: 使用 API 手动上传
-
-```bash
-# 上传配置
-curl -X POST https://your-worker.workers.dev/config \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-token" \
-  -d '{"data": {...}}'
-```
 
 ## 多节点部署
 
@@ -237,77 +206,6 @@ wrangler d1 execute proxy-go-data --remote \
 wrangler d1 execute proxy-go-data --remote \
   --command "SELECT updated_at FROM config"
 ```
-
-## 故障排查
-
-### 1. D1 表不存在错误
-
-**症状**:
-```
-D1_ERROR: no such table: config: SQLITE_ERROR
-```
-
-**原因**: 没有对**远程数据库**运行迁移,只在本地数据库创建了表
-
-**解决**:
-```bash
-cd cloudflare-worker
-
-# 1. 对远程数据库运行迁移 (重要!)
-wrangler d1 migrations apply proxy-go-data --remote
-
-# 2. 验证表已创建
-wrangler d1 execute proxy-go-data --remote \
-  --command "SELECT name FROM sqlite_master WHERE type='table'"
-
-# 3. 重新部署 Worker
-wrangler deploy
-
-# 4. 重启 proxy-go
-cd ..
-./proxy-go
-```
-
-**说明**:
-- 本地数据库 (`.wrangler/state/v3/d1/`) 只用于本地开发
-- Worker 部署后访问的是远程数据库 (Cloudflare 云端)
-- 必须使用 `--remote` 标志对远程数据库运行迁移!
-
-### 2. 无法连接到 Worker
-
-**症状**: 日志显示 "failed to send request"
-
-**解决**:
-- 检查 `D1_SYNC_URL` 是否正确
-- 确认 Worker 已成功部署
-- 测试 Worker URL: `curl https://your-worker.workers.dev/`
-
-### 3. 认证失败
-
-**症状**: 日志显示 "Unauthorized" 或 "401"
-
-**解决**:
-- 检查 `D1_SYNC_TOKEN` 是否与 Worker 中设置的一致
-- 确认 token 没有多余的空格或换行符
-- 使用 `wrangler secret list` 查看 Worker 中的 secrets
-
-### 3. 数据未同步
-
-**症状**: 修改配置后其他节点没有更新
-
-**解决**:
-- 检查日志中的同步错误信息
-- 确认所有节点使用相同的 Worker URL
-- 手动触发同步: 重启服务或修改配置
-
-### 4. D1 数据库错误
-
-**症状**: Worker 返回 "D1 API error"
-
-**解决**:
-- 确认数据库迁移已执行: `npm run d1:migrations`
-- 检查 `wrangler.toml` 中的 database_id 是否正确
-- 查看 Worker 日志: `npm run tail`
 
 ## 成本估算
 
