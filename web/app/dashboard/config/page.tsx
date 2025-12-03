@@ -385,13 +385,15 @@ export default function ConfigPage() {
     const pathConfig: PathMapping = {
       DefaultTarget: defaultTarget,
       RedirectMode: data.redirectMode,
+      Enabled: true, // 新建路径默认启用
       ExtensionMap: []
     }
 
-    // 如果是编辑现有路径，保留原有的扩展名映射
+    // 如果是编辑现有路径，保留原有的扩展名映射和启用状态
     if (editingPathData && typeof config.MAP[path] === 'object') {
       const existingConfig = config.MAP[path] as PathMapping
       pathConfig.ExtensionMap = existingConfig.ExtensionMap
+      pathConfig.Enabled = existingConfig.Enabled !== false // 保留原有启用状态
     }
 
     newConfig.MAP[path] = pathConfig
@@ -560,6 +562,28 @@ export default function ConfigPage() {
     } else {
       newConfig.Security.IPBan[field] = value as number
     }
+    updateConfig(newConfig)
+  }
+
+  const handleToggleEnabled = (path: string, enabled: boolean) => {
+    if (!config) return
+    const newConfig = { ...config }
+    const mapping = newConfig.MAP[path]
+
+    if (typeof mapping === 'string') {
+      // 将字符串格式转换为对象格式
+      newConfig.MAP[path] = {
+        DefaultTarget: mapping,
+        Enabled: enabled,
+      }
+    } else {
+      // 更新对象格式的启用状态
+      newConfig.MAP[path] = {
+        ...mapping,
+        Enabled: enabled,
+      }
+    }
+
     updateConfig(newConfig)
   }
 
@@ -1017,6 +1041,7 @@ export default function ConfigPage() {
                       isSystemPath={isSystemPath}
                       onEdit={(p) => handleEditPath(p, mapping)}
                       onDelete={deletePath}
+                      onToggleEnabled={handleToggleEnabled}
                       onCacheConfigUpdate={handleCacheConfigUpdate}
                       onExtensionMapEdit={handleExtensionMapEdit}
                       onExtensionRuleEdit={handleExtensionRuleEdit}

@@ -2,6 +2,7 @@ import React, { useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Switch } from "@/components/ui/switch"
 import { Edit, Trash2, Database, Shield, FileText, ChevronDown, ChevronUp, Eraser } from "lucide-react"
 import PathStatsCard from "./PathStatsCard"
 import PathCacheConfigDialog from "./PathCacheConfigDialog"
@@ -68,6 +69,7 @@ interface PathMappingItemProps {
   isSystemPath?: boolean
   onEdit: (path: string) => void
   onDelete: (path: string) => void
+  onToggleEnabled: (path: string, enabled: boolean) => void
   onCacheConfigUpdate: (path: string, config: CacheConfig | null) => void
   onExtensionMapEdit?: (path: string) => void
   onExtensionRuleEdit?: (path: string, index?: number, rule?: ExtRuleConfig) => void
@@ -83,6 +85,7 @@ export default function PathMappingItem({
   isSystemPath = false,
   onEdit,
   onDelete,
+  onToggleEnabled,
   onCacheConfigUpdate,
   onExtensionMapEdit,
   onExtensionRuleEdit,
@@ -135,9 +138,16 @@ export default function PathMappingItem({
                       系统路径
                     </Badge>
                   )}
-                  {!isEnabled && (
-                    <Badge variant="secondary">已禁用</Badge>
-                  )}
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={isEnabled}
+                      onCheckedChange={(checked) => onToggleEnabled(path, checked)}
+                      className="data-[state=checked]:bg-[#518751]"
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      {isEnabled ? "已启用" : "已禁用"}
+                    </span>
+                  </div>
                   {mappingObj.RedirectMode && (
                     <Badge variant="outline">302重定向</Badge>
                   )}
