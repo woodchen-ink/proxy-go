@@ -25,46 +25,77 @@ type SyncService struct {
 func InitSyncService() error {
 	globalSyncMutex.Lock()
 	defer globalSyncMutex.Unlock()
-	
+
 	// 检查是否启用同步
 	if !IsEnabled() {
-		log.Printf("[Sync] Sync service disabled (no S3 config)")
+		log.Printf("[Sync] Sync service disabled (no sync config)")
 		return nil
 	}
-	
-	// 从环境变量创建配置
-	syncConfig, err := NewConfigFromEnv()
-	if err != nil {
-		return fmt.Errorf("failed to create sync config: %w", err)
-	}
-	
-	// 创建S3客户端
-	s3Client, err := NewS3Client(syncConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create S3 client: %w", err)
-	}
-	
-	// 测试连接
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	
-	if err := s3Client.TestConnection(ctx); err != nil {
-		return fmt.Errorf("failed to test S3 connection: %w", err)
-	}
-	
+
 	// 创建适配器
 	configAdapter := NewConfigAdapter("data/config.json")
-	
-	// 创建同步管理器
-	manager := NewManager(s3Client, syncConfig, configAdapter)
-	
+
+	// 根据同步类型创建不同的管理器
+	syncType := GetSyncType()
+	var manager SyncManager
+
+	switch syncType {
+	case SyncTypeD1:
+		log.Printf("[Sync] Initializing D1 sync service...")
+
+		// 创建D1配置
+		d1Config, err := NewD1ConfigFromEnv()
+		if err != nil {
+			return fmt.Errorf("failed to create D1 config: %w", err)
+		}
+
+		// 创建D1客户端
+		d1Client := NewD1Client(d1Config.Endpoint, d1Config.Token)
+
+		// 创建D1管理器
+		manager = NewD1Manager(d1Client, configAdapter)
+
+		log.Printf("[Sync] D1 sync service initialized (endpoint: %s)", d1Config.Endpoint)
+
+	case SyncTypeS3:
+		log.Printf("[Sync] Initializing S3 sync service (legacy mode)...")
+
+		// 从环境变量创建配置
+		syncConfig, err := NewConfigFromEnv()
+		if err != nil {
+			return fmt.Errorf("failed to create sync config: %w", err)
+		}
+
+		// 创建S3客户端
+		s3Client, err := NewS3Client(syncConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create S3 client: %w", err)
+		}
+
+		// 测试连接
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := s3Client.TestConnection(ctx); err != nil {
+			return fmt.Errorf("failed to test S3 connection: %w", err)
+		}
+
+		// 创建S3管理器
+		manager = NewManager(s3Client, syncConfig, configAdapter)
+
+		log.Printf("[Sync] S3 sync service initialized")
+
+	default:
+		return fmt.Errorf("unknown sync type: %s", syncType)
+	}
+
 	// 创建同步服务
 	globalSyncService = &SyncService{
-		manager:        manager,
-		configAdapter:  configAdapter,
-		isEnabled:      true,
+		manager:       manager,
+		configAdapter: configAdapter,
+		isEnabled:     true,
 	}
-	
+
 	log.Printf("[Sync] Sync service initialized successfully")
 	return nil
 }
@@ -124,15 +155,21 @@ func SyncNow(ctx context.Context) error {
 func DownloadConfigOnly(ctx context.Context) error {
 	globalSyncMutex.RLock()
 	defer globalSyncMutex.RUnlock()
-	
+
 	if globalSyncService == nil || !globalSyncService.isEnabled {
 		return fmt.Errorf("sync service not available")
 	}
-	
+
+	// 支持 S3 Manager
 	if manager, ok := globalSyncService.manager.(*Manager); ok {
 		return manager.downloadConfigWithFallback(ctx)
 	}
-	
+
+	// 支持 D1 Manager
+	if manager, ok := globalSyncService.manager.(*D1Manager); ok {
+		return manager.downloadConfigWithFallback(ctx)
+	}
+
 	return fmt.Errorf("sync manager type mismatch")
 }
 
@@ -140,15 +177,21 @@ func DownloadConfigOnly(ctx context.Context) error {
 func SyncConfigOnly(ctx context.Context) error {
 	globalSyncMutex.RLock()
 	defer globalSyncMutex.RUnlock()
-	
+
 	if globalSyncService == nil || !globalSyncService.isEnabled {
 		return fmt.Errorf("sync service not available")
 	}
-	
+
+	// 支持 S3 Manager
 	if manager, ok := globalSyncService.manager.(*Manager); ok {
 		return manager.SyncConfigOnly(ctx)
 	}
-	
+
+	// D1 Manager 使用 SyncNow（D1不区分快速同步和完整同步）
+	if manager, ok := globalSyncService.manager.(*D1Manager); ok {
+		return manager.SyncNow(ctx)
+	}
+
 	return fmt.Errorf("sync manager type mismatch")
 }
 

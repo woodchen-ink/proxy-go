@@ -1,0 +1,13 @@
+name = "proxy-go-sync"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# D1 数据库绑定
+[[d1_databases]]
+binding = "DB"
+database_name = "proxy-go-data"
+database_id = "82cccf42-4ec2-4299-a571-8e02fbc9fa95" # 部署时需要填写实际的 database_id
+
+# 可选: 添加环境变量用于 API 认证
+[vars]
+# API_TOKEN = "your-secure-token"

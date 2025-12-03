@@ -24,6 +24,53 @@ func NewConfigFromEnv() (*Config, error) {
 	return config, nil
 }
 
+// SyncType 同步类型
+type SyncType string
+
+const (
+	SyncTypeS3 SyncType = "s3"
+	SyncTypeD1 SyncType = "d1"
+)
+
+// GetSyncType 获取同步类型（基于环境变量）
+func GetSyncType() SyncType {
+	if os.Getenv("D1_SYNC_ENABLED") == "true" {
+		return SyncTypeD1
+	}
+	return SyncTypeS3
+}
+
+// D1Config D1同步配置
+type D1Config struct {
+	Endpoint string // Worker URL
+	Token    string // API Token
+}
+
+// NewD1ConfigFromEnv 从环境变量创建D1配置
+func NewD1ConfigFromEnv() (*D1Config, error) {
+	config := &D1Config{
+		Endpoint: getEnvDefault("D1_SYNC_URL", ""),
+		Token:    getEnvDefault("D1_SYNC_TOKEN", ""),
+	}
+
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid D1 config: %w", err)
+	}
+
+	return config, nil
+}
+
+// Validate 验证D1配置
+func (c *D1Config) Validate() error {
+	if c.Endpoint == "" {
+		return fmt.Errorf("D1 endpoint URL is required")
+	}
+	if c.Token == "" {
+		return fmt.Errorf("D1 API token is required")
+	}
+	return nil
+}
+
 // Validate 验证配置
 func (c *Config) Validate() error {
 	if c.Bucket == "" {
@@ -68,19 +115,24 @@ func getEnvBool(key string, defaultValue bool) bool {
 
 // IsConfigComplete 检查同步配置是否完整（基于环境变量）
 func IsConfigComplete() bool {
-	// 检查必需的环境变量是否存在
+	// 检查D1同步
+	if os.Getenv("D1_SYNC_ENABLED") == "true" {
+		return os.Getenv("D1_SYNC_URL") != ""
+	}
+
+	// 检查S3同步
 	requiredEnvs := []string{
 		"SYNC_S3_BUCKET",
-		"SYNC_S3_ACCESS_KEY_ID", 
+		"SYNC_S3_ACCESS_KEY_ID",
 		"SYNC_S3_SECRET_ACCESS_KEY",
 		"SYNC_S3_REGION",
 	}
-	
+
 	for _, env := range requiredEnvs {
 		if os.Getenv(env) == "" {
 			return false
 		}
 	}
-	
+
 	return true
 }
