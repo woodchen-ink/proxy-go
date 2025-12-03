@@ -7,6 +7,7 @@ import { useToast } from "@/components/ui/use-toast"
 import { Switch } from "@/components/ui/switch"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { TimeInput } from "@/components/ui/time-input"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useRouter } from "next/navigation"
 import { 
@@ -283,33 +284,33 @@ export default function CachePage() {
         </div>
         <div className="grid gap-4">
           <div className="grid grid-cols-2 items-center gap-4">
-            <Label htmlFor={`${type}-max-age`} className="text-sm">最大缓存时间（分钟）</Label>
-            <Input
+            <Label htmlFor={`${type}-max-age`} className="text-sm">最大缓存时间</Label>
+            <TimeInput
               id={`${type}-max-age`}
-              type="number"
               value={config.max_age}
-              className="h-8"
-              onChange={(e) => {
+              onChange={(minutes) => {
                 const newConfigs = { ...configs }
-                newConfigs[type].max_age = parseInt(e.target.value)
+                newConfigs[type].max_age = minutes
                 setConfigs(newConfigs)
+                handleUpdateConfig(type, { ...config, max_age: minutes })
               }}
-              onBlur={() => handleUpdateConfig(type, config)}
+              placeholder="30"
+              min={0}
             />
           </div>
           <div className="grid grid-cols-2 items-center gap-4">
-            <Label htmlFor={`${type}-cleanup-tick`} className="text-sm">清理间隔（分钟）</Label>
-            <Input
+            <Label htmlFor={`${type}-cleanup-tick`} className="text-sm">清理间隔</Label>
+            <TimeInput
               id={`${type}-cleanup-tick`}
-              type="number"
               value={config.cleanup_tick}
-              className="h-8"
-              onChange={(e) => {
+              onChange={(minutes) => {
                 const newConfigs = { ...configs }
-                newConfigs[type].cleanup_tick = parseInt(e.target.value)
+                newConfigs[type].cleanup_tick = minutes
                 setConfigs(newConfigs)
+                handleUpdateConfig(type, { ...config, cleanup_tick: minutes })
               }}
-              onBlur={() => handleUpdateConfig(type, config)}
+              placeholder="5"
+              min={0}
             />
           </div>
           <div className="grid grid-cols-2 items-center gap-4">

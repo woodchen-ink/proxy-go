@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
+import { TimeInput } from "@/components/ui/time-input"
 import { useToast } from "@/components/ui/use-toast"
 
 interface CacheConfig {
@@ -127,14 +128,13 @@ export default function PathCacheConfigDialog({
           {useCustomConfig && (
             <>
               <div className="space-y-2">
-                <Label htmlFor="max_age">最大缓存时间（分钟）</Label>
-                <Input
+                <Label htmlFor="max_age">最大缓存时间</Label>
+                <TimeInput
                   id="max_age"
-                  type="number"
-                  min="0"
                   value={maxAge}
-                  onChange={(e) => setMaxAge(parseInt(e.target.value) || 0)}
+                  onChange={setMaxAge}
                   placeholder="30"
+                  min={0}
                 />
                 <div className="text-xs text-muted-foreground">
                   缓存项在此时间后过期
@@ -142,14 +142,13 @@ export default function PathCacheConfigDialog({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="cleanup_tick">清理间隔（分钟）</Label>
-                <Input
+                <Label htmlFor="cleanup_tick">清理间隔</Label>
+                <TimeInput
                   id="cleanup_tick"
-                  type="number"
-                  min="0"
                   value={cleanupTick}
-                  onChange={(e) => setCleanupTick(parseInt(e.target.value) || 0)}
+                  onChange={setCleanupTick}
                   placeholder="5"
+                  min={0}
                 />
                 <div className="text-xs text-muted-foreground">
                   定期清理过期缓存的间隔时间
