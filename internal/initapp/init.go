@@ -217,7 +217,7 @@ func setupRoutes(components *AppComponents) error {
 		components.SecurityHandler,
 		components.PathStatsHandler,
 	)
-	components.MainRoutes = router.SetupMainRoutes(components.MirrorHandler, components.ProxyHandler)
+	components.MainRoutes = router.SetupMainRoutes(components.MirrorHandler, components.ProxyHandler, components.ConfigManager)
 
 	log.Printf("[Init] 路由设置完成")
 	return nil

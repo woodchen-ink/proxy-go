@@ -5,11 +5,12 @@ import (
 )
 
 type Config struct {
-	MAP         map[string]PathConfig `json:"MAP"` // 路径映射配置
+	MAP         map[string]PathConfig `json:"MAP"`        // 路径映射配置
 	Compression CompressionConfig     `json:"Compression"`
-	Security    SecurityConfig        `json:"Security"` // 安全配置
-	Cache       CacheConfig          `json:"Cache"`     // 缓存配置
-	MirrorCache CacheConfig          `json:"MirrorCache"` // 镜像缓存配置
+	Security    SecurityConfig        `json:"Security"`    // 安全配置
+	Cache       CacheConfig           `json:"Cache"`       // 缓存配置
+	MirrorCache CacheConfig           `json:"MirrorCache"` // 镜像缓存配置
+	FaviconURL  string                `json:"FaviconURL"`  // Favicon URL (可选)，支持环境变量 FAVICON_URL 覆盖
 }
 
 type PathConfig struct {

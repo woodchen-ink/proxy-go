@@ -37,6 +37,9 @@ func NewConfigManager(configPath string) (*ConfigManager, error) {
 		config.MAP[path] = pc // 更新回原始map
 	}
 
+	// 应用环境变量覆盖
+	cm.applyEnvOverrides(config)
+
 	cm.config.Store(config)
 	log.Printf("[ConfigManager] 配置已加载: %d 个路径映射", len(config.MAP))
 
@@ -67,10 +70,22 @@ func NewConfigManagerFromData(configPath string, configData map[string]any) (*Co
 		config.MAP[path] = pc
 	}
 
+	// 应用环境变量覆盖
+	cm.applyEnvOverrides(config)
+
 	cm.config.Store(config)
 	log.Printf("[ConfigManager] 从 D1 加载配置: %d 个路径映射", len(config.MAP))
 
 	return cm, nil
+}
+
+// applyEnvOverrides 应用环境变量覆盖配置
+func (cm *ConfigManager) applyEnvOverrides(config *Config) {
+	// FAVICON_URL 环境变量覆盖
+	if faviconURL := os.Getenv("FAVICON_URL"); faviconURL != "" {
+		config.FaviconURL = faviconURL
+		log.Printf("[ConfigManager] 使用环境变量 FAVICON_URL: %s", faviconURL)
+	}
 }
 
 // convertMapToConfig 将 map[string]any 转换为 Config 结构

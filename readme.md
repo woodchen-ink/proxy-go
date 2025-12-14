@@ -45,6 +45,32 @@ A 'simple' reverse proxy server written in Go.
 - 🎯 **302跳转**: 支持302跳转模式
 - 📊 **缓存管理**: 智能缓存机制提升性能
 - 📈 **监控指标**: 内置监控和指标收集
+- 🎨 **自定义 Favicon**: 通过环境变量轻松设置自定义 favicon
+
+## Favicon 配置
+
+### 方式 1: 环境变量 (推荐)
+
+通过环境变量 `FAVICON_URL` 指定一个外部 URL，无需修改任何文件：
+
+```yaml
+# docker-compose.yml
+environment:
+  - FAVICON_URL=https://example.com/favicon.ico
+```
+
+**优点**:
+- ✅ 无需映射本地文件或目录
+- ✅ 适合使用预构建 Docker 镜像的用户
+- ✅ 可以使用 R2/B2/CDN 上的 favicon
+
+### 方式 2: 本地文件
+
+替换 `web/public/favicon.ico` 文件并重启服务。
+
+**优先级**: 环境变量 `FAVICON_URL` > 本地文件 `web/public/favicon.ico` > 返回 404
+
+详细说明请查看 [favicon/README.md](favicon/README.md)
 
 ## 域名过滤功能
 

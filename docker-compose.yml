@@ -6,9 +6,13 @@ services:
       - "3336:3336"
     volumes:
       - ./data:/app/data
-      - ./favicon:/app/favicon
+      - ./web/public:/app/web/public  # favicon 和静态资源
     environment:
       - TZ=Asia/Shanghai
+      # Favicon 配置 (可选)
+      # 设置后将从该 URL 代理 favicon.ico，无需映射本地文件
+      # 例如: - FAVICON_URL=https://example.com/favicon.ico
+      # - FAVICON_URL=
       - OAUTH_CLIENT_ID=your_client_id
       - OAUTH_CLIENT_SECRET=your_client_secret
       #填写公网访问的地址, 需要跟CZL Connect保持一致. 

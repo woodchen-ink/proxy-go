@@ -1,8 +1,11 @@
 package router
 
 import (
+	"io"
+	"log"
 	"net/http"
 	"os"
+	"proxy-go/internal/config"
 	"proxy-go/internal/handler"
 	"strings"
 )
@@ -14,7 +17,7 @@ type RouteHandler struct {
 }
 
 // SetupMainRoutes 设置主要路由
-func SetupMainRoutes(mirrorHandler *handler.MirrorProxyHandler, proxyHandler *handler.ProxyHandler) []RouteHandler {
+func SetupMainRoutes(mirrorHandler *handler.MirrorProxyHandler, proxyHandler *handler.ProxyHandler, configManager *config.ConfigManager) []RouteHandler {
 	return []RouteHandler{
 		// favicon.ico 处理器
 		{
@@ -22,8 +25,38 @@ func SetupMainRoutes(mirrorHandler *handler.MirrorProxyHandler, proxyHandler *ha
 				return r.URL.Path == "/favicon.ico"
 			},
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				// 检查是否有自定义favicon文件
-				faviconPath := "favicon/favicon.ico"
+				cfg := configManager.GetConfig()
+
+				// 优先使用配置中的 FaviconURL (支持环境变量 FAVICON_URL 覆盖)
+				if cfg.FaviconURL != "" {
+					// 从 URL 代理 favicon
+					resp, err := http.Get(cfg.FaviconURL)
+					if err != nil {
+						log.Printf("[Favicon] 获取远程 favicon 失败: %v", err)
+						http.NotFound(w, r)
+						return
+					}
+					defer resp.Body.Close()
+
+					if resp.StatusCode != http.StatusOK {
+						log.Printf("[Favicon] 远程 favicon 返回非 200 状态码: %d", resp.StatusCode)
+						http.NotFound(w, r)
+						return
+					}
+
+					// 设置响应头
+					w.Header().Set("Content-Type", "image/x-icon")
+					w.Header().Set("Cache-Control", "public, max-age=31536000") // 1年缓存
+
+					// 复制内容
+					if _, err := io.Copy(w, resp.Body); err != nil {
+						log.Printf("[Favicon] 复制 favicon 内容失败: %v", err)
+					}
+					return
+				}
+
+				// 回退到本地文件 web/public/favicon.ico
+				faviconPath := "web/public/favicon.ico"
 				if _, err := os.Stat(faviconPath); err == nil {
 					// 设置正确的Content-Type和缓存头
 					w.Header().Set("Content-Type", "image/x-icon")
