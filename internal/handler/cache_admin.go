@@ -189,3 +189,43 @@ func (h *CacheAdminHandler) ClearCacheByPath(w http.ResponseWriter, r *http.Requ
 		"message":       fmt.Sprintf("Cleared %d cache items for path prefix: %s", count, req.PathPrefix),
 	})
 }
+
+// ClearCacheByURLs 清空指定 URL 列表的缓存
+func (h *CacheAdminHandler) ClearCacheByURLs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Type string   `json:"type"` // "proxy", "mirror" 或 "all"
+		URLs []string `json:"urls"` // URL 列表，例如 ["/b2/img/photo.jpg", "/oracle/file.pdf"]
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if len(req.URLs) == 0 {
+		http.Error(w, "urls is required and cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	count, err := h.cacheService.ClearCacheByURLs(req.Type, req.URLs)
+	if err != nil {
+		if err.Error() == "invalid cache type" {
+			http.Error(w, "Invalid cache type", http.StatusBadRequest)
+		} else {
+			http.Error(w, "Failed to clear cache: "+err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":       true,
+		"cleared_items": count,
+		"message":       fmt.Sprintf("Cleared %d cache items for %d URLs", count, len(req.URLs)),
+	})
+}

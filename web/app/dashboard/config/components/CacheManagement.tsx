@@ -9,22 +9,25 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { TimeInput } from "@/components/ui/time-input"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Textarea } from "@/components/ui/textarea"
 import { useRouter } from "next/navigation"
-import { 
-  HardDrive, 
-  Database, 
-  TrendingUp, 
-  TrendingDown, 
-  Activity, 
-  Image as ImageIcon, 
-  FileText, 
+import {
+  HardDrive,
+  Database,
+  TrendingUp,
+  TrendingDown,
+  Activity,
+  Image as ImageIcon,
+  FileText,
   RefreshCw,
   Trash2,
   Settings,
   Info,
   Zap,
   Target,
-  RotateCcw
+  RotateCcw,
+  ListX
 } from "lucide-react"
 
 interface CacheStats {
@@ -60,19 +63,22 @@ function formatBytes(bytes: number) {
   const units = ['B', 'KB', 'MB', 'GB']
   let size = bytes
   let unitIndex = 0
-  
+
   while (size >= 1024 && unitIndex < units.length - 1) {
     size /= 1024
     unitIndex++
   }
-  
+
   return `${size.toFixed(2)} ${units[unitIndex]}`
 }
 
-export default function CachePage() {
+export default function CacheManagement() {
   const [stats, setStats] = useState<CacheData | null>(null)
   const [configs, setConfigs] = useState<CacheConfigs | null>(null)
   const [loading, setLoading] = useState(true)
+  const [urlListDialogOpen, setUrlListDialogOpen] = useState(false)
+  const [urlListText, setUrlListText] = useState("")
+  const [clearingUrls, setClearingUrls] = useState(false)
   const { toast } = useToast()
   const router = useRouter()
 
@@ -100,15 +106,11 @@ export default function CachePage() {
       const data = await response.json()
       setStats(data)
     } catch (error) {
-      toast({
-        title: "错误",
-        description: error instanceof Error ? error.message : "获取缓存统计失败",
-        variant: "destructive",
-      })
+      console.error("获取缓存统计失败:", error)
     } finally {
       setLoading(false)
     }
-  }, [toast, router])
+  }, [router])
 
   const fetchConfigs = useCallback(async () => {
     try {
@@ -134,13 +136,9 @@ export default function CachePage() {
       const data = await response.json()
       setConfigs(data)
     } catch (error) {
-      toast({
-        title: "错误",
-        description: error instanceof Error ? error.message : "获取缓存配置失败",
-        variant: "destructive",
-      })
+      console.error("获取缓存配置失败:", error)
     }
-  }, [toast, router])
+  }, [router])
 
   useEffect(() => {
     // 立即获取一次数据
@@ -162,13 +160,13 @@ export default function CachePage() {
 
       const response = await fetch("/admin/api/cache/enable", {
         method: "POST",
-        headers: { 
+        headers: {
           "Content-Type": "application/json",
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ type, enabled }),
       })
-      
+
       if (response.status === 401) {
         localStorage.removeItem("token")
         router.push("/login")
@@ -176,12 +174,12 @@ export default function CachePage() {
       }
 
       if (!response.ok) throw new Error("切换缓存状态失败")
-      
+
       toast({
         title: "成功",
         description: `${type === "proxy" ? "代理" : "镜像"}缓存已${enabled ? "启用" : "禁用"}`,
       })
-      
+
       fetchStats()
     } catch (error) {
       toast({
@@ -202,13 +200,13 @@ export default function CachePage() {
 
       const response = await fetch("/admin/api/cache/config", {
         method: "POST",
-        headers: { 
+        headers: {
           "Content-Type": "application/json",
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ type, config }),
       })
-      
+
       if (response.status === 401) {
         localStorage.removeItem("token")
         router.push("/login")
@@ -216,12 +214,12 @@ export default function CachePage() {
       }
 
       if (!response.ok) throw new Error("更新缓存配置失败")
-      
+
       toast({
         title: "成功",
         description: "缓存配置已更新",
       })
-      
+
       fetchConfigs()
     } catch (error) {
       toast({
@@ -242,13 +240,13 @@ export default function CachePage() {
 
       const response = await fetch("/admin/api/cache/clear", {
         method: "POST",
-        headers: { 
+        headers: {
           "Content-Type": "application/json",
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ type }),
       })
-      
+
       if (response.status === 401) {
         localStorage.removeItem("token")
         router.push("/login")
@@ -256,12 +254,12 @@ export default function CachePage() {
       }
 
       if (!response.ok) throw new Error("清理缓存失败")
-      
+
       toast({
         title: "成功",
         description: "缓存已清理",
       })
-      
+
       fetchStats()
     } catch (error) {
       toast({
@@ -269,6 +267,77 @@ export default function CachePage() {
         description: error instanceof Error ? error.message : "清理缓存失败",
         variant: "destructive",
       })
+    }
+  }
+
+  const handleClearCacheByURLs = async () => {
+    try {
+      // 解析 URL 列表（支持换行符和逗号分隔）
+      const urls = urlListText
+        .split(/[\n,]/)
+        .map(url => url.trim())
+        .filter(url => url.length > 0)
+
+      if (urls.length === 0) {
+        toast({
+          title: "错误",
+          description: "请输入至少一个 URL",
+          variant: "destructive",
+        })
+        return
+      }
+
+      setClearingUrls(true)
+
+      const token = localStorage.getItem("token")
+      if (!token) {
+        router.push("/login")
+        return
+      }
+
+      const response = await fetch("/admin/api/cache/clear-by-urls", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          type: "all",
+          urls: urls
+        }),
+      })
+
+      if (response.status === 401) {
+        localStorage.removeItem("token")
+        router.push("/login")
+        return
+      }
+
+      if (!response.ok) {
+        throw new Error("清理缓存失败")
+      }
+
+      const result = await response.json()
+
+      toast({
+        title: "清理成功",
+        description: result.message || `已清理 ${result.cleared_items} 个缓存项`,
+      })
+
+      // 关闭对话框并清空输入
+      setUrlListDialogOpen(false)
+      setUrlListText("")
+
+      // 刷新统计数据
+      fetchStats()
+    } catch (error) {
+      toast({
+        title: "清理失败",
+        description: error instanceof Error ? error.message : "清理缓存失败",
+        variant: "destructive",
+      })
+    } finally {
+      setClearingUrls(false)
     }
   }
 
@@ -335,7 +404,7 @@ export default function CachePage() {
 
   if (loading) {
     return (
-      <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
+      <div className="flex h-[calc(100vh-16rem)] items-center justify-center">
         <div className="text-center">
           <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-4" style={{ color: '#C08259' }} />
           <div className="text-lg font-medium">加载中...</div>
@@ -351,16 +420,70 @@ export default function CachePage() {
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-2">
             <Database className="h-6 w-6" style={{ color: '#C08259' }} />
-            <h1 className="text-2xl font-bold">缓存管理</h1>
+            <h2 className="text-xl font-bold">缓存管理</h2>
           </div>
-          <Button 
-            variant="outline" 
-            onClick={() => handleClearCache("all")}
-            className="flex items-center gap-2"
-          >
-            <Trash2 className="h-4 w-4" />
-            清理所有缓存
-          </Button>
+          <div className="flex items-center gap-2">
+            <Dialog open={urlListDialogOpen} onOpenChange={setUrlListDialogOpen}>
+              <DialogTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="flex items-center gap-2"
+                >
+                  <ListX className="h-4 w-4" />
+                  按 URL 清理
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-[600px]">
+                <DialogHeader>
+                  <DialogTitle>按 URL 列表清理缓存</DialogTitle>
+                  <DialogDescription>
+                    输入需要清理的 URL 列表，每行一个 URL，或使用逗号分隔
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="url-list">URL 列表</Label>
+                    <Textarea
+                      id="url-list"
+                      placeholder="例如：&#10;/b2/img/photo.jpg&#10;/oracle/file.pdf&#10;/b2/video/demo.mp4"
+                      value={urlListText}
+                      onChange={(e) => setUrlListText(e.target.value)}
+                      className="min-h-[200px] font-mono text-sm"
+                    />
+                    <p className="text-sm text-gray-500">
+                      提示：支持换行符或逗号分隔，例如 <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">/b2/img/photo.jpg</code>
+                    </p>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setUrlListDialogOpen(false)
+                      setUrlListText("")
+                    }}
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    onClick={handleClearCacheByURLs}
+                    disabled={clearingUrls || !urlListText.trim()}
+                    className="bg-[#C08259] hover:bg-[#A06847] text-white"
+                  >
+                    {clearingUrls ? "清理中..." : "确认清理"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+            <Button
+              variant="outline"
+              onClick={() => handleClearCache("all")}
+              className="flex items-center gap-2"
+            >
+              <Trash2 className="h-4 w-4" />
+              清理所有缓存
+            </Button>
+          </div>
         </div>
 
         {/* 智能缓存汇总 */}
@@ -521,7 +644,7 @@ export default function CachePage() {
                   <dd className="text-sm font-semibold text-[#C08259]">{formatBytes(stats?.proxy.bytes_saved ?? 0)}</dd>
                 </div>
               </dl>
-              
+
               <div className="border-t pt-4 mt-4">
                 <div className="flex items-center gap-2 mb-3">
                   <Zap className="h-4 w-4 text-gray-600" />
@@ -540,7 +663,7 @@ export default function CachePage() {
                       <p>常规文件的精确缓存命中</p>
                     </TooltipContent>
                   </Tooltip>
-                  
+
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <div className="text-center p-3 bg-green-50 rounded-lg border cursor-help hover:bg-green-100 transition-colors">
@@ -553,7 +676,7 @@ export default function CachePage() {
                       <p>图片文件的精确格式缓存命中</p>
                     </TooltipContent>
                   </Tooltip>
-                  
+
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <div className="text-center p-3 bg-orange-50 rounded-lg border cursor-help hover:bg-orange-100 transition-colors">
@@ -640,7 +763,7 @@ export default function CachePage() {
                   <dd className="text-sm font-semibold text-[#C08259]">{formatBytes(stats?.mirror.bytes_saved ?? 0)}</dd>
                 </div>
               </dl>
-              
+
               <div className="border-t pt-4 mt-4">
                 <div className="flex items-center gap-2 mb-3">
                   <Zap className="h-4 w-4 text-gray-600" />
@@ -659,7 +782,7 @@ export default function CachePage() {
                       <p>常规文件的精确缓存命中</p>
                     </TooltipContent>
                   </Tooltip>
-                  
+
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <div className="text-center p-3 bg-green-50 rounded-lg border cursor-help hover:bg-green-100 transition-colors">
@@ -672,7 +795,7 @@ export default function CachePage() {
                       <p>图片文件的精确格式缓存命中</p>
                     </TooltipContent>
                   </Tooltip>
-                  
+
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <div className="text-center p-3 bg-orange-50 rounded-lg border cursor-help hover:bg-orange-100 transition-colors">
@@ -694,4 +817,4 @@ export default function CachePage() {
       </div>
     </TooltipProvider>
   )
-} 
+}

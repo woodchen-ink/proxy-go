@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useToast } from "@/components/ui/use-toast"
 import { useRouter } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Download, RefreshCw } from "lucide-react"
+import { Download, RefreshCw, Plus, Circle, CheckCircle2, Edit, Trash2, Database, FileText, Eraser } from "lucide-react"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,35 +17,40 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import PathMappingItem from "./PathMappingItem"
-import SecurityConfigPanel from "./SecurityConfigPanel"
-import PathDialogForm from "./PathDialogForm"
-import ExtensionRuleDialog from "./ExtensionRuleDialog"
+import { Switch } from "@/components/ui/switch"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Badge } from "@/components/ui/badge"
+import PathStatsCard from "./components/PathStatsCard"
+import PathCacheConfigDialog from "./components/PathCacheConfigDialog"
+import SecurityConfigPanel from "./components/SecurityConfigPanel"
+import ExtensionRuleDialog from "./components/ExtensionRuleDialog"
+import CacheManagement from "./components/CacheManagement"
 import { convertToBytes, convertBytesToUnit } from "./utils"
 
 interface ExtRuleConfig {
-  Extensions: string;    // 逗号分隔的扩展名
-  Target: string;        // 目标服务器
-  SizeThreshold: number; // 最小阈值（字节）
-  MaxSize: number;       // 最大阈值（字节）
-  RedirectMode?: boolean; // 是否使用302跳转模式
-  Domains?: string;      // 逗号分隔的域名列表，为空表示匹配所有域名
+  Extensions: string;
+  Target: string;
+  SizeThreshold: number;
+  MaxSize: number;
+  RedirectMode?: boolean;
+  Domains?: string;
 }
 
 interface CacheConfig {
-  max_age: number;        // 最大缓存时间（分钟）
-  cleanup_tick: number;   // 清理间隔（分钟）
-  max_cache_size: number; // 最大缓存大小（GB）
+  max_age: number;
+  cleanup_tick: number;
+  max_cache_size: number;
 }
 
 interface PathMapping {
   DefaultTarget: string
-  ExtensionMap?: ExtRuleConfig[]  // 只支持新格式
-  SizeThreshold?: number  // 保留全局阈值字段（向后兼容）
-  MaxSize?: number       // 保留全局阈值字段（向后兼容）
-  RedirectMode?: boolean  // 是否使用302跳转模式
-  Enabled?: boolean       // 是否启用此路径
-  CacheConfig?: CacheConfig // 独立缓存配置
+  ExtensionMap?: ExtRuleConfig[]
+  SizeThreshold?: number
+  MaxSize?: number
+  RedirectMode?: boolean
+  Enabled?: boolean
+  CacheConfig?: CacheConfig
 }
 
 interface CompressionConfig {
@@ -97,43 +102,38 @@ export default function ConfigPage() {
   const { toast } = useToast()
   const router = useRouter()
 
-  // 使用 ref 来保存滚动位置
-  const scrollPositionRef = useRef(0)
-  // 添加一个ref来跟踪是否是初始加载
-  const isInitialLoadRef = useRef(true)
-  // 添加一个标志来跟踪配置是否是从API加载的
-  const isConfigFromApiRef = useRef(true)
-  // 添加一个防抖定时器ref
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  // 选中的路径
+  const [selectedPath, setSelectedPath] = useState<string | null>(null)
 
-  // 对话框状态
-  const [pathDialogOpen, setPathDialogOpen] = useState(false)
-  const [newPathData, setNewPathData] = useState({
-    path: "",
-    defaultTarget: "",
-    redirectMode: false,
-    extensionMap: {} as Record<string, string>,
-    sizeThreshold: 0,
-    maxSize: 0,
-    sizeThresholdUnit: 'MB' as 'B' | 'KB' | 'MB' | 'GB',
-    maxSizeUnit: 'MB' as 'B' | 'KB' | 'MB' | 'GB',
-  })
+  // 删除确认
+  const [deletingPath, setDeletingPath] = useState<string | null>(null)
 
-  const [editingPath, setEditingPath] = useState<string | null>(null)
+  // 缓存配置对话框
+  const [cacheDialogOpen, setCacheDialogOpen] = useState(false)
 
-  const [editingPathData, setEditingPathData] = useState<{
-    path: string;
-    defaultTarget: string;
-    redirectMode: boolean;
+  // 编辑状态
+  const [isEditingPath, setIsEditingPath] = useState(false)
+  const [editedTarget, setEditedTarget] = useState("")
+  const [editedRedirectMode, setEditedRedirectMode] = useState(false)
+
+  // 添加路径状态
+  const [isAddingPath, setIsAddingPath] = useState(false)
+  const [newPath, setNewPath] = useState("")
+  const [newTarget, setNewTarget] = useState("")
+  const [newRedirectMode, setNewRedirectMode] = useState(false)
+
+  // 扩展名规则相关
+  const [extensionRuleDialogOpen, setExtensionRuleDialogOpen] = useState(false)
+  const [editingExtensionRule, setEditingExtensionRule] = useState<{
+    index: number,
+    extensions: string;
+    target: string;
     sizeThreshold: number;
     maxSize: number;
     sizeThresholdUnit: 'B' | 'KB' | 'MB' | 'GB';
     maxSizeUnit: 'B' | 'KB' | 'MB' | 'GB';
-  } | null>(null);
-
-  const [deletingPath, setDeletingPath] = useState<string | null>(null)
-
-  // 添加扩展名规则状态
+    domains: string;
+  } | null>(null)
   const [newExtensionRule, setNewExtensionRule] = useState<{
     extensions: string;
     target: string;
@@ -152,21 +152,12 @@ export default function ConfigPage() {
     sizeThresholdUnit: 'MB',
     maxSizeUnit: 'MB',
     domains: "",
-  });
+  })
+  const [deletingExtensionRule, setDeletingExtensionRule] = useState<{path: string, index: number} | null>(null)
 
-  const [editingExtensionRule, setEditingExtensionRule] = useState<{
-    index: number,
-    extensions: string;
-    target: string;
-    sizeThreshold: number;
-    maxSize: number;
-    sizeThresholdUnit: 'B' | 'KB' | 'MB' | 'GB';
-    maxSizeUnit: 'B' | 'KB' | 'MB' | 'GB';
-    domains: string;
-  } | null>(null);
-
-  // 添加扩展名规则对话框状态
-  const [extensionRuleDialogOpen, setExtensionRuleDialogOpen] = useState(false);
+  const isInitialLoadRef = useRef(true)
+  const isConfigFromApiRef = useRef(true)
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -194,8 +185,7 @@ export default function ConfigPage() {
       }
 
       const data = await response.json()
-      
-      // 确保安全配置存在
+
       if (!data.Security) {
         data.Security = {
           IPBan: {
@@ -207,11 +197,16 @@ export default function ConfigPage() {
           }
         }
       }
-      
-      isConfigFromApiRef.current = true // 标记配置来自API
+
+      isConfigFromApiRef.current = true
       setConfig(data)
 
-      // 获取路径统计信息
+      // 自动选中第一个路径
+      if (data.MAP && Object.keys(data.MAP).length > 0 && !selectedPath) {
+        setSelectedPath(Object.keys(data.MAP)[0])
+      }
+
+      // 获取路径统计
       try {
         const statsResponse = await fetch("/admin/api/path-stats", {
           headers: {
@@ -221,10 +216,7 @@ export default function ConfigPage() {
         })
         if (statsResponse.ok) {
           const statsData = await statsResponse.json()
-          console.log("路径统计数据:", statsData)
           setPathStats(statsData.path_stats || [])
-        } else {
-          console.error("获取路径统计失败，状态码:", statsResponse.status)
         }
       } catch (error) {
         console.error("获取路径统计失败:", error)
@@ -239,18 +231,16 @@ export default function ConfigPage() {
     } finally {
       setLoading(false)
     }
-  }, [router, toast])
+  }, [router, toast, selectedPath])
 
-  // 创建一个包装的setConfig函数，用于用户修改配置时
   const updateConfig = useCallback((newConfig: Config) => {
-    isConfigFromApiRef.current = false // 标记配置来自用户修改
+    isConfigFromApiRef.current = false
     setConfig(newConfig)
   }, [])
 
   useEffect(() => {
     fetchConfig()
   }, [fetchConfig])
-
 
   const handleSave = useCallback(async () => {
     if (!config) return
@@ -297,128 +287,185 @@ export default function ConfigPage() {
       setSaving(false)
     }
   }, [config, router, toast])
-  
-  // 添加自动保存的useEffect
+
   useEffect(() => {
-    // 如果是初始加载或者配置为空，不触发保存
     if (isInitialLoadRef.current || !config || isConfigFromApiRef.current) {
       isInitialLoadRef.current = false
-      isConfigFromApiRef.current = false // 重置标志
+      isConfigFromApiRef.current = false
       return
     }
 
-    // 清除之前的定时器
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current)
     }
 
-    // 保存当前滚动位置
-    const currentScrollPosition = window.scrollY
-
-    // 设置新的定时器，延迟1秒后保存
     saveTimeoutRef.current = setTimeout(() => {
-      handleSave().then(() => {
-        // 保存完成后恢复滚动位置
-        window.scrollTo(0, currentScrollPosition)
-      })
+      handleSave()
     }, 1000)
 
-    // 组件卸载时清除定时器
     return () => {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current)
       }
     }
-  }, [config, handleSave]) // 监听config变化
+  }, [config, handleSave])
 
- 
-
-  // 处理对话框打开和关闭时的滚动位置
-  const handleDialogOpenChange = useCallback((open: boolean, handler: (open: boolean) => void) => {
-    if (open) {
-      // 对话框打开时，保存当前滚动位置
-      scrollPositionRef.current = window.scrollY
-    } else {
-      // 对话框关闭时，恢复滚动位置
-      handler(open)
-      requestAnimationFrame(() => {
-        window.scrollTo(0, scrollPositionRef.current)
-      })
-    }
-  }, [])
-
-  const handlePathDialogOpenChange = useCallback((open: boolean) => {
-    handleDialogOpenChange(open, (isOpen) => {
-      setPathDialogOpen(isOpen)
-      if (!isOpen) {
-        setEditingPathData(null)
-        setNewPathData({
-          path: "",
-          defaultTarget: "",
-          redirectMode: false,
-          extensionMap: {},
-          sizeThreshold: 0,
-          maxSize: 0,
-          sizeThresholdUnit: 'MB',
-          maxSizeUnit: 'MB',
-        })
-      }
-    })
-  }, [handleDialogOpenChange])
-
-  const addOrUpdatePath = () => {
+  const exportConfig = () => {
     if (!config) return
-    
-    const data = editingPathData || newPathData
-    const { path, defaultTarget } = data
-    
-    if (!path || !defaultTarget) {
+    const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'proxy-config.json'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  const pullConfigFromD1 = async () => {
+    try {
+      const response = await fetch('/admin/api/config/pull', {
+        method: 'POST',
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(errorText || '从 D1 拉取配置失败')
+      }
+
+      const pulledConfig = await response.json()
+      isConfigFromApiRef.current = true
+      setConfig(pulledConfig)
+
+      toast({
+        title: "成功",
+        description: "已从 D1 拉取最新配置",
+      })
+    } catch (error) {
       toast({
         title: "错误",
-        description: "路径和默认目标不能为空",
+        description: error instanceof Error ? error.message : "从 D1 拉取配置失败",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleToggleEnabled = (path: string, enabled: boolean) => {
+    if (!config) return
+    const newConfig = { ...config }
+    const mapping = newConfig.MAP[path]
+
+    if (typeof mapping === 'string') {
+      newConfig.MAP[path] = {
+        DefaultTarget: mapping,
+        Enabled: enabled,
+      }
+    } else {
+      newConfig.MAP[path] = {
+        ...mapping,
+        Enabled: enabled,
+      }
+    }
+
+    updateConfig(newConfig)
+  }
+
+  const handleSelectPath = (path: string) => {
+    setSelectedPath(path)
+    setIsAddingPath(false)
+    setIsEditingPath(false)
+  }
+
+  const handleStartAddPath = () => {
+    setIsAddingPath(true)
+    setSelectedPath(null)
+    setNewPath("")
+    setNewTarget("")
+    setNewRedirectMode(false)
+  }
+
+  const handleAddPath = () => {
+    if (!config || !newPath || !newTarget) {
+      toast({
+        title: "错误",
+        description: "路径和目标不能为空",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (config.MAP[newPath]) {
+      toast({
+        title: "错误",
+        description: "路径已存在",
         variant: "destructive",
       })
       return
     }
 
     const newConfig = { ...config }
-    const pathConfig: PathMapping = {
-      DefaultTarget: defaultTarget,
-      RedirectMode: data.redirectMode,
-      Enabled: true, // 新建路径默认启用
+    newConfig.MAP[newPath] = {
+      DefaultTarget: newTarget,
+      RedirectMode: newRedirectMode,
+      Enabled: true,
       ExtensionMap: []
     }
-
-    // 如果是编辑现有路径，保留原有的扩展名映射和启用状态
-    if (editingPathData && typeof config.MAP[path] === 'object') {
-      const existingConfig = config.MAP[path] as PathMapping
-      pathConfig.ExtensionMap = existingConfig.ExtensionMap
-      pathConfig.Enabled = existingConfig.Enabled !== false // 保留原有启用状态
-    }
-
-    newConfig.MAP[path] = pathConfig
     updateConfig(newConfig)
-    
-    if (editingPathData) {
-      setEditingPathData(null)
-    } else {
-      setNewPathData({
-        path: "",
-        defaultTarget: "",
-        redirectMode: false,
-        extensionMap: {},
-        sizeThreshold: 0,
-        maxSize: 0,
-        sizeThresholdUnit: 'MB',
-        maxSizeUnit: 'MB',
-      })
-    }
-    
-    setPathDialogOpen(false)
+    setSelectedPath(newPath)
+    setIsAddingPath(false)
+    setNewPath("")
+    setNewTarget("")
+    setNewRedirectMode(false)
   }
 
-  const deletePath = (path: string) => {
-    setDeletingPath(path)
+  const handleStartEditPath = () => {
+    if (!selectedPath || !config) return
+    const mapping = config.MAP[selectedPath]
+    if (typeof mapping === 'string') {
+      setEditedTarget(mapping)
+      setEditedRedirectMode(false)
+    } else {
+      setEditedTarget(mapping.DefaultTarget)
+      setEditedRedirectMode(mapping.RedirectMode || false)
+    }
+    setIsEditingPath(true)
+  }
+
+  const handleSaveEditPath = () => {
+    if (!selectedPath || !config || !editedTarget) {
+      toast({
+        title: "错误",
+        description: "目标不能为空",
+        variant: "destructive",
+      })
+      return
+    }
+
+    const newConfig = { ...config }
+    const mapping = newConfig.MAP[selectedPath]
+
+    if (typeof mapping === 'string') {
+      newConfig.MAP[selectedPath] = {
+        DefaultTarget: editedTarget,
+        RedirectMode: editedRedirectMode,
+        Enabled: true,
+      }
+    } else {
+      newConfig.MAP[selectedPath] = {
+        ...mapping,
+        DefaultTarget: editedTarget,
+        RedirectMode: editedRedirectMode,
+      }
+    }
+
+    updateConfig(newConfig)
+    setIsEditingPath(false)
+  }
+
+  const handleDeletePath = () => {
+    if (!selectedPath) return
+    setDeletingPath(selectedPath)
   }
 
   const confirmDeletePath = () => {
@@ -426,6 +473,9 @@ export default function ConfigPage() {
     const newConfig = { ...config }
     delete newConfig.MAP[deletingPath]
     updateConfig(newConfig)
+
+    const paths = Object.keys(newConfig.MAP)
+    setSelectedPath(paths.length > 0 ? paths[0] : null)
     setDeletingPath(null)
   }
 
@@ -435,14 +485,12 @@ export default function ConfigPage() {
     const mapping = newConfig.MAP[path]
 
     if (typeof mapping === 'string') {
-      // 将字符串格式转换为对象格式
       newConfig.MAP[path] = {
         DefaultTarget: mapping,
         Enabled: true,
         CacheConfig: cacheConfig || undefined,
       }
     } else {
-      // 更新对象格式的缓存配置
       newConfig.MAP[path] = {
         ...mapping,
         CacheConfig: cacheConfig || undefined,
@@ -523,7 +571,6 @@ export default function ConfigPage() {
       throw new Error("重置统计失败")
     }
 
-    // 重新获取统计数据
     try {
       const statsResponse = await fetch("/admin/api/path-stats", {
         headers: {
@@ -543,8 +590,7 @@ export default function ConfigPage() {
   const updateSecurity = (field: keyof SecurityConfig['IPBan'], value: boolean | number) => {
     if (!config) return
     const newConfig = { ...config }
-    
-    // 确保安全配置存在
+
     if (!newConfig.Security) {
       newConfig.Security = {
         IPBan: {
@@ -556,7 +602,7 @@ export default function ConfigPage() {
         }
       }
     }
-    
+
     if (field === 'Enabled') {
       newConfig.Security.IPBan.Enabled = value as boolean
     } else {
@@ -565,188 +611,34 @@ export default function ConfigPage() {
     updateConfig(newConfig)
   }
 
-  const handleToggleEnabled = (path: string, enabled: boolean) => {
-    if (!config) return
-    const newConfig = { ...config }
-    const mapping = newConfig.MAP[path]
-
-    if (typeof mapping === 'string') {
-      // 将字符串格式转换为对象格式
-      newConfig.MAP[path] = {
-        DefaultTarget: mapping,
-        Enabled: enabled,
-      }
-    } else {
-      // 更新对象格式的启用状态
-      newConfig.MAP[path] = {
-        ...mapping,
-        Enabled: enabled,
-      }
-    }
-
-    updateConfig(newConfig)
-  }
-
-  const handleExtensionMapEdit = (path: string) => {
-    // 将添加规则的操作重定向到handleExtensionRuleEdit
-    handleExtensionRuleEdit(path);
-  };
-
-  const deleteExtensionRule = (path: string, index: number) => {
-    setDeletingExtensionRule({ path, index });
-  };
-
-  const openAddPathDialog = () => {
-    setEditingPathData(null)
-    setNewPathData({
-      path: "",
-      defaultTarget: "",
-      redirectMode: false,
-      extensionMap: {},
-      sizeThreshold: 0,
-      maxSize: 0,
-      sizeThresholdUnit: 'MB',
-      maxSizeUnit: 'MB',
-    })
-    setPathDialogOpen(true)
-  }
-
-  const exportConfig = () => {
-    if (!config) return
-    const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'proxy-config.json'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-  }
-
-  const pullConfigFromD1 = async () => {
-    try {
-      const response = await fetch('/admin/api/config/pull', {
-        method: 'POST',
-      })
-
-      if (!response.ok) {
-        const errorText = await response.text()
-        throw new Error(errorText || '从 D1 拉取配置失败')
-      }
-
-      const pulledConfig = await response.json()
-
-      // 使用 setConfig 而不是 updateConfig，因为拉取的配置已经在服务端更新过了
-      isConfigFromApiRef.current = true
-      setConfig(pulledConfig)
-
-      toast({
-        title: "成功",
-        description: "已从 D1 拉取最新配置",
-      })
-    } catch (error) {
-      toast({
-        title: "错误",
-        description: error instanceof Error ? error.message : "从 D1 拉取配置失败",
-        variant: "destructive",
-      })
-    }
-  }
-
-  const handleEditPath = (path: string, target: PathMapping | string) => {
-    if (typeof target === 'string') {
-      setEditingPathData({
-        path,
-        defaultTarget: target,
-        redirectMode: false,
-        sizeThreshold: 0,
-        maxSize: 0,
-        sizeThresholdUnit: 'MB',
-        maxSizeUnit: 'MB'
-      })
-    } else {
-      const { value: thresholdValue, unit: thresholdUnit } = convertBytesToUnit(target.SizeThreshold || 0)
-      const { value: maxValue, unit: maxUnit } = convertBytesToUnit(target.MaxSize || 0)
-      setEditingPathData({
-        path,
-        defaultTarget: target.DefaultTarget,
-        redirectMode: target.RedirectMode || false,
-        sizeThreshold: thresholdValue,
-        maxSize: maxValue,
-        sizeThresholdUnit: thresholdUnit,
-        maxSizeUnit: maxUnit
-      })
-    }
-    setPathDialogOpen(true)
-  }
-
-  // 处理删除对话框的滚动位置
-  const handleDeleteDialogOpenChange = useCallback((open: boolean, setter: (value: null) => void) => {
-    if (open) {
-      scrollPositionRef.current = window.scrollY
-    } else {
-      setter(null)
-      requestAnimationFrame(() => {
-        window.scrollTo(0, scrollPositionRef.current)
-      })
-    }
-  }, [])
-
-  // 为扩展名规则对话框添加处理函数
-  const handleExtensionRuleDialogOpenChange = useCallback((open: boolean) => {
-    handleDialogOpenChange(open, (isOpen) => {
-      setExtensionRuleDialogOpen(isOpen);
-      if (!isOpen) {
-        setEditingExtensionRule(null);
-        setNewExtensionRule({
-          extensions: "",
-          target: "",
-          redirectMode: false,
-          sizeThreshold: 0,
-          maxSize: 0,
-          sizeThresholdUnit: 'MB',
-          maxSizeUnit: 'MB',
-          domains: "",
-        });
-      }
-    });
-  }, [handleDialogOpenChange]);
-
-  // 处理扩展名规则的编辑
-  const handleExtensionRuleEdit = (path: string, index?: number, rule?: { Extensions: string; Target: string; SizeThreshold?: number; MaxSize?: number; RedirectMode?: boolean; Domains?: string }) => {
-    setEditingPath(path);
-    
+  const handleExtensionRuleEdit = (_path: string, index?: number, rule?: ExtRuleConfig) => {
     if (index !== undefined && rule) {
-      // 转换规则的阈值到合适的单位显示
-      const { value: thresholdValue, unit: thresholdUnit } = convertBytesToUnit(rule.SizeThreshold || 0);
-      const { value: maxValue, unit: maxUnit } = convertBytesToUnit(rule.MaxSize || 0);
-      
+      const { value: thresholdValue, unit: thresholdUnit } = convertBytesToUnit(rule.SizeThreshold || 0)
+      const { value: maxValue, unit: maxUnit } = convertBytesToUnit(rule.MaxSize || 0)
+
       setEditingExtensionRule({
         index,
-        extensions: rule.Extensions, 
+        extensions: rule.Extensions,
         target: rule.Target,
         sizeThreshold: thresholdValue,
         maxSize: maxValue,
         sizeThresholdUnit: thresholdUnit,
         maxSizeUnit: maxUnit,
         domains: rule.Domains || "",
-      });
-      
-      // 同时更新表单显示数据
+      })
+
       setNewExtensionRule({
         extensions: rule.Extensions,
         target: rule.Target,
-        redirectMode: rule.RedirectMode || false, // 正确读取RedirectMode字段
+        redirectMode: rule.RedirectMode || false,
         sizeThreshold: thresholdValue,
         maxSize: maxValue,
         sizeThresholdUnit: thresholdUnit,
         maxSizeUnit: maxUnit,
         domains: rule.Domains || "",
-      });
+      })
     } else {
-      setEditingExtensionRule(null);
-      // 重置表单
+      setEditingExtensionRule(null)
       setNewExtensionRule({
         extensions: "",
         target: "",
@@ -756,88 +648,80 @@ export default function ConfigPage() {
         sizeThresholdUnit: 'MB',
         maxSizeUnit: 'MB',
         domains: "",
-      });
+      })
     }
-    
-    setExtensionRuleDialogOpen(true);
-  };
 
-  // 添加或更新扩展名规则
+    setExtensionRuleDialogOpen(true)
+  }
+
   const addOrUpdateExtensionRule = () => {
-    if (!config || !editingPath) return;
-    
-    const { extensions, target, redirectMode, sizeThreshold, maxSize, sizeThresholdUnit, maxSizeUnit, domains } = newExtensionRule;
-    
-    // 验证输入
+    if (!config || !selectedPath) return
+
+    const { extensions, target, redirectMode, sizeThreshold, maxSize, sizeThresholdUnit, maxSizeUnit, domains } = newExtensionRule
+
     if (!extensions.trim() || !target.trim()) {
       toast({
         title: "错误",
         description: "扩展名和目标不能为空",
         variant: "destructive",
-      });
-      return;
+      })
+      return
     }
 
-    // 验证扩展名格式
-    const extensionList = extensions.split(',').map(e => e.trim());
+    const extensionList = extensions.split(',').map(e => e.trim())
     if (extensionList.some(e => !e || (e !== "*" && e.includes('.')))) {
       toast({
         title: "错误",
-        description: "扩展名格式不正确，不需要包含点号",
+        description: "扩展名格式不正确,不需要包含点号",
         variant: "destructive",
-      });
-      return;
+      })
+      return
     }
 
-    // 验证URL格式
     try {
-      new URL(target);
+      new URL(target)
     } catch {
       toast({
         title: "错误",
         description: "目标URL格式不正确",
         variant: "destructive",
-      });
-      return;
+      })
+      return
     }
 
-    // 验证域名格式（如果提供）
     if (domains.trim()) {
-      const domainList = domains.split(',').map(d => d.trim());
-      const domainRegex = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
-      
+      const domainList = domains.split(',').map(d => d.trim())
+      const domainRegex = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/
+
       for (const domain of domainList) {
         if (domain && !domainRegex.test(domain)) {
           toast({
             title: "错误",
             description: `域名格式不正确: ${domain}`,
             variant: "destructive",
-          });
-          return;
+          })
+          return
         }
       }
     }
 
-    // 转换大小为字节
-    const sizeThresholdBytes = convertToBytes(sizeThreshold, sizeThresholdUnit);
-    const maxSizeBytes = convertToBytes(maxSize, maxSizeUnit);
+    const sizeThresholdBytes = convertToBytes(sizeThreshold, sizeThresholdUnit)
+    const maxSizeBytes = convertToBytes(maxSize, maxSizeUnit)
 
-    // 验证阈值
     if (maxSizeBytes > 0 && sizeThresholdBytes >= maxSizeBytes) {
       toast({
         title: "错误",
         description: "最大阈值必须大于最小阈值",
         variant: "destructive",
-      });
-      return;
+      })
+      return
     }
 
-    const newConfig = { ...config };
-    const mapping = newConfig.MAP[editingPath];
-    
+    const newConfig = { ...config }
+    const mapping = newConfig.MAP[selectedPath]
+
     if (typeof mapping === "string") {
-      // 如果映射是字符串，创建新的PathConfig对象
-      newConfig.MAP[editingPath] = {
+      newConfig.MAP[selectedPath] = {
         DefaultTarget: mapping,
         ExtensionMap: [{
           Extensions: extensions,
@@ -847,16 +731,14 @@ export default function ConfigPage() {
           RedirectMode: redirectMode,
           Domains: domains.trim() || undefined
         }]
-      };
-    } else {
-      // 确保ExtensionMap是数组
-      if (!Array.isArray(mapping.ExtensionMap)) {
-        mapping.ExtensionMap = [];
       }
-      
+    } else {
+      if (!Array.isArray(mapping.ExtensionMap)) {
+        mapping.ExtensionMap = []
+      }
+
       if (editingExtensionRule) {
-        // 更新现有规则
-        const rules = mapping.ExtensionMap as ExtRuleConfig[];
+        const rules = mapping.ExtensionMap as ExtRuleConfig[]
         rules[editingExtensionRule.index] = {
           Extensions: extensions,
           Target: target,
@@ -864,9 +746,8 @@ export default function ConfigPage() {
           MaxSize: maxSizeBytes,
           RedirectMode: redirectMode,
           Domains: domains.trim() || undefined
-        };
+        }
       } else {
-        // 添加新规则
         mapping.ExtensionMap.push({
           Extensions: extensions,
           Target: target,
@@ -874,13 +755,13 @@ export default function ConfigPage() {
           MaxSize: maxSizeBytes,
           RedirectMode: redirectMode,
           Domains: domains.trim() || undefined
-        });
+        })
       }
     }
 
-    updateConfig(newConfig);
-    setExtensionRuleDialogOpen(false);
-    setEditingExtensionRule(null);
+    updateConfig(newConfig)
+    setExtensionRuleDialogOpen(false)
+    setEditingExtensionRule(null)
     setNewExtensionRule({
       extensions: "",
       target: "",
@@ -890,30 +771,30 @@ export default function ConfigPage() {
       sizeThresholdUnit: 'MB',
       maxSizeUnit: 'MB',
       domains: "",
-    });
-  };
+    })
+  }
 
-  // 删除扩展名规则
-  const [deletingExtensionRule, setDeletingExtensionRule] = useState<{path: string, index: number} | null>(null);
+  const deleteExtensionRule = (path: string, index: number) => {
+    setDeletingExtensionRule({ path, index })
+  }
 
   const confirmDeleteExtensionRule = () => {
-    if (!config || !deletingExtensionRule) return;
-    
-    const newConfig = { ...config };
-    const mapping = newConfig.MAP[deletingExtensionRule.path];
-    
+    if (!config || !deletingExtensionRule) return
+
+    const newConfig = { ...config }
+    const mapping = newConfig.MAP[deletingExtensionRule.path]
+
     if (typeof mapping !== "string" && Array.isArray(mapping.ExtensionMap)) {
-      // 移除指定索引的规则
-      const rules = mapping.ExtensionMap as ExtRuleConfig[];
+      const rules = mapping.ExtensionMap as ExtRuleConfig[]
       mapping.ExtensionMap = [
         ...rules.slice(0, deletingExtensionRule.index),
         ...rules.slice(deletingExtensionRule.index + 1)
-      ];
+      ]
     }
-    
-    updateConfig(newConfig);
-    setDeletingExtensionRule(null);
-  };
+
+    updateConfig(newConfig)
+    setDeletingExtensionRule(null)
+  }
 
   if (loading) {
     return (
@@ -925,6 +806,16 @@ export default function ConfigPage() {
       </div>
     )
   }
+
+  // 获取当前选中的映射配置
+  const selectedMapping = selectedPath && config ? config.MAP[selectedPath] : null
+  const selectedMappingObj: PathMapping | null = selectedMapping
+    ? (typeof selectedMapping === 'string'
+        ? { DefaultTarget: selectedMapping, Enabled: true }
+        : selectedMapping)
+    : null
+  const selectedStats = selectedPath ? pathStats.find(s => s.path === selectedPath) : undefined
+  const isSystemPath = selectedMappingObj?.DefaultTarget === 'mirror'
 
   return (
     <div className="space-y-6">
@@ -952,48 +843,329 @@ export default function ConfigPage() {
           <Tabs defaultValue="paths" className="space-y-4">
             <TabsList>
               <TabsTrigger value="paths">路径映射</TabsTrigger>
+              <TabsTrigger value="cache">缓存管理</TabsTrigger>
               <TabsTrigger value="security">安全策略</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="paths" className="space-y-4">
-              <div className="flex justify-end">
-                <PathDialogForm
-                  open={pathDialogOpen}
-                  onOpenChange={handlePathDialogOpenChange}
-                  editingPathData={editingPathData}
-                  newPathData={newPathData}
-                  onNewPathDataChange={setNewPathData}
-                  onEditingPathDataChange={setEditingPathData}
-                  onSubmit={addOrUpdatePath}
-                  onOpenAddDialog={openAddPathDialog}
-                />
-              </div>
+            <TabsContent value="paths" className="space-y-0">
+              {/* 左右分栏布局 */}
+              <div className="flex gap-4 h-[calc(100vh-16rem)]">
+                {/* 左侧路径列表 */}
+                <div className="w-64 flex-shrink-0 border-r pr-4 overflow-y-auto">
+                  <div className="space-y-2">
+                    {config && Object.keys(config.MAP).map((path) => {
+                      const mapping = config.MAP[path]
+                      const mappingObj: PathMapping = typeof mapping === 'string'
+                        ? { DefaultTarget: mapping, Enabled: true }
+                        : mapping
+                      const isEnabled = mappingObj.Enabled !== false
+                      const isSelected = selectedPath === path
 
-              <div className="space-y-4">
-                {config && Object.entries(config.MAP).map(([path, mapping]) => {
-                  const stats = pathStats.find(s => s.path === path)
-                  const isSystemPath = typeof mapping === 'object' && mapping.DefaultTarget === 'mirror'
+                      return (
+                        <button
+                          key={path}
+                          onClick={() => handleSelectPath(path)}
+                          className={`w-full text-left px-3 py-2 rounded-md transition-colors ${
+                            isSelected
+                              ? 'bg-[#E8DDD0] text-[#2D2A26]'
+                              : 'hover:bg-[#E8E5E0] text-[#3D3A36]'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            {isEnabled ? (
+                              <CheckCircle2 className="w-4 h-4 text-[#518751] flex-shrink-0" />
+                            ) : (
+                              <Circle className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                            )}
+                            <span className="font-mono text-sm truncate">{path}</span>
+                          </div>
+                        </button>
+                      )
+                    })}
 
-                  return (
-                    <PathMappingItem
-                      key={path}
-                      path={path}
-                      mapping={mapping}
-                      stats={stats}
-                      isSystemPath={isSystemPath}
-                      onEdit={(p) => handleEditPath(p, mapping)}
-                      onDelete={deletePath}
-                      onToggleEnabled={handleToggleEnabled}
-                      onCacheConfigUpdate={handleCacheConfigUpdate}
-                      onExtensionMapEdit={handleExtensionMapEdit}
-                      onExtensionRuleEdit={handleExtensionRuleEdit}
-                      onExtensionRuleDelete={deleteExtensionRule}
-                      onClearCache={handleClearPathCache}
-                      onResetStats={handleResetPathStats}
-                    />
-                  )
-                })}
+                    {/* 新增路径按钮 */}
+                    <Button
+                      onClick={handleStartAddPath}
+                      variant="outline"
+                      className="w-full justify-start"
+                      size="sm"
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      新增路径
+                    </Button>
+                  </div>
+                </div>
+
+                {/* 右侧配置内容 */}
+                <div className="flex-1 overflow-y-auto">
+                  {isAddingPath ? (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>新增路径</CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="new-path">路径</Label>
+                          <Input
+                            id="new-path"
+                            value={newPath}
+                            onChange={(e) => setNewPath(e.target.value)}
+                            placeholder="/example"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="new-target">默认目标</Label>
+                          <Input
+                            id="new-target"
+                            value={newTarget}
+                            onChange={(e) => setNewTarget(e.target.value)}
+                            placeholder="https://example.com"
+                          />
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Switch
+                            id="new-redirect"
+                            checked={newRedirectMode}
+                            onCheckedChange={setNewRedirectMode}
+                          />
+                          <Label htmlFor="new-redirect">使用302重定向模式</Label>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button onClick={handleAddPath}>保存</Button>
+                          <Button variant="outline" onClick={() => setIsAddingPath(false)}>取消</Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ) : selectedPath && selectedMappingObj ? (
+                    <div className="space-y-4">
+                      {/* 统计信息 */}
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="text-lg">统计信息</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <PathStatsCard
+                            stats={selectedStats}
+                            onReset={() => handleResetPathStats(selectedPath)}
+                          />
+                        </CardContent>
+                      </Card>
+
+                      {/* 基本设置 */}
+                      <Card>
+                        <CardHeader className="flex flex-row items-center justify-between">
+                          <CardTitle className="text-lg">基本设置</CardTitle>
+                          <div className="flex gap-2">
+                            {!isEditingPath && (
+                              <Button variant="outline" size="sm" onClick={handleStartEditPath}>
+                                <Edit className="w-4 h-4 mr-2" />
+                                编辑
+                              </Button>
+                            )}
+                            {!isSystemPath && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={handleDeletePath}
+                                className="text-destructive hover:text-destructive"
+                              >
+                                <Trash2 className="w-4 h-4 mr-2" />
+                                删除
+                              </Button>
+                            )}
+                          </div>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                          <div className="flex items-center justify-between">
+                            <Label>当前路径</Label>
+                            <span className="font-mono font-semibold">{selectedPath}</span>
+                          </div>
+
+                          <div className="flex items-center justify-between">
+                            <Label>启用状态</Label>
+                            <div className="flex items-center gap-2">
+                              <Switch
+                                checked={selectedMappingObj.Enabled !== false}
+                                onCheckedChange={(checked) => handleToggleEnabled(selectedPath, checked)}
+                                className="data-[state=checked]:bg-[#518751]"
+                              />
+                              <span className="text-sm text-muted-foreground">
+                                {selectedMappingObj.Enabled !== false ? "已启用" : "已禁用"}
+                              </span>
+                            </div>
+                          </div>
+
+                          {isEditingPath ? (
+                            <>
+                              <div className="space-y-2">
+                                <Label htmlFor="edit-target">默认目标</Label>
+                                <Input
+                                  id="edit-target"
+                                  value={editedTarget}
+                                  onChange={(e) => setEditedTarget(e.target.value)}
+                                />
+                              </div>
+                              <div className="flex items-center space-x-2">
+                                <Switch
+                                  id="edit-redirect"
+                                  checked={editedRedirectMode}
+                                  onCheckedChange={setEditedRedirectMode}
+                                />
+                                <Label htmlFor="edit-redirect">使用302重定向模式</Label>
+                              </div>
+                              <div className="flex gap-2">
+                                <Button onClick={handleSaveEditPath}>保存</Button>
+                                <Button variant="outline" onClick={() => setIsEditingPath(false)}>取消</Button>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="flex items-start justify-between">
+                                <Label>默认目标</Label>
+                                <span className="text-sm text-muted-foreground break-all max-w-md text-right">
+                                  {selectedMappingObj.DefaultTarget}
+                                </span>
+                              </div>
+                              {selectedMappingObj.RedirectMode && (
+                                <div className="flex items-center gap-2">
+                                  <Badge variant="outline">302重定向模式</Badge>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </CardContent>
+                      </Card>
+
+                      {/* 缓存配置 */}
+                      <Card>
+                        <CardHeader className="flex flex-row items-center justify-between">
+                          <CardTitle className="text-lg">缓存配置</CardTitle>
+                          <div className="flex gap-2">
+                            <Button variant="outline" size="sm" onClick={() => setCacheDialogOpen(true)}>
+                              <Database className="w-4 h-4 mr-2" />
+                              配置缓存
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleClearPathCache(selectedPath)}
+                              className="text-orange-600 hover:text-orange-700"
+                            >
+                              <Eraser className="w-4 h-4 mr-2" />
+                              清理缓存
+                            </Button>
+                          </div>
+                        </CardHeader>
+                        <CardContent>
+                          {selectedMappingObj.CacheConfig ? (
+                            <div className="space-y-2 text-sm">
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">最大缓存时间:</span>
+                                <span>{selectedMappingObj.CacheConfig.max_age} 分钟</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">清理间隔:</span>
+                                <span>{selectedMappingObj.CacheConfig.cleanup_tick} 分钟</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">最大缓存大小:</span>
+                                <span>{selectedMappingObj.CacheConfig.max_cache_size} GB</span>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="text-sm text-muted-foreground">使用全局缓存配置</p>
+                          )}
+                        </CardContent>
+                      </Card>
+
+                      {/* 扩展名规则 */}
+                      <Card>
+                        <CardHeader className="flex flex-row items-center justify-between">
+                          <CardTitle className="text-lg">
+                            扩展名规则 ({selectedMappingObj.ExtensionMap?.length || 0})
+                          </CardTitle>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleExtensionRuleEdit(selectedPath)}
+                          >
+                            <FileText className="w-4 h-4 mr-2" />
+                            添加规则
+                          </Button>
+                        </CardHeader>
+                        <CardContent>
+                          {selectedMappingObj.ExtensionMap && selectedMappingObj.ExtensionMap.length > 0 ? (
+                            <div className="space-y-2">
+                              {selectedMappingObj.ExtensionMap.map((rule, index) => (
+                                <div
+                                  key={index}
+                                  className="border rounded-md p-3 bg-muted/50 space-y-2"
+                                >
+                                  <div className="flex items-start justify-between">
+                                    <div className="flex-1 space-y-1">
+                                      <div className="flex items-center gap-2">
+                                        <Badge variant="outline" className="font-mono text-xs">
+                                          {rule.Extensions}
+                                        </Badge>
+                                        {rule.RedirectMode && (
+                                          <Badge variant="secondary" className="text-xs">
+                                            302重定向
+                                          </Badge>
+                                        )}
+                                      </div>
+                                      <div className="text-xs text-muted-foreground break-all">
+                                        目标: {rule.Target}
+                                      </div>
+                                      {rule.Domains && (
+                                        <div className="text-xs text-muted-foreground">
+                                          域名限制: {rule.Domains}
+                                        </div>
+                                      )}
+                                      {(rule.SizeThreshold || rule.MaxSize) && (
+                                        <div className="text-xs text-muted-foreground">
+                                          大小范围: {rule.SizeThreshold ? convertBytesToUnit(rule.SizeThreshold).value + ' ' + convertBytesToUnit(rule.SizeThreshold).unit : "0"} - {rule.MaxSize ? convertBytesToUnit(rule.MaxSize).value + ' ' + convertBytesToUnit(rule.MaxSize).unit : "无限制"}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="flex gap-1 ml-2">
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => handleExtensionRuleEdit(selectedPath, index, rule)}
+                                        className="h-8 w-8 p-0"
+                                      >
+                                        <Edit className="h-3 w-3" />
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => deleteExtensionRule(selectedPath, index)}
+                                        className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                                      >
+                                        <Trash2 className="h-3 w-3" />
+                                      </Button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-muted-foreground">暂无扩展名规则</p>
+                          )}
+                        </CardContent>
+                      </Card>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-muted-foreground">
+                      <p>请选择一个路径或新增路径</p>
+                    </div>
+                  )}
+                </div>
               </div>
+            </TabsContent>
+
+            <TabsContent value="cache" className="space-y-6">
+              <CacheManagement />
             </TabsContent>
 
             <TabsContent value="security" className="space-y-6">
@@ -1006,10 +1178,8 @@ export default function ConfigPage() {
         </CardContent>
       </Card>
 
-      <AlertDialog 
-        open={!!deletingPath} 
-        onOpenChange={(open) => handleDeleteDialogOpenChange(open, setDeletingPath)}
-      >
+      {/* 删除路径确认对话框 */}
+      <AlertDialog open={!!deletingPath} onOpenChange={(open) => !open && setDeletingPath(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>确认删除</AlertDialogTitle>
@@ -1023,20 +1193,30 @@ export default function ConfigPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      
+
+      {/* 缓存配置对话框 */}
+      {selectedPath && selectedMappingObj && (
+        <PathCacheConfigDialog
+          open={cacheDialogOpen}
+          onOpenChange={setCacheDialogOpen}
+          path={selectedPath}
+          cacheConfig={selectedMappingObj.CacheConfig}
+          onSave={(config) => handleCacheConfigUpdate(selectedPath, config)}
+        />
+      )}
+
+      {/* 扩展名规则对话框 */}
       <ExtensionRuleDialog
         open={extensionRuleDialogOpen}
-        onOpenChange={handleExtensionRuleDialogOpenChange}
+        onOpenChange={setExtensionRuleDialogOpen}
         editingRule={editingExtensionRule}
         newRule={newExtensionRule}
         onNewRuleChange={setNewExtensionRule}
         onSubmit={addOrUpdateExtensionRule}
       />
 
-      <AlertDialog 
-        open={!!deletingExtensionRule} 
-        onOpenChange={(open) => handleDeleteDialogOpenChange(open, () => setDeletingExtensionRule(null))}
-      >
+      {/* 删除扩展名规则确认对话框 */}
+      <AlertDialog open={!!deletingExtensionRule} onOpenChange={(open) => !open && setDeletingExtensionRule(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>确认删除</AlertDialogTitle>

@@ -4,8 +4,8 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
 import { Edit, Trash2, Database, Shield, FileText, ChevronDown, ChevronUp, Eraser } from "lucide-react"
-import PathStatsCard from "./PathStatsCard"
-import PathCacheConfigDialog from "./PathCacheConfigDialog"
+import PathStatsCard from "./components/PathStatsCard"
+import PathCacheConfigDialog from "./components/PathCacheConfigDialog"
 import {
   AlertDialog,
   AlertDialogAction,

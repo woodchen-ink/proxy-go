@@ -820,6 +820,74 @@ func (cm *CacheManager) ClearCacheByPrefix(pathPrefix string) (int, error) {
 	return len(keysToDelete), nil
 }
 
+// ClearCacheByURLs 清除指定 URL 列表的缓存
+func (cm *CacheManager) ClearCacheByURLs(urls []string) (int, error) {
+	if len(urls) == 0 {
+		return 0, nil
+	}
+
+	// 规范化 URL 列表（去除尾部斜杠）
+	urlSet := make(map[string]bool)
+	for _, url := range urls {
+		normalizedURL := strings.TrimSuffix(url, "/")
+		urlSet[normalizedURL] = true
+	}
+
+	// 清除内存中匹配的缓存项，并收集需要删除的文件
+	var keysToDelete []CacheKey
+	filesToDelete := make(map[string]bool)
+
+	cm.items.Range(func(key, value interface{}) bool {
+		cacheKey := key.(CacheKey)
+		// 检查 URL 是否在指定列表中（精确匹配）
+		normalizedCacheURL := strings.TrimSuffix(cacheKey.URL, "/")
+		if urlSet[normalizedCacheURL] {
+			keysToDelete = append(keysToDelete, cacheKey)
+
+			// 获取缓存项，从中获取文件路径
+			if item, ok := value.(*CacheItem); ok && item.FilePath != "" {
+				// 从完整路径中提取文件名
+				filename := filepath.Base(item.FilePath)
+				filesToDelete[filename] = true
+			}
+		}
+		return true
+	})
+
+	// 从内存中删除缓存项
+	for _, key := range keysToDelete {
+		cm.items.Delete(key)
+	}
+
+	// 清理缓存目录中匹配的文件
+	deletedFiles := 0
+	entries, err := os.ReadDir(cm.cacheDir)
+	if err != nil {
+		log.Printf("[Cache] WARN Failed to read cache directory: %v", err)
+		// 即使读取目录失败，内存清理仍然成功
+		return len(keysToDelete), nil
+	}
+
+	// 删除匹配的缓存文件
+	for _, entry := range entries {
+		if entry.Name() == "config.json" || strings.HasSuffix(entry.Name(), ".json") {
+			continue // 保留配置文件和其他 JSON 文件
+		}
+
+		if filesToDelete[entry.Name()] {
+			filePath := filepath.Join(cm.cacheDir, entry.Name())
+			if err := os.Remove(filePath); err != nil {
+				log.Printf("[Cache] WARN Failed to remove file: %s", entry.Name())
+			} else {
+				deletedFiles++
+			}
+		}
+	}
+
+	log.Printf("[Cache] Cleared %d cache items (%d files) for %d specific URLs", len(keysToDelete), deletedFiles, len(urls))
+	return len(keysToDelete), nil
+}
+
 // cleanStaleFiles 清理过期和临时文件
 func (cm *CacheManager) cleanStaleFiles() error {
 	entries, err := os.ReadDir(cm.cacheDir)

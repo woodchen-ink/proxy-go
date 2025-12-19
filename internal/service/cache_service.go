@@ -106,3 +106,28 @@ func (s *CacheService) ClearCacheByPath(cacheType string, pathPrefix string) (in
 		return 0, errors.New("invalid cache type")
 	}
 }
+
+// ClearCacheByURLs 清空指定 URL 列表的缓存
+func (s *CacheService) ClearCacheByURLs(cacheType string, urls []string) (int, error) {
+	switch cacheType {
+	case "proxy":
+		return s.proxyCache.ClearCacheByURLs(urls)
+	case "mirror":
+		return s.mirrorCache.ClearCacheByURLs(urls)
+	case "all":
+		proxyCount, err1 := s.proxyCache.ClearCacheByURLs(urls)
+		mirrorCount, err2 := s.mirrorCache.ClearCacheByURLs(urls)
+
+		// 如果任一缓存清理失败，返回错误
+		if err1 != nil {
+			return proxyCount, err1
+		}
+		if err2 != nil {
+			return proxyCount + mirrorCount, err2
+		}
+
+		return proxyCount + mirrorCount, nil
+	default:
+		return 0, errors.New("invalid cache type")
+	}
+}
