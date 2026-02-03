@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -85,6 +86,38 @@ func (cm *ConfigManager) applyEnvOverrides(config *Config) {
 	if faviconURL := os.Getenv("FAVICON_URL"); faviconURL != "" {
 		config.FaviconURL = faviconURL
 		log.Printf("[ConfigManager] 使用环境变量 FAVICON_URL: %s", faviconURL)
+	}
+
+	// 安全配置环境变量覆盖
+	if threshold := os.Getenv("SECURITY_404_THRESHOLD"); threshold != "" {
+		if val, err := strconv.Atoi(threshold); err == nil {
+			config.Security.IPBan.ErrorThreshold = val
+			log.Printf("[ConfigManager] 使用环境变量 SECURITY_404_THRESHOLD: %d", val)
+		}
+	}
+
+	if enabled := os.Getenv("SECURITY_IPBAN_ENABLED"); enabled != "" {
+		if enabled == "false" || enabled == "0" {
+			config.Security.IPBan.Enabled = false
+			log.Printf("[ConfigManager] 使用环境变量禁用 IP 封禁")
+		} else if enabled == "true" || enabled == "1" {
+			config.Security.IPBan.Enabled = true
+			log.Printf("[ConfigManager] 使用环境变量启用 IP 封禁")
+		}
+	}
+
+	if window := os.Getenv("SECURITY_WINDOW_MINUTES"); window != "" {
+		if val, err := strconv.Atoi(window); err == nil {
+			config.Security.IPBan.WindowMinutes = val
+			log.Printf("[ConfigManager] 使用环境变量 SECURITY_WINDOW_MINUTES: %d", val)
+		}
+	}
+
+	if duration := os.Getenv("SECURITY_BAN_DURATION"); duration != "" {
+		if val, err := strconv.Atoi(duration); err == nil {
+			config.Security.IPBan.BanDurationMinutes = val
+			log.Printf("[ConfigManager] 使用环境变量 SECURITY_BAN_DURATION: %d", val)
+		}
 	}
 }
 
