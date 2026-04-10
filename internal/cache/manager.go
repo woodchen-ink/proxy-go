@@ -270,9 +270,9 @@ func NewCacheManager(cacheDir string, initialConfig *config.CacheConfig) (*Cache
 	}
 
 	cm := &CacheManager{
-		cacheDir:     cacheDir,
-		lruCache:     NewLRUCache(10000), // 10000个热点缓存项
-		stopCleanup:  make(chan struct{}),
+		cacheDir:    cacheDir,
+		lruCache:    NewLRUCache(10000), // 10000个热点缓存项
+		stopCleanup: make(chan struct{}),
 
 		// 初始化ExtensionMatcher缓存
 		extensionMatcherCache: NewExtensionMatcherCache(),
@@ -888,6 +888,77 @@ func (cm *CacheManager) ClearCacheByURLs(urls []string) (int, error) {
 	return len(keysToDelete), nil
 }
 
+// ClearCacheByURL 清除单个 URL 的缓存，按路径语义忽略 query 和 fragment。
+func (cm *CacheManager) ClearCacheByURL(rawURL string) (int, error) {
+	targetURL := normalizeCacheMatchURL(rawURL)
+	if targetURL == "" {
+		return 0, nil
+	}
+
+	var keysToDelete []CacheKey
+	filesToDelete := make(map[string]bool)
+
+	cm.items.Range(func(key, value interface{}) bool {
+		cacheKey := key.(CacheKey)
+		if normalizeCacheMatchURL(cacheKey.URL) == targetURL {
+			keysToDelete = append(keysToDelete, cacheKey)
+
+			if item, ok := value.(*CacheItem); ok && item.FilePath != "" {
+				filename := filepath.Base(item.FilePath)
+				filesToDelete[filename] = true
+			}
+		}
+		return true
+	})
+
+	for _, key := range keysToDelete {
+		cm.items.Delete(key)
+	}
+
+	deletedFiles := 0
+	entries, err := os.ReadDir(cm.cacheDir)
+	if err != nil {
+		log.Printf("[Cache] WARN Failed to read cache directory: %v", err)
+		return len(keysToDelete), nil
+	}
+
+	for _, entry := range entries {
+		if entry.Name() == "config.json" || strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+
+		if filesToDelete[entry.Name()] {
+			filePath := filepath.Join(cm.cacheDir, entry.Name())
+			if err := os.Remove(filePath); err != nil {
+				log.Printf("[Cache] WARN Failed to remove file: %s", entry.Name())
+			} else {
+				deletedFiles++
+			}
+		}
+	}
+
+	log.Printf("[Cache] Cleared %d cache items (%d files) for single URL: %s", len(keysToDelete), deletedFiles, targetURL)
+	return len(keysToDelete), nil
+}
+
+// normalizeCacheMatchURL 用于缓存清理匹配，忽略 query 和 fragment，并统一尾斜杠。
+func normalizeCacheMatchURL(rawURL string) string {
+	normalized := strings.TrimSpace(rawURL)
+	if normalized == "" {
+		return ""
+	}
+
+	if index := strings.IndexAny(normalized, "?#"); index >= 0 {
+		normalized = normalized[:index]
+	}
+
+	if normalized != "/" {
+		normalized = strings.TrimSuffix(normalized, "/")
+	}
+
+	return normalized
+}
+
 // cleanStaleFiles 清理过期和临时文件
 func (cm *CacheManager) cleanStaleFiles() error {
 	entries, err := os.ReadDir(cm.cacheDir)
@@ -1045,7 +1116,6 @@ func (cm *CacheManager) UpdateConfig(cacheConfig *config.CacheConfig) error {
 	return nil
 }
 
-
 // startCleanup 启动清理协程
 func (cm *CacheManager) startCleanup() {
 	cm.cleanupTimer = time.NewTicker(cm.cleanupTick)
@@ -1061,7 +1131,6 @@ func (cm *CacheManager) startCleanup() {
 		}
 	}()
 }
-
 
 // GetExtensionMatcher 获取缓存的ExtensionMatcher
 func (cm *CacheManager) GetExtensionMatcher(pathKey string, rules []config.ExtensionRule) *utils.ExtensionMatcher {

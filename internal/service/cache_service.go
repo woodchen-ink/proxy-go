@@ -2,8 +2,10 @@ package service
 
 import (
 	"errors"
+	"net/url"
 	"proxy-go/internal/cache"
 	"proxy-go/internal/config"
+	"strings"
 )
 
 type CacheService struct {
@@ -17,7 +19,6 @@ func NewCacheService(proxyCache, mirrorCache *cache.CacheManager) *CacheService 
 		mirrorCache: mirrorCache,
 	}
 }
-
 
 // GetCacheStats 获取缓存统计信息
 func (s *CacheService) GetCacheStats() map[string]cache.CacheStats {
@@ -38,7 +39,7 @@ func (s *CacheService) GetCacheConfig() map[string]config.CacheConfig {
 // UpdateCacheConfig 更新指定类型的缓存配置
 func (s *CacheService) UpdateCacheConfig(cacheType string, config config.CacheConfig) error {
 	var targetCache *cache.CacheManager
-	
+
 	switch cacheType {
 	case "proxy":
 		targetCache = s.proxyCache
@@ -61,7 +62,7 @@ func (s *CacheService) SetCacheEnabled(cacheType string, enabled bool) error {
 	default:
 		return errors.New("invalid cache type")
 	}
-	
+
 	return nil
 }
 
@@ -130,4 +131,49 @@ func (s *CacheService) ClearCacheByURLs(cacheType string, urls []string) (int, e
 	default:
 		return 0, errors.New("invalid cache type")
 	}
+}
+
+// ClearCacheByURL 清空单个 URL 对应的缓存。
+func (s *CacheService) ClearCacheByURL(cacheType string, url string) (int, error) {
+	normalizedURL := normalizeSingleCacheURL(url)
+
+	switch cacheType {
+	case "proxy":
+		return s.proxyCache.ClearCacheByURL(normalizedURL)
+	case "mirror":
+		return s.mirrorCache.ClearCacheByURL(normalizedURL)
+	case "all":
+		proxyCount, err1 := s.proxyCache.ClearCacheByURL(normalizedURL)
+		mirrorCount, err2 := s.mirrorCache.ClearCacheByURL(normalizedURL)
+
+		if err1 != nil {
+			return proxyCount, err1
+		}
+		if err2 != nil {
+			return proxyCount + mirrorCount, err2
+		}
+
+		return proxyCount + mirrorCount, nil
+	default:
+		return 0, errors.New("invalid cache type")
+	}
+}
+
+// normalizeSingleCacheURL 将完整 URL 或路径统一为缓存清理使用的路径。
+func normalizeSingleCacheURL(rawURL string) string {
+	normalized := strings.TrimSpace(rawURL)
+	if normalized == "" {
+		return ""
+	}
+
+	if strings.HasPrefix(normalized, "/") {
+		return normalized
+	}
+
+	parsed, err := url.Parse(normalized)
+	if err != nil || parsed.Path == "" {
+		return normalized
+	}
+
+	return parsed.Path
 }

@@ -72,6 +72,53 @@ environment:
 
 详细说明请查看 [favicon/README.md](favicon/README.md)
 
+## 远程单 URL 清理缓存
+
+服务支持给外部三方应用提供独立的单 URL 缓存清理接口。
+
+### 环境变量
+
+```bash
+CACHE_CLEAR_REMOTE_TOKEN=your-secure-random-token
+```
+
+未配置 `CACHE_CLEAR_REMOTE_TOKEN` 时，接口对外返回 `404`，表示该能力未启用。
+
+### 接口
+
+```bash
+curl -X POST 'http://127.0.0.1:3336/api/cache/clear-url' \
+  -H 'Authorization: Bearer your-secure-random-token' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "url": "https://your-domain.com/b2/img/logo.png?v=123",
+    "type": "all"
+  }'
+```
+
+### 规则
+
+- 仅支持 `POST /api/cache/clear-url`
+- `Authorization` 必须为 `Bearer <CACHE_CLEAR_REMOTE_TOKEN>`
+- `url` 支持完整 URL 或站内路径
+- 内部只按路径清理，自动忽略 query 和 fragment
+- `type` 可选，支持 `proxy`、`mirror`、`all`，默认 `all`
+
+### 成功响应
+
+```json
+{
+  "code": 200,
+  "data": {
+    "input_url": "https://your-domain.com/b2/img/logo.png?v=123",
+    "normalized_url": "/b2/img/logo.png",
+    "type": "all",
+    "cleared_items": 1
+  },
+  "msg": "cache cleared"
+}
+```
+
 ## 域名过滤功能
 
 ### 功能介绍

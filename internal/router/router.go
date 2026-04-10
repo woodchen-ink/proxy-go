@@ -18,7 +18,16 @@ type RouteHandler struct {
 
 // SetupMainRoutes 设置主要路由
 func SetupMainRoutes(mirrorHandler *handler.MirrorProxyHandler, proxyHandler *handler.ProxyHandler, configManager *config.ConfigManager) []RouteHandler {
+	remoteCacheHandler := handler.NewCacheRemoteHandler(proxyHandler.Cache, mirrorHandler.Cache)
+
 	return []RouteHandler{
+		// 远程缓存清理接口
+		{
+			Matcher: func(r *http.Request) bool {
+				return r.URL.Path == "/api/cache/clear-url"
+			},
+			Handler: http.HandlerFunc(remoteCacheHandler.ClearCacheByURL),
+		},
 		// favicon.ico 处理器
 		{
 			Matcher: func(r *http.Request) bool {
