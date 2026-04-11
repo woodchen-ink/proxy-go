@@ -201,9 +201,10 @@ export default function ConfigPage() {
       isConfigFromApiRef.current = true
       setConfig(data)
 
-      // 自动选中第一个路径
-      if (data.MAP && Object.keys(data.MAP).length > 0 && !selectedPath) {
-        setSelectedPath(Object.keys(data.MAP)[0])
+      // 仅在当前未选中任何路径时，初始化默认选中项
+      if (data.MAP && Object.keys(data.MAP).length > 0) {
+        const firstPath = Object.keys(data.MAP)[0]
+        setSelectedPath((currentSelectedPath) => currentSelectedPath ?? firstPath)
       }
 
       // 获取路径统计
@@ -231,7 +232,7 @@ export default function ConfigPage() {
     } finally {
       setLoading(false)
     }
-  }, [router, toast, selectedPath])
+  }, [router, toast])
 
   const updateConfig = useCallback((newConfig: Config) => {
     isConfigFromApiRef.current = false
