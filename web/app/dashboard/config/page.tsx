@@ -115,6 +115,7 @@ export default function ConfigPage() {
   const [isEditingPath, setIsEditingPath] = useState(false)
   const [editedTarget, setEditedTarget] = useState("")
   const [editedRedirectMode, setEditedRedirectMode] = useState(false)
+  const [editedPath, setEditedPath] = useState("")
 
   // 添加路径状态
   const [isAddingPath, setIsAddingPath] = useState(false)
@@ -300,9 +301,11 @@ export default function ConfigPage() {
       clearTimeout(saveTimeoutRef.current)
     }
 
+    // 1.5~3s 随机延迟抖动，避免输入中间状态触发保存
+    const jitterDelay = 1500 + Math.random() * 1500
     saveTimeoutRef.current = setTimeout(() => {
       handleSave()
-    }, 1000)
+    }, jitterDelay)
 
     return () => {
       if (saveTimeoutRef.current) {
@@ -430,6 +433,7 @@ export default function ConfigPage() {
       setEditedTarget(mapping.DefaultTarget)
       setEditedRedirectMode(mapping.RedirectMode || false)
     }
+    setEditedPath(selectedPath)
     setIsEditingPath(true)
   }
 
@@ -443,21 +447,38 @@ export default function ConfigPage() {
       return
     }
 
-    const newConfig = { ...config }
+    const trimmedPath = editedPath.trim()
+    if (!trimmedPath || !trimmedPath.startsWith('/')) {
+      toast({
+        title: "错误",
+        description: "路径必须以 / 开头",
+        variant: "destructive",
+      })
+      return
+    }
+
+    const newConfig = { ...config, MAP: { ...config.MAP } }
     const mapping = newConfig.MAP[selectedPath]
 
-    if (typeof mapping === 'string') {
-      newConfig.MAP[selectedPath] = {
-        DefaultTarget: editedTarget,
-        RedirectMode: editedRedirectMode,
-        Enabled: true,
+    const newPathMapping = typeof mapping === 'string'
+      ? { DefaultTarget: editedTarget, RedirectMode: editedRedirectMode, Enabled: true }
+      : { ...mapping, DefaultTarget: editedTarget, RedirectMode: editedRedirectMode }
+
+    // 路径重命名：删除旧键，设置新键
+    if (trimmedPath !== selectedPath) {
+      if (newConfig.MAP[trimmedPath]) {
+        toast({
+          title: "错误",
+          description: `路径 ${trimmedPath} 已存在`,
+          variant: "destructive",
+        })
+        return
       }
+      delete newConfig.MAP[selectedPath]
+      newConfig.MAP[trimmedPath] = newPathMapping
+      setSelectedPath(trimmedPath)
     } else {
-      newConfig.MAP[selectedPath] = {
-        ...mapping,
-        DefaultTarget: editedTarget,
-        RedirectMode: editedRedirectMode,
-      }
+      newConfig.MAP[selectedPath] = newPathMapping
     }
 
     updateConfig(newConfig)
@@ -977,10 +998,22 @@ export default function ConfigPage() {
                           </div>
                         </CardHeader>
                         <CardContent className="space-y-4">
-                          <div className="flex items-center justify-between">
-                            <Label>当前路径</Label>
-                            <span className="font-mono font-semibold">{selectedPath}</span>
-                          </div>
+                          {isEditingPath ? (
+                            <div className="space-y-2">
+                              <Label htmlFor="edit-path">当前路径</Label>
+                              <Input
+                                id="edit-path"
+                                value={editedPath}
+                                onChange={(e) => setEditedPath(e.target.value)}
+                                className="font-mono"
+                              />
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-between">
+                              <Label>当前路径</Label>
+                              <span className="font-mono font-semibold">{selectedPath}</span>
+                            </div>
+                          )}
 
                           <div className="flex items-center justify-between">
                             <Label>启用状态</Label>
