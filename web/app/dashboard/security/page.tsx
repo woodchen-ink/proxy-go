@@ -75,7 +75,7 @@ export default function SecurityPage() {
   const { toast } = useToast()
   const router = useRouter()
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (signal?: AbortSignal) => {
     try {
       const token = localStorage.getItem("token")
       if (!token) {
@@ -85,13 +85,16 @@ export default function SecurityPage() {
 
       const [bannedResponse, statsResponse, historyResponse] = await Promise.all([
         fetch("/admin/api/security/banned-ips", {
-          headers: { 'Authorization': `Bearer ${token}` }
+          headers: { 'Authorization': `Bearer ${token}` },
+          signal,
         }),
         fetch("/admin/api/security/stats", {
-          headers: { 'Authorization': `Bearer ${token}` }
+          headers: { 'Authorization': `Bearer ${token}` },
+          signal,
         }),
         fetch(`/admin/api/security/ban-history?limit=${historyLimit}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
+          headers: { 'Authorization': `Bearer ${token}` },
+          signal,
         })
       ])
 
@@ -116,6 +119,10 @@ export default function SecurityPage() {
         setBanHistory(historyData.history || [])
       }
     } catch (error) {
+      // AbortError 是预期的取消，不报错
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return
+      }
       console.error("获取安全数据失败:", error)
       toast({
         title: "错误",
@@ -129,10 +136,14 @@ export default function SecurityPage() {
   }, [router, toast, historyLimit])
 
   useEffect(() => {
-    fetchData()
+    const controller = new AbortController()
+    fetchData(controller.signal)
     // 每30秒自动刷新一次数据
-    const interval = setInterval(fetchData, 30000)
-    return () => clearInterval(interval)
+    const interval = setInterval(() => fetchData(controller.signal), 30000)
+    return () => {
+      clearInterval(interval)
+      controller.abort()
+    }
   }, [fetchData])
 
   const handleRefresh = () => {

@@ -163,7 +163,10 @@ export default function PathCacheConfigDialog({
                   min="0"
                   step="0.1"
                   value={maxCacheSize}
-                  onChange={(e) => setMaxCacheSize(parseFloat(e.target.value) || 0)}
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value)
+                    setMaxCacheSize(Number.isFinite(v) && v >= 0 ? v : 0)
+                  }}
                   placeholder="10"
                 />
                 <div className="text-xs text-muted-foreground">

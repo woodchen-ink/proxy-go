@@ -839,6 +839,18 @@ export default function ConfigPage() {
   const selectedStats = selectedPath ? pathStats.find(s => s.path === selectedPath) : undefined
   const isSystemPath = selectedMappingObj?.DefaultTarget === 'mirror'
 
+  // 编辑路径时的实时校验（仅在 isEditingPath 时使用）
+  const editedPathTrimmed = editedPath.trim()
+  const editedPathError = !isEditingPath
+    ? null
+    : !editedPathTrimmed
+      ? '路径不能为空'
+      : !editedPathTrimmed.startsWith('/')
+        ? '路径必须以 / 开头'
+        : (editedPathTrimmed !== selectedPath && config?.MAP[editedPathTrimmed] !== undefined)
+          ? `路径 ${editedPathTrimmed} 已存在`
+          : null
+
   return (
     <div className="space-y-6">
       <Card>
@@ -911,6 +923,7 @@ export default function ConfigPage() {
                       variant="outline"
                       className="w-full justify-start"
                       size="sm"
+                      disabled={saving}
                     >
                       <Plus className="w-4 h-4 mr-2" />
                       新增路径
@@ -953,8 +966,8 @@ export default function ConfigPage() {
                           <Label htmlFor="new-redirect">使用302重定向模式</Label>
                         </div>
                         <div className="flex gap-2">
-                          <Button onClick={handleAddPath}>保存</Button>
-                          <Button variant="outline" onClick={() => setIsAddingPath(false)}>取消</Button>
+                          <Button onClick={handleAddPath} disabled={saving}>保存</Button>
+                          <Button variant="outline" onClick={() => setIsAddingPath(false)} disabled={saving}>取消</Button>
                         </div>
                       </CardContent>
                     </Card>
@@ -979,7 +992,7 @@ export default function ConfigPage() {
                           <CardTitle className="text-lg">基本设置</CardTitle>
                           <div className="flex gap-2">
                             {!isEditingPath && (
-                              <Button variant="outline" size="sm" onClick={handleStartEditPath}>
+                              <Button variant="outline" size="sm" onClick={handleStartEditPath} disabled={saving}>
                                 <Edit className="w-4 h-4 mr-2" />
                                 编辑
                               </Button>
@@ -990,6 +1003,7 @@ export default function ConfigPage() {
                                 size="sm"
                                 onClick={handleDeletePath}
                                 className="text-destructive hover:text-destructive"
+                                disabled={saving}
                               >
                                 <Trash2 className="w-4 h-4 mr-2" />
                                 删除
@@ -1005,8 +1019,12 @@ export default function ConfigPage() {
                                 id="edit-path"
                                 value={editedPath}
                                 onChange={(e) => setEditedPath(e.target.value)}
-                                className="font-mono"
+                                className={`font-mono ${editedPathError ? 'border-destructive focus-visible:ring-destructive' : ''}`}
+                                aria-invalid={editedPathError !== null}
                               />
+                              {editedPathError && (
+                                <p className="text-xs text-destructive">{editedPathError}</p>
+                              )}
                             </div>
                           ) : (
                             <div className="flex items-center justify-between">
@@ -1048,8 +1066,8 @@ export default function ConfigPage() {
                                 <Label htmlFor="edit-redirect">使用302重定向模式</Label>
                               </div>
                               <div className="flex gap-2">
-                                <Button onClick={handleSaveEditPath}>保存</Button>
-                                <Button variant="outline" onClick={() => setIsEditingPath(false)}>取消</Button>
+                                <Button onClick={handleSaveEditPath} disabled={saving || editedPathError !== null}>保存</Button>
+                                <Button variant="outline" onClick={() => setIsEditingPath(false)} disabled={saving}>取消</Button>
                               </div>
                             </>
                           ) : (

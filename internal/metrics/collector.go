@@ -205,6 +205,14 @@ type Collector struct {
 
 	// 新增：路径统计持久化存储
 	pathStatsStorage *PathStatsStorage
+
+	// 异步通道丢弃事件计数（channel 满时累加）
+	droppedMetrics int64
+
+	// 优雅停止信号与等待组
+	stopOnce sync.Once
+	stopChan chan struct{}
+	stopWG   sync.WaitGroup
 }
 
 type RequestMetric struct {
@@ -239,6 +247,7 @@ func InitCollector(cfg *config.Config) error {
 			refererStats:     NewRefererStats(),
 			pathStats:        NewRefererStats(), // 初始化路径统计
 			pathStatsStorage: NewPathStatsStorage("data/path_stats.json"),
+			stopChan:         make(chan struct{}),
 		}
 
 		// 初始化带宽统计
@@ -326,7 +335,7 @@ func (c *Collector) RecordRequest(fullPath, statsPrefix string, status int, late
 	case requestChan <- metric:
 		// ok
 	default:
-		// channel 满了，丢弃或降级处理
+		c.recordDrop()
 	}
 }
 
@@ -349,7 +358,40 @@ func (c *Collector) RecordRequestWithCache(fullPath, statsPrefix string, status 
 	case requestChan <- metric:
 		// ok
 	default:
-		// channel 满了，丢弃或降级处理
+		c.recordDrop()
+	}
+}
+
+// recordDrop 记录一次指标事件丢弃，并按水位触发告警日志
+func (c *Collector) recordDrop() {
+	dropped := atomic.AddInt64(&c.droppedMetrics, 1)
+	// 每 1000 次丢弃打一次警告，避免日志风暴
+	if dropped%1000 == 0 {
+		log.Printf("[Metrics] WARN 指标通道丢弃累计 %d 次，channel 已饱和（容量=%d, 当前=%d）",
+			dropped, cap(requestChan), len(requestChan))
+	}
+}
+
+// GetDroppedMetrics 返回累计被丢弃的指标事件数
+func (c *Collector) GetDroppedMetrics() int64 {
+	return atomic.LoadInt64(&c.droppedMetrics)
+}
+
+// Stop 通知所有后台 goroutine 退出，并等待其完成（最长 wait 超时）
+func (c *Collector) Stop(wait time.Duration) {
+	c.stopOnce.Do(func() {
+		close(c.stopChan)
+	})
+	done := make(chan struct{})
+	go func() {
+		c.stopWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		log.Printf("[Metrics] all background tasks stopped")
+	case <-time.After(wait):
+		log.Printf("[Metrics] WARN background tasks did not stop within %s", wait)
 	}
 }
 
@@ -495,6 +537,9 @@ func (c *Collector) GetStats() map[string]interface{} {
 		"bandwidth_history":        bandwidthHistory,
 		"current_bandwidth":        utils.FormatBytes(int64(c.getCurrentBandwidth())) + "/s",
 		"current_session_requests": sessionRequests,
+		"dropped_metrics":          atomic.LoadInt64(&c.droppedMetrics),
+		"metrics_chan_capacity":    cap(requestChan),
+		"metrics_chan_pending":     len(requestChan),
 	}
 }
 
@@ -561,18 +606,32 @@ func (c *Collector) CheckDataConsistency() error {
 
 // 添加定期检查数据一致性的功能
 func (c *Collector) startConsistencyChecker() {
+	c.stopWG.Add(1)
 	go func() {
+		defer c.stopWG.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[Metrics] consistency checker panic: %v", r)
+			}
+		}()
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 
-		for range ticker.C {
-			if err := c.validateLoadedData(); err != nil {
-				log.Printf("[Metrics] Data consistency check failed: %v", err)
-				// 可以在这里添加修复逻辑或报警通知
+		for {
+			select {
+			case <-ticker.C:
+				if err := c.validateLoadedData(); err != nil {
+					log.Printf("[Metrics] Data consistency check failed: %v", err)
+				}
+			case <-c.stopChan:
+				return
 			}
 		}
 	}()
 }
+
+// bandwidthHistoryKeyFmt key 采用 "YYYY-MM-DD HH:MM"，保证字典序 == 时间序，不会跨年冲突
+const bandwidthHistoryKeyFmt = "2006-01-02 15:04"
 
 // updateBandwidthStats 更新带宽统计
 func (c *Collector) updateBandwidthStats(bytes int64) {
@@ -582,17 +641,14 @@ func (c *Collector) updateBandwidthStats(bytes int64) {
 	now := time.Now()
 	if now.Sub(c.bandwidthStats.lastUpdate) >= c.bandwidthStats.window {
 		// 保存当前时间窗口的数据
-		key := c.bandwidthStats.lastUpdate.Format("01-02 15:04")
+		key := c.bandwidthStats.lastUpdate.Format(bandwidthHistoryKeyFmt)
 		c.bandwidthStats.history[key] = c.bandwidthStats.current
 
-		// 清理旧数据（保留最近5个时间窗口）
+		// 清理旧数据（保留最近5个时间窗口）— 利用字典序找最小 key
 		if len(c.bandwidthStats.history) > 5 {
-			var oldestTime time.Time
 			var oldestKey string
 			for k := range c.bandwidthStats.history {
-				t, _ := time.Parse("01-02 15:04", k)
-				if oldestTime.IsZero() || t.Before(oldestTime) {
-					oldestTime = t
+				if oldestKey == "" || k < oldestKey {
 					oldestKey = k
 				}
 			}
@@ -704,45 +760,71 @@ func (c *Collector) getBandwidthHistory() map[string]string {
 
 // startCleanupTask 启动定期清理任务
 func (c *Collector) startCleanupTask() {
+	c.stopWG.Add(1)
 	go func() {
+		defer c.stopWG.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[Metrics] cleanup task panic: %v", r)
+			}
+		}()
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
 
 		for {
-			<-ticker.C
-			oneDayAgo := time.Now().Add(-24 * time.Hour).Unix()
-
-			// 清理超过24小时的引用来源统计
-			deletedCount := c.refererStats.Cleanup(oneDayAgo)
-
-			if deletedCount > 0 {
-				log.Printf("[Collector] 已清理 %d 条过期的引用来源统计", deletedCount)
+			select {
+			case <-ticker.C:
+				oneDayAgo := time.Now().Add(-24 * time.Hour).Unix()
+				deletedCount := c.refererStats.Cleanup(oneDayAgo)
+				if deletedCount > 0 {
+					log.Printf("[Collector] 已清理 %d 条过期的引用来源统计", deletedCount)
+				}
+				runtime.GC()
+			case <-c.stopChan:
+				return
 			}
-
-			// 强制GC
-			runtime.GC()
 		}
 	}()
 }
 
 // 异步批量处理请求指标
 func (c *Collector) startAsyncMetricsUpdater() {
+	c.stopWG.Add(1)
 	go func() {
+		defer c.stopWG.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[Metrics] async updater panic: %v", r)
+			}
+		}()
 		batch := make([]RequestMetric, 0, 1000)
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
+		flush := func() {
+			if len(batch) > 0 {
+				c.updateMetricsBatch(batch)
+				batch = batch[:0]
+			}
+		}
 		for {
 			select {
 			case metric := <-requestChan:
 				batch = append(batch, metric)
 				if len(batch) >= 1000 {
-					c.updateMetricsBatch(batch)
-					batch = batch[:0]
+					flush()
 				}
 			case <-ticker.C:
-				if len(batch) > 0 {
-					c.updateMetricsBatch(batch)
-					batch = batch[:0]
+				flush()
+			case <-c.stopChan:
+				// 退出前排空 channel 中残留指标，避免数据丢失
+				for {
+					select {
+					case metric := <-requestChan:
+						batch = append(batch, metric)
+					default:
+						flush()
+						return
+					}
 				}
 			}
 		}
@@ -1000,15 +1082,30 @@ func (c *Collector) savePathStats() error {
 
 // startPersistenceTask 启动定期持久化任务
 func (c *Collector) startPersistenceTask() {
+	c.stopWG.Add(1)
 	go func() {
+		defer c.stopWG.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[Metrics] persistence task panic: %v", r)
+			}
+		}()
 		// 每5分钟持久化一次路径统计数据
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 
 		for {
-			<-ticker.C
-			if err := c.savePathStats(); err != nil {
-				log.Printf("[Collector] 定期持久化路径统计失败: %v", err)
+			select {
+			case <-ticker.C:
+				if err := c.savePathStats(); err != nil {
+					log.Printf("[Collector] 定期持久化路径统计失败: %v", err)
+				}
+			case <-c.stopChan:
+				// 退出前最后保存一次
+				if err := c.savePathStats(); err != nil {
+					log.Printf("[Collector] 关闭时持久化路径统计失败: %v", err)
+				}
+				return
 			}
 		}
 	}()

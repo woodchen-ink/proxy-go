@@ -11,7 +11,14 @@ import (
 var (
 	globalSyncService *SyncService
 	globalSyncMutex   sync.RWMutex
+
+	// 配置同步防抖：3 秒窗口内的多次调用合并为一次
+	configSyncDebounceMu sync.Mutex
+	configSyncTimer      *time.Timer
+	configSyncPending    bool
 )
+
+const configSyncDebounceWindow = 3 * time.Second
 
 // SyncService 同步服务
 type SyncService struct {
@@ -189,22 +196,63 @@ func IsEnabled() bool {
 }
 
 // ConfigSyncCallback 配置同步回调（在config包中使用）
+// 短时间内连续调用会被合并为一次，避免用户快速点击导致 goroutine 风暴
 func ConfigSyncCallback() {
 	if !IsServiceEnabled() {
 		log.Printf("[Sync] Config sync skipped - service not enabled")
 		return
 	}
 
-	go func() {
+	configSyncDebounceMu.Lock()
+	defer configSyncDebounceMu.Unlock()
+
+	if configSyncTimer != nil {
+		configSyncTimer.Stop()
+	}
+	configSyncPending = true
+	configSyncTimer = time.AfterFunc(configSyncDebounceWindow, func() {
+		configSyncDebounceMu.Lock()
+		if !configSyncPending {
+			configSyncDebounceMu.Unlock()
+			return
+		}
+		configSyncPending = false
+		configSyncDebounceMu.Unlock()
+
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		if err := SyncConfigOnly(ctx); err != nil {
 			log.Printf("[Sync] Warning: Config sync to D1 failed: %v", err)
 		} else {
-			log.Printf("[Sync] Config synced to D1 successfully")
+			log.Printf("[Sync] Config synced to D1 successfully (debounced)")
 		}
-	}()
+	})
+}
+
+// FlushConfigSync 立即触发等待中的配置同步（用于关闭流程）
+func FlushConfigSync() {
+	configSyncDebounceMu.Lock()
+	if configSyncTimer != nil {
+		configSyncTimer.Stop()
+	}
+	if !configSyncPending {
+		configSyncDebounceMu.Unlock()
+		return
+	}
+	configSyncPending = false
+	configSyncDebounceMu.Unlock()
+
+	if !IsServiceEnabled() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := SyncConfigOnly(ctx); err != nil {
+		log.Printf("[Sync] Warning: Final config sync to D1 failed: %v", err)
+	} else {
+		log.Printf("[Sync] Final config synced to D1 before shutdown")
+	}
 }
 
 // ============================================

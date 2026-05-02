@@ -80,6 +80,14 @@ func main() {
 		// 停止指标存储服务
 		metrics.StopMetricsStorage()
 
+		// 停止指标收集器后台 goroutine（最多等 5s）
+		if collector := metrics.GetCollector(); collector != nil {
+			collector.Stop(5 * time.Second)
+		}
+
+		// 触发待执行的配置同步（如有）
+		sync.FlushConfigSync()
+
 		// 停止同步服务
 		if err := sync.StopSyncService(); err != nil {
 			log.Printf("Error stopping sync service: %v", err)

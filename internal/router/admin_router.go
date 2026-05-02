@@ -8,6 +8,10 @@ import (
 	"strings"
 )
 
+// adminMaxBodyBytes 限制 admin API 的请求体大小，防止超大 POST 拖垮内存
+// 配置 JSON 一般 < 100KB，留出 5MB 余量足以覆盖 cache 批量清理等场景
+const adminMaxBodyBytes = 5 * 1024 * 1024
+
 // Route 定义路由结构
 type Route struct {
 	Method      string
@@ -62,6 +66,10 @@ func SetupAdminRoutes(proxyHandler *handler.ProxyHandler, authHandler *handler.A
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// API请求处理
 			if strings.HasPrefix(r.URL.Path, "/admin/api/") {
+				// 对写入类请求限制 body 大小
+				if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch {
+					r.Body = http.MaxBytesReader(w, r.Body, adminMaxBodyBytes)
+				}
 				for _, route := range apiRoutes {
 					if r.URL.Path == route.Pattern && r.Method == route.Method {
 						if route.RequireAuth {

@@ -72,9 +72,9 @@ func (h *AuthHandler) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reques
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
 
-	// 记录完整请求信息
-	log.Printf("[Auth] DEBUG %s %s -> Callback received with state=%s, code=%s, full URL: %s",
-		r.Method, r.URL.Path, state, code, r.URL.String())
+	// 记录回调到达，避免泄漏 state/code 凭据
+	log.Printf("[Auth] DEBUG %s %s -> Callback received (state present=%t, code present=%t)",
+		r.Method, r.URL.Path, state != "", code != "")
 
 	// 使用AuthService处理OAuth回调
 	result, err := h.authService.HandleOAuthCallback(r, code, state)

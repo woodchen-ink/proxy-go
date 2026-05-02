@@ -315,8 +315,8 @@ func (s *AuthService) HandleOAuthCallback(r *http.Request, code, state string) (
 
 	// 验证 state
 	if !s.ValidateState(state) {
-		log.Printf("[Auth] ERR %s %s -> 400 (%s) invalid state '%s' from %s",
-			r.Method, r.URL.Path, iputil.GetClientIP(r), state, utils.GetRequestSource(r))
+		log.Printf("[Auth] ERR %s %s -> 400 (%s) invalid state from %s",
+			r.Method, r.URL.Path, iputil.GetClientIP(r), utils.GetRequestSource(r))
 		return &AuthResult{
 			Success:      false,
 			ErrorMessage: "Invalid state",
@@ -470,8 +470,8 @@ func (s *AuthService) getUserInfo(accessToken string) (*OAuthUserInfo, error) {
 		return nil, fmt.Errorf("failed to read user info response body: %v", err)
 	}
 
-	// 记录响应内容（小心敏感信息）
-	log.Printf("[Auth] DEBUG user info response: %s", string(bodyBytes))
+	// 仅记录响应大小，避免泄漏 PII（邮箱、用户名等）
+	log.Printf("[Auth] DEBUG user info response received, size=%d bytes", len(bodyBytes))
 
 	// 使用更灵活的方式解析JSON
 	var rawUserInfo map[string]interface{}

@@ -34,8 +34,9 @@ type IPBanConfig struct {
 	CleanupIntervalMinutes int `json:"cleanup_interval_minutes"`
 }
 
-// errorRecord 错误记录
+// errorRecord 错误记录（mu 保护下面所有字段）
 type errorRecord struct {
+	mu        sync.Mutex
 	count     int
 	firstTime time.Time
 	lastTime  time.Time
@@ -137,6 +138,7 @@ func (m *IPBanManager) RecordError(ip string) {
 	})
 	record := value.(*errorRecord)
 
+	record.mu.Lock()
 	// 如果第一次记录时间超出窗口，重置计数
 	if record.firstTime.Before(windowStart) {
 		record.count = 1
@@ -148,15 +150,21 @@ func (m *IPBanManager) RecordError(ip string) {
 	}
 
 	// 检查是否需要封禁
-	if record.count >= m.config.ErrorThreshold {
-		m.banIP(ip, now)
+	shouldBan := record.count >= m.config.ErrorThreshold
+	currentCount := record.count
+	if shouldBan {
 		// 重置计数器，避免重复封禁
 		record.count = 0
 		record.firstTime = now
 	}
+	record.mu.Unlock()
+
+	if shouldBan {
+		m.banIP(ip, now)
+	}
 
 	log.Printf("[Security] 记录404错误 IP: %s, 当前计数: %d/%d (窗口: %.0f分钟)",
-		ip, record.count, m.config.ErrorThreshold, float64(m.config.WindowMinutes))
+		ip, currentCount, m.config.ErrorThreshold, float64(m.config.WindowMinutes))
 }
 
 // banIP 封禁IP
@@ -168,7 +176,9 @@ func (m *IPBanManager) banIP(ip string, banTime time.Time) {
 	errorCount := 0
 	if value, ok := m.errorCounts.Load(ip); ok {
 		record := value.(*errorRecord)
+		record.mu.Lock()
 		errorCount = record.count
+		record.mu.Unlock()
 	}
 
 	// 持久化封禁记录
@@ -309,8 +319,12 @@ func (m *IPBanManager) cleanup() {
 		ip := key.(string)
 		record := value.(*errorRecord)
 
+		record.mu.Lock()
+		expired := record.lastTime.Before(windowStart)
+		record.mu.Unlock()
+
 		// 如果最后一次错误时间超出窗口，删除记录
-		if record.lastTime.Before(windowStart) {
+		if expired {
 			expiredIPs = append(expiredIPs, ip)
 		}
 		return true

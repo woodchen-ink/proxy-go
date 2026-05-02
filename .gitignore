@@ -41,3 +41,4 @@ CLAUDE.md
 cloudflare-worker/wrangler.toml
 data/banned_ips.json
 data/path_stats.json
+.gocache

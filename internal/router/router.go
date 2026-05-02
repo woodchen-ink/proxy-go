@@ -1,14 +1,52 @@
 package router
 
 import (
+	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"proxy-go/internal/config"
 	"proxy-go/internal/handler"
 	"strings"
+	"time"
 )
+
+// faviconHTTPClient 限制超时，防止远程 favicon 拖垮请求
+var faviconHTTPClient = &http.Client{Timeout: 10 * time.Second}
+
+const maxFaviconBytes = 5 * 1024 * 1024 // 5MB
+
+// validateFaviconURL 校验 favicon URL，防止 SSRF
+func validateFaviconURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid url: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("unsupported scheme %q (only http/https allowed)", u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("missing host")
+	}
+	// 拒绝纯 IP 形式的私有/回环/链路本地/多播地址
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+			ip.IsMulticast() || ip.IsUnspecified() {
+			return fmt.Errorf("private/loopback ip not allowed: %s", host)
+		}
+	}
+	// 拒绝常见内网主机名
+	lower := strings.ToLower(host)
+	if lower == "localhost" || strings.HasSuffix(lower, ".local") ||
+		strings.HasSuffix(lower, ".internal") {
+		return fmt.Errorf("private hostname not allowed: %s", host)
+	}
+	return nil
+}
 
 // RouteHandler 定义路由处理器结构
 type RouteHandler struct {
@@ -38,8 +76,14 @@ func SetupMainRoutes(mirrorHandler *handler.MirrorProxyHandler, proxyHandler *ha
 
 				// 优先使用配置中的 FaviconURL (支持环境变量 FAVICON_URL 覆盖)
 				if cfg.FaviconURL != "" {
+					// 校验 URL 防止 SSRF
+					if err := validateFaviconURL(cfg.FaviconURL); err != nil {
+						log.Printf("[Favicon] 拒绝不安全的 favicon URL: %v", err)
+						http.NotFound(w, r)
+						return
+					}
 					// 从 URL 代理 favicon
-					resp, err := http.Get(cfg.FaviconURL)
+					resp, err := faviconHTTPClient.Get(cfg.FaviconURL)
 					if err != nil {
 						log.Printf("[Favicon] 获取远程 favicon 失败: %v", err)
 						http.NotFound(w, r)
@@ -57,8 +101,8 @@ func SetupMainRoutes(mirrorHandler *handler.MirrorProxyHandler, proxyHandler *ha
 					w.Header().Set("Content-Type", "image/x-icon")
 					w.Header().Set("Cache-Control", "public, max-age=31536000") // 1年缓存
 
-					// 复制内容
-					if _, err := io.Copy(w, resp.Body); err != nil {
+					// 复制内容（限制最大体积，防止下游恶意大文件）
+					if _, err := io.Copy(w, io.LimitReader(resp.Body, maxFaviconBytes)); err != nil {
 						log.Printf("[Favicon] 复制 favicon 内容失败: %v", err)
 					}
 					return

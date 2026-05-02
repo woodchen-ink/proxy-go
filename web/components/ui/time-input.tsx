@@ -81,7 +81,8 @@ export function TimeInput({
 
   // 处理输入值变化
   const handleValueChange = (inputValue: string) => {
-    const num = parseInt(inputValue) || 0
+    const parsed = parseInt(inputValue, 10)
+    const num = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0
     const minutes = num * TIME_UNITS[unit].multiplier
 
     // 应用最小/最大值限制

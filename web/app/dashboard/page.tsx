@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useToast } from "@/components/ui/use-toast"
 import { useRouter } from "next/navigation"
@@ -52,12 +52,17 @@ export default function DashboardPage() {
   const { toast } = useToast()
   const router = useRouter()
 
-  const fetchMetrics = useCallback(async () => {
+  // 失败计数：用于轮询指数退避
+  const failureCountRef = useRef(0)
+  // 抑制重复 toast：网络抖动时不刷屏
+  const lastErrorToastAtRef = useRef(0)
+
+  const fetchMetrics = useCallback(async (): Promise<boolean> => {
     try {
       const token = localStorage.getItem("token")
       if (!token) {
         router.push("/login")
-        return
+        return false
       }
 
       const response = await fetch("/admin/api/metrics", {
@@ -69,7 +74,7 @@ export default function DashboardPage() {
       if (response.status === 401) {
         localStorage.removeItem("token")
         router.push("/login")
-        return
+        return false
       }
 
       if (!response.ok) {
@@ -79,14 +84,21 @@ export default function DashboardPage() {
       const data = await response.json()
       setMetrics(data)
       setError(null)
+      return true
     } catch (error) {
       const message = error instanceof Error ? error.message : "加载监控数据失败"
       setError(message)
-      toast({
-        title: "错误",
-        description: message,
-        variant: "destructive",
-      })
+      // 至少 30s 才弹一次错误 toast，避免轮询失败刷屏
+      const now = Date.now()
+      if (now - lastErrorToastAtRef.current > 30000) {
+        lastErrorToastAtRef.current = now
+        toast({
+          title: "错误",
+          description: message,
+          variant: "destructive",
+        })
+      }
+      return false
     } finally {
       setLoading(false)
     }
@@ -94,10 +106,31 @@ export default function DashboardPage() {
 
 
   useEffect(() => {
-    fetchMetrics()
-    const metricsInterval = setInterval(fetchMetrics, 1000)
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const tick = async () => {
+      if (cancelled) return
+      const ok = await fetchMetrics()
+      if (cancelled) return
+
+      // 指数退避：成功 → 1s；失败 → 2/4/8/16/30s 封顶
+      if (ok) {
+        failureCountRef.current = 0
+      } else {
+        failureCountRef.current = Math.min(failureCountRef.current + 1, 5)
+      }
+      const delay = ok
+        ? 1000
+        : Math.min(1000 * 2 ** failureCountRef.current, 30000)
+
+      timer = setTimeout(tick, delay)
+    }
+
+    tick()
     return () => {
-      clearInterval(metricsInterval)
+      cancelled = true
+      if (timer) clearTimeout(timer)
     }
   }, [fetchMetrics])
 
@@ -123,7 +156,7 @@ export default function DashboardPage() {
             请检查后端服务是否正常运行
           </div>
           <button
-            onClick={fetchMetrics}
+            onClick={() => { void fetchMetrics() }}
             className="mt-4 px-4 py-2 bg-primary text-white rounded-md hover:bg-primary/90 transition-colors"
           >
             重试
