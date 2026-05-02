@@ -29,19 +29,6 @@ const (
 	tlsHandshakeTimeout = 5 * time.Second
 )
 
-// 添加 hop-by-hop 头部映射
-var hopHeadersBase = map[string]bool{
-	"Connection":          true,
-	"Keep-Alive":          true,
-	"Proxy-Authenticate":  true,
-	"Proxy-Authorization": true,
-	"Proxy-Connection":    true,
-	"Te":                  true,
-	"Trailer":             true,
-	"Transfer-Encoding":   true,
-	"Upgrade":             true,
-}
-
 // 优化后的连接池配置常量
 const (
 	// 连接池配置

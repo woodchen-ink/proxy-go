@@ -21,6 +21,10 @@ type ProxyRequest struct {
 	PathConfig      config.PathConfig
 	TargetPath      string
 	StartTime       time.Time
+
+	// cacheKey 是延迟生成的缓存键，每次请求最多生成一次
+	cacheKey    cache.CacheKey
+	cacheKeySet bool
 }
 
 // ProxyResponse 代理响应结构
@@ -72,9 +76,18 @@ func (s *ProxyService) CheckCache(req *ProxyRequest) (*cache.CacheItem, bool, bo
 		return nil, false, false
 	}
 
-	cacheKey := s.cache.GenerateCacheKey(req.OriginalRequest)
+	cacheKey := s.getOrBuildCacheKey(req)
 	item, hit, notModified := s.cache.Get(cacheKey, req.OriginalRequest)
 	return item, hit, notModified
+}
+
+// getOrBuildCacheKey 从 ProxyRequest 取缓存键，首次调用时生成并复用
+func (s *ProxyService) getOrBuildCacheKey(req *ProxyRequest) cache.CacheKey {
+	if !req.cacheKeySet {
+		req.cacheKey = s.cache.GenerateCacheKey(req.OriginalRequest)
+		req.cacheKeySet = true
+	}
+	return req.cacheKey
 }
 
 // CheckRedirect 检查是否需要重定向
@@ -251,7 +264,7 @@ func (s *ProxyService) shouldCache(req *ProxyRequest, resp *http.Response) bool 
 
 // processWithCache 处理带缓存的响应
 func (s *ProxyService) processWithCache(req *ProxyRequest, resp *http.Response, w http.ResponseWriter) (int64, error) {
-	cacheKey := s.cache.GenerateCacheKey(req.OriginalRequest)
+	cacheKey := s.getOrBuildCacheKey(req)
 
 	if cacheFile, err := s.cache.CreateTemp(cacheKey, resp); err == nil {
 		// 🚀 零拷贝优化: 使用 buffer pool 复用缓冲区
@@ -317,42 +330,9 @@ func (s *ProxyService) buildTargetURL(baseURL, targetPath, rawQuery string) stri
 	return parsedBase.String()
 }
 
-// copyHeaders 复制HTTP头部，过滤hop-by-hop头部
+// copyHeaders 复制HTTP头部，过滤hop-by-hop头部和敏感安全头部
 func (s *ProxyService) copyHeaders(dst, src http.Header) {
-	// 基础 hop-by-hop 头部
-	hopHeaders := map[string]bool{
-		"Connection":          true,
-		"Keep-Alive":          true,
-		"Proxy-Authenticate":  true,
-		"Proxy-Authorization": true,
-		"Proxy-Connection":    true,
-		"Te":                  true,
-		"Trailer":             true,
-		"Transfer-Encoding":   true,
-		"Upgrade":             true,
-	}
-
-	// 处理 Connection 头部中的额外 hop-by-hop 头部
-	if connectionHeader := src.Get("Connection"); connectionHeader != "" {
-		for _, header := range strings.Split(connectionHeader, ",") {
-			hopHeaders[strings.TrimSpace(header)] = true
-		}
-	}
-
-	// 添加需要过滤的安全头部
-	securityHeaders := map[string]bool{
-		"Content-Security-Policy":             true,
-		"Content-Security-Policy-Report-Only": true,
-		"X-Content-Security-Policy":           true,
-		"X-WebKit-CSP":                        true,
-	}
-
-	// 复制非 hop-by-hop 头部和安全头部
-	for name, values := range src {
-		if !hopHeaders[name] && !securityHeaders[name] {
-			dst[name] = values
-		}
-	}
+	copyFilteredHeaders(dst, src, securityHeadersToStrip)
 }
 
 // isConnectionClosed 检查是否为连接关闭错误

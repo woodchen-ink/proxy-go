@@ -1,7 +1,6 @@
 package service
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 	"proxy-go/internal/config"
@@ -39,9 +38,10 @@ func (rs *RuleService) SelectBestRule(client *http.Client, pathConfig config.Pat
 	var matcher *utils.ExtensionMatcher
 
 	// 尝试使用缓存管理器
+	// 注意：cache key 用 DefaultTarget（每个路径配置唯一），而不是 &pathConfig（局部变量地址，每次调用都不同）
+	// ExtensionMatcherCache 内部会用 ExtRules 的 hash 校验配置是否变化，命中时直接复用
 	if rs.cacheManager != nil {
-		pathKey := fmt.Sprintf("path_%p", &pathConfig)
-		matcher = rs.cacheManager.GetExtensionMatcher(pathKey, pathConfig.ExtRules)
+		matcher = rs.cacheManager.GetExtensionMatcher(pathConfig.DefaultTarget, pathConfig.ExtRules)
 	} else {
 		// 直接创建新的匹配器
 		matcher = utils.NewExtensionMatcher(pathConfig.ExtRules)

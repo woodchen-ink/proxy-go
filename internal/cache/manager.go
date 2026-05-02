@@ -241,8 +241,11 @@ type CacheStats struct {
 
 // CacheManager 缓存管理器
 type CacheManager struct {
-	cacheDir     string
-	items        sync.Map  // 保持原有的 sync.Map 用于文件缓存
+	cacheDir string
+	items    sync.Map // 保持原有的 sync.Map 用于文件缓存
+	// hashIndex 是 hash -> *CacheItem 的二级索引，用于 O(1) 哈希去重
+	// 避免 Put/Commit 时 Range 整个 items
+	hashIndex    sync.Map
 	lruCache     *LRUCache // 新增LRU缓存用于热点数据
 	maxAge       time.Duration
 	cleanupTick  time.Duration
@@ -521,6 +524,7 @@ func (cm *CacheManager) getRegularItem(key CacheKey) (*CacheItem, bool, bool) {
 	// 验证文件是否存在
 	if _, err := os.Stat(item.FilePath); err != nil {
 		cm.items.Delete(key)
+		cm.hashIndex.CompareAndDelete(item.Hash, item)
 		cm.missCount.Add(1)
 		return nil, false, false
 	}
@@ -528,6 +532,7 @@ func (cm *CacheManager) getRegularItem(key CacheKey) (*CacheItem, bool, bool) {
 	// 检查是否过期（使用LastAccess而不是CreatedAt）
 	if time.Since(item.LastAccess) > cm.maxAge {
 		cm.items.Delete(key)
+		cm.hashIndex.CompareAndDelete(item.Hash, item)
 		os.Remove(item.FilePath)
 		cm.missCount.Add(1)
 		return nil, false, false
@@ -557,23 +562,11 @@ func (cm *CacheManager) Put(key CacheKey, resp *http.Response, body []byte) (*Ca
 	contentHash := sha256.Sum256(body)
 	hashStr := hex.EncodeToString(contentHash[:])
 
-	// 检查是否存在相同哈希的缓存项
-	var existingItem *CacheItem
-	cm.items.Range(func(k, v interface{}) bool {
-		if item := v.(*CacheItem); item.Hash == hashStr {
-			if _, err := os.Stat(item.FilePath); err == nil {
-				existingItem = item
-				return false
-			}
-			cm.items.Delete(k)
-		}
-		return true
-	})
-
-	if existingItem != nil {
-		cm.items.Store(key, existingItem)
-		log.Printf("[Cache] HIT %s %s (%s) from %s", resp.Request.Method, key.URL, formatBytes(existingItem.Size), utils.GetRequestSource(resp.Request))
-		return existingItem, nil
+	// 检查是否存在相同哈希的缓存项（O(1) 哈希索引查找）
+	if existing := cm.lookupByHash(hashStr); existing != nil {
+		cm.items.Store(key, existing)
+		log.Printf("[Cache] HIT %s %s (%s) from %s", resp.Request.Method, key.URL, formatBytes(existing.Size), utils.GetRequestSource(resp.Request))
+		return existing, nil
 	}
 
 	// 生成文件名并存储
@@ -596,6 +589,7 @@ func (cm *CacheManager) Put(key CacheKey, resp *http.Response, body []byte) (*Ca
 	}
 
 	cm.items.Store(key, item)
+	cm.hashIndex.Store(hashStr, item)
 	method := "GET"
 	if resp.Request != nil {
 		method = resp.Request.Method
@@ -656,6 +650,7 @@ func (cm *CacheManager) cleanup() {
 			cacheItem := item.(*CacheItem)
 			os.Remove(cacheItem.FilePath)
 			cm.items.Delete(key)
+			cm.hashIndex.CompareAndDelete(cacheItem.Hash, cacheItem)
 			log.Printf("[Cache] DEL %s (expired)", key.URL)
 		}
 	}
@@ -734,6 +729,12 @@ func (cm *CacheManager) ClearCache() error {
 		cm.items.Delete(key)
 	}
 
+	// 清空哈希索引
+	cm.hashIndex.Range(func(k, _ interface{}) bool {
+		cm.hashIndex.Delete(k)
+		return true
+	})
+
 	// 清理缓存目录中的所有文件
 	entries, err := os.ReadDir(cm.cacheDir)
 	if err != nil {
@@ -768,6 +769,10 @@ func (cm *CacheManager) ClearCacheByPrefix(pathPrefix string) (int, error) {
 
 	// 清除内存中匹配的缓存项，并收集需要删除的文件
 	var keysToDelete []CacheKey
+	var hashesToDelete []struct {
+		hash string
+		item *CacheItem
+	}
 	filesToDelete := make(map[string]bool)
 
 	cm.items.Range(func(key, value interface{}) bool {
@@ -781,6 +786,12 @@ func (cm *CacheManager) ClearCacheByPrefix(pathPrefix string) (int, error) {
 				// 从完整路径中提取文件名
 				filename := filepath.Base(item.FilePath)
 				filesToDelete[filename] = true
+				if item.Hash != "" {
+					hashesToDelete = append(hashesToDelete, struct {
+						hash string
+						item *CacheItem
+					}{item.Hash, item})
+				}
 			}
 		}
 		return true
@@ -789,6 +800,10 @@ func (cm *CacheManager) ClearCacheByPrefix(pathPrefix string) (int, error) {
 	// 从内存中删除缓存项
 	for _, key := range keysToDelete {
 		cm.items.Delete(key)
+	}
+	// 同步删除哈希索引（仅当索引指向的还是同一个 item 时）
+	for _, h := range hashesToDelete {
+		cm.hashIndex.CompareAndDelete(h.hash, h.item)
 	}
 
 	// 清理缓存目录中匹配的文件
@@ -835,6 +850,10 @@ func (cm *CacheManager) ClearCacheByURLs(urls []string) (int, error) {
 
 	// 清除内存中匹配的缓存项，并收集需要删除的文件
 	var keysToDelete []CacheKey
+	var hashesToDelete []struct {
+		hash string
+		item *CacheItem
+	}
 	filesToDelete := make(map[string]bool)
 
 	cm.items.Range(func(key, value interface{}) bool {
@@ -849,6 +868,12 @@ func (cm *CacheManager) ClearCacheByURLs(urls []string) (int, error) {
 				// 从完整路径中提取文件名
 				filename := filepath.Base(item.FilePath)
 				filesToDelete[filename] = true
+				if item.Hash != "" {
+					hashesToDelete = append(hashesToDelete, struct {
+						hash string
+						item *CacheItem
+					}{item.Hash, item})
+				}
 			}
 		}
 		return true
@@ -857,6 +882,9 @@ func (cm *CacheManager) ClearCacheByURLs(urls []string) (int, error) {
 	// 从内存中删除缓存项
 	for _, key := range keysToDelete {
 		cm.items.Delete(key)
+	}
+	for _, h := range hashesToDelete {
+		cm.hashIndex.CompareAndDelete(h.hash, h.item)
 	}
 
 	// 清理缓存目录中匹配的文件
@@ -898,6 +926,10 @@ func (cm *CacheManager) ClearCacheByURL(rawURL string) (int, error) {
 	var keysToDelete []CacheKey
 	filesToDelete := make(map[string]bool)
 
+	var hashesToDelete []struct {
+		hash string
+		item *CacheItem
+	}
 	cm.items.Range(func(key, value interface{}) bool {
 		cacheKey := key.(CacheKey)
 		if normalizeCacheMatchURL(cacheKey.URL) == targetURL {
@@ -906,6 +938,12 @@ func (cm *CacheManager) ClearCacheByURL(rawURL string) (int, error) {
 			if item, ok := value.(*CacheItem); ok && item.FilePath != "" {
 				filename := filepath.Base(item.FilePath)
 				filesToDelete[filename] = true
+				if item.Hash != "" {
+					hashesToDelete = append(hashesToDelete, struct {
+						hash string
+						item *CacheItem
+					}{item.Hash, item})
+				}
 			}
 		}
 		return true
@@ -913,6 +951,9 @@ func (cm *CacheManager) ClearCacheByURL(rawURL string) (int, error) {
 
 	for _, key := range keysToDelete {
 		cm.items.Delete(key)
+	}
+	for _, h := range hashesToDelete {
+		cm.hashIndex.CompareAndDelete(h.hash, h.item)
 	}
 
 	deletedFiles := 0
@@ -1036,24 +1077,12 @@ func (cm *CacheManager) Commit(key CacheKey, tempPath string, resp *http.Respons
 	contentHash := sha256.Sum256(tempData)
 	hashStr := hex.EncodeToString(contentHash[:])
 
-	// 检查是否存在相同哈希的缓存项
-	var existingItem *CacheItem
-	cm.items.Range(func(k, v interface{}) bool {
-		if item := v.(*CacheItem); item.Hash == hashStr {
-			if _, err := os.Stat(item.FilePath); err == nil {
-				existingItem = item
-				return false
-			}
-			cm.items.Delete(k)
-		}
-		return true
-	})
-
-	if existingItem != nil {
+	// 检查是否存在相同哈希的缓存项（O(1) 哈希索引查找）
+	if existing := cm.lookupByHash(hashStr); existing != nil {
 		// 删除临时文件，使用现有缓存
 		os.Remove(tempPath)
-		cm.items.Store(key, existingItem)
-		log.Printf("[Cache] HIT %s %s (%s) from %s", resp.Request.Method, key.URL, formatBytes(existingItem.Size), utils.GetRequestSource(resp.Request))
+		cm.items.Store(key, existing)
+		log.Printf("[Cache] HIT %s %s (%s) from %s", resp.Request.Method, key.URL, formatBytes(existing.Size), utils.GetRequestSource(resp.Request))
 		return nil
 	}
 
@@ -1080,9 +1109,26 @@ func (cm *CacheManager) Commit(key CacheKey, tempPath string, resp *http.Respons
 	}
 
 	cm.items.Store(key, item)
+	cm.hashIndex.Store(hashStr, item)
 	cm.bytesSaved.Add(size)
 	log.Printf("[Cache] NEW %s %s (%s)", resp.Request.Method, key.URL, formatBytes(size))
 	return nil
+}
+
+// lookupByHash 通过 hash 索引快速查找现有缓存项；如果索引存在但底层文件已丢失，
+// 会顺带把陈旧的索引清掉再返回 nil（保持索引一致性）
+func (cm *CacheManager) lookupByHash(hashStr string) *CacheItem {
+	value, ok := cm.hashIndex.Load(hashStr)
+	if !ok {
+		return nil
+	}
+	item := value.(*CacheItem)
+	if _, err := os.Stat(item.FilePath); err != nil {
+		// 文件已被外部清理，移除索引
+		cm.hashIndex.CompareAndDelete(hashStr, item)
+		return nil
+	}
+	return item
 }
 
 // GetConfig 获取缓存配置
@@ -1192,8 +1238,9 @@ func (cm *CacheManager) InvalidateCacheItem(key CacheKey) {
 		if err := os.Remove(item.FilePath); err != nil {
 			log.Printf("[Cache] Failed to remove cache file %s: %v", item.FilePath, err)
 		}
-		// 删除内存记录
+		// 删除内存记录及哈希索引
 		cm.items.Delete(key)
+		cm.hashIndex.CompareAndDelete(item.Hash, item)
 		log.Printf("[Cache] Invalidated cache item for key: %s", key.URL)
 	}
 

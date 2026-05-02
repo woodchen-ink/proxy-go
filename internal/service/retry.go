@@ -55,17 +55,27 @@ func isRetriableError(err error) bool {
 	return false
 }
 
+// retriableStatusCodes 是允许重试的状态码集合（包级变量避免每次重建）
+//
+// 仅保留连接/超时类状态码：
+//   - 408 Request Timeout：客户端到上游的请求未送达完整
+//   - 429 Too Many Requests：上游限流，重试有意义
+//   - 502/503/504：网关/连接级错误（上游不可达 / 转发失败 / 后端无响应）
+//
+// 不重试 500：500 Internal Server Error 通常意味着上游已经收到并处理过请求
+// 但内部出错（应用 panic、数据库错误等），重试会加重故障并放大写入副作用。
+var retriableStatusCodes = map[int]struct{}{
+	http.StatusRequestTimeout:     {}, // 408
+	http.StatusTooManyRequests:    {}, // 429
+	http.StatusBadGateway:         {}, // 502
+	http.StatusServiceUnavailable: {}, // 503
+	http.StatusGatewayTimeout:     {}, // 504
+}
+
 // isRetriableStatusCode 判断HTTP状态码是否可重试
 func isRetriableStatusCode(code int) bool {
-	retriableCodes := map[int]bool{
-		http.StatusRequestTimeout:      true, // 408
-		http.StatusTooManyRequests:     true, // 429
-		http.StatusInternalServerError: true, // 500
-		http.StatusBadGateway:          true, // 502
-		http.StatusServiceUnavailable:  true, // 503
-		http.StatusGatewayTimeout:      true, // 504
-	}
-	return retriableCodes[code]
+	_, ok := retriableStatusCodes[code]
+	return ok
 }
 
 // ExecuteWithRetry 执行带重试的HTTP请求
