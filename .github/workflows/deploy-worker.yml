@@ -1,0 +1,151 @@
+name: Deploy Cloudflare Worker
+
+# 用户操作流程：
+# 1. Fork 此仓库
+# 2. 在 Settings → Secrets and variables → Actions 添加：
+#    - CLOUDFLARE_API_TOKEN  （在 https://dash.cloudflare.com/profile/api-tokens 创建，需要 D1:Edit + Workers Scripts:Edit + Account:Read）
+#    - CLOUDFLARE_ACCOUNT_ID （在 Cloudflare 任意域名 Overview 页面右下角）
+# 3. 进入 Actions → "Deploy Cloudflare Worker" → Run workflow
+# 4. 从 workflow 日志末尾获取 Worker URL 和 API Token，写入 proxy-go 的 .env
+
+on:
+  workflow_dispatch:
+    inputs:
+      worker_name:
+        description: "Worker 名称（默认 proxy-go-sync）"
+        required: false
+        default: "proxy-go-sync"
+      d1_database_name:
+        description: "D1 数据库名称（默认 proxy-go-data）"
+        required: false
+        default: "proxy-go-data"
+      api_token:
+        description: "调用 Worker 时使用的 API Token（留空则自动生成）"
+        required: false
+        default: ""
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cloudflare-worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WORKER_NAME: ${{ github.event.inputs.worker_name }}
+      D1_DB_NAME: ${{ github.event.inputs.d1_database_name }}
+
+    steps:
+      - name: Check secrets
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::请先在仓库 Settings → Secrets 添加 CLOUDFLARE_API_TOKEN 和 CLOUDFLARE_ACCOUNT_ID"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: cloudflare-worker/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate or use provided API token
+        id: token
+        run: |
+          if [ -n "${{ github.event.inputs.api_token }}" ]; then
+            TOKEN="${{ github.event.inputs.api_token }}"
+            echo "Using provided API token"
+          else
+            TOKEN=$(openssl rand -hex 32)
+            echo "Generated random API token"
+          fi
+          echo "::add-mask::$TOKEN"
+          echo "api_token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Find or create D1 database
+        id: d1
+        run: |
+          set -e
+          # 先查询是否已存在
+          EXISTING=$(npx wrangler d1 list --json 2>/dev/null | jq -r --arg n "$D1_DB_NAME" '.[] | select(.name==$n) | .uuid' || true)
+          if [ -n "$EXISTING" ] && [ "$EXISTING" != "null" ]; then
+            echo "D1 database already exists: $EXISTING"
+            DB_ID="$EXISTING"
+          else
+            echo "Creating D1 database $D1_DB_NAME..."
+            CREATE_OUTPUT=$(npx wrangler d1 create "$D1_DB_NAME")
+            echo "$CREATE_OUTPUT"
+            DB_ID=$(echo "$CREATE_OUTPUT" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
+          fi
+          if [ -z "$DB_ID" ]; then
+            echo "::error::无法获取 D1 database_id"
+            exit 1
+          fi
+          echo "database_id=$DB_ID" >> "$GITHUB_OUTPUT"
+          echo "::notice::D1 database_id = $DB_ID"
+
+      - name: Generate wrangler.toml
+        run: |
+          cat > wrangler.toml <<EOF
+          name = "${WORKER_NAME}"
+          main = "src/index.ts"
+          compatibility_date = "2024-01-01"
+
+          [[d1_databases]]
+          binding = "DB"
+          database_name = "${D1_DB_NAME}"
+          database_id = "${{ steps.d1.outputs.database_id }}"
+
+          [observability]
+          [observability.logs]
+          enabled = true
+          head_sampling_rate = 1
+          invocation_logs = true
+          persist = true
+          EOF
+          cat wrangler.toml
+
+      - name: Apply D1 migrations (remote)
+        run: npx wrangler d1 migrations apply "$D1_DB_NAME" --remote
+
+      - name: Set API_TOKEN secret
+        run: |
+          echo "${{ steps.token.outputs.api_token }}" | npx wrangler secret put API_TOKEN --name "$WORKER_NAME"
+
+      - name: Deploy Worker
+        id: deploy
+        run: |
+          set -e
+          DEPLOY_OUTPUT=$(npx wrangler deploy 2>&1)
+          echo "$DEPLOY_OUTPUT"
+          # 从输出抓 *.workers.dev URL
+          WORKER_URL=$(echo "$DEPLOY_OUTPUT" | grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' | head -1)
+          if [ -z "$WORKER_URL" ]; then
+            WORKER_URL="https://${WORKER_NAME}.<your-subdomain>.workers.dev"
+          fi
+          echo "worker_url=$WORKER_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Print deployment summary
+        run: |
+          {
+            echo "## ✅ 部署成功"
+            echo ""
+            echo "请将以下三个值复制到 proxy-go 的环境变量（.env 或 docker-compose.yml）："
+            echo ""
+            echo "\`\`\`bash"
+            echo "D1_SYNC_ENABLED=true"
+            echo "D1_SYNC_URL=${{ steps.deploy.outputs.worker_url }}"
+            echo "D1_SYNC_TOKEN=${{ steps.token.outputs.api_token }}"
+            echo "\`\`\`"
+            echo ""
+            echo "> ⚠️ \`D1_SYNC_TOKEN\` 已自动生成并写入 Worker secret，请妥善保管，刷新页面后无法再次查看。"
+            echo ""
+            echo "Worker 名称：\`${{ github.event.inputs.worker_name }}\`"
+            echo "D1 数据库：\`${{ github.event.inputs.d1_database_name }}\`（database_id=\`${{ steps.d1.outputs.database_id }}\`）"
+          } >> "$GITHUB_STEP_SUMMARY"

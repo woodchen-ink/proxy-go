@@ -1,250 +1,142 @@
-# D1 同步功能部署指南
+# D1 同步部署指南
 
-本指南介绍如何设置 Cloudflare D1 数据库同步功能,用于在多个 proxy-go 节点之间同步配置和数据。
+proxy-go 用 Cloudflare D1 在多节点间同步配置和指标。下面是两条部署路径：**一键部署（推荐）** 和 **本地部署（改源码时用）**。
 
-## 为什么使用 D1?
+---
 
-相比 S3 存储,D1 提供:
-- ✅ **更低成本** - Cloudflare D1 免费额度更高
-- ✅ **更快速度** - 数据库查询比对象存储更快
-- ✅ **更简单** - 不需要管理 bucket 和访问密钥
-- ✅ **更安全** - 使用 API token 而不是长期凭证
+## 一键部署（无需下载任何代码）
 
-## 部署步骤
+整个流程在浏览器里完成。
 
-### 1. 部署 Cloudflare Worker
+### 1. Fork 本仓库
 
-进入 Worker 项目目录:
+打开仓库主页 → 右上角 **Fork**。
+
+### 2. 在 Cloudflare 拿两份凭据
+
+| 字段 | 在哪拿 |
+|------|--------|
+| `CLOUDFLARE_ACCOUNT_ID` | [Dashboard](https://dash.cloudflare.com) → 任意域名 Overview → 右下侧栏 |
+| `CLOUDFLARE_API_TOKEN` | https://dash.cloudflare.com/profile/api-tokens → **Create Token** → 选 *Edit Cloudflare Workers* 模板，并在 Account 资源里勾上 **D1:Edit** |
+
+最低需要的权限：
+- Account → **Workers Scripts:Edit**
+- Account → **D1:Edit**
+- Account → **Account Settings:Read**
+
+### 3. 把凭据加到 fork 的仓库
+
+进入 fork 后的仓库 → **Settings → Secrets and variables → Actions**，添加两个 Repository secret：
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+
+### 4. 触发部署
+
+Actions → **Deploy Cloudflare Worker** → **Run workflow**。
+
+可选输入：
+- Worker 名称（默认 `proxy-go-sync`）
+- D1 数据库名称（默认 `proxy-go-data`）
+- API Token（留空 → 自动生成 32 字节随机值）
+
+Workflow 会自动完成：
+- 创建（或复用）D1 数据库
+- 写入 `wrangler.toml`
+- 远程应用所有 SQL migrations
+- 把 API Token 注入 Worker secret
+- 部署 Worker 并打印访问 URL
+
+### 5. 把结果写回 proxy-go
+
+Workflow 跑完后进入 **Summary** 页面，会显示三行：
 
 ```bash
-cd cloudflare-worker
+D1_SYNC_ENABLED=true
+D1_SYNC_URL=https://proxy-go-sync.<你的子域>.workers.dev
+D1_SYNC_TOKEN=<自动生成的 token>
+```
+
+加到 proxy-go 的 `.env` 或 `docker-compose.yml`，重启 proxy-go 即可。
+
+> ⚠️ Token 只在 Summary 显示一次，刷新后无法再查看。丢失后重新跑 workflow 并自己提供新 Token 即可。
+
+---
+
+## 本地部署（仅改 Worker 源码时用）
+
+```bash
+git clone <repo>
+cd proxy-go/cloudflare-worker
 npm install
-```
 
-### 2. 创建 D1 数据库
-
-```bash
+# 1. 创建 D1 数据库
 npm run d1:create
-```
+# 输出末尾会有 database_id，复制它
 
-这将输出一个 database ID,复制它并粘贴到 `wrangler.toml`:
+# 2. 配置 wrangler.toml
+cp sample.wrangler.toml wrangler.toml
+# 编辑 wrangler.toml，把 database_id 填进去
 
-```toml
-[[d1_databases]]
-binding = "DB"
-database_name = "proxy-go-data"
-database_id = "你的-database-id"  # 替换为实际 ID
-```
+# 3. 应用迁移（注意 --remote）
+npm run d1:remote
 
-### 3. 运行数据库迁移
-
-**重要**: D1 有本地和远程两个数据库环境,Worker 部署后访问的是**远程数据库**,所以必须对远程数据库运行迁移!
-
-```bash
-# ⚠️ 对远程数据库运行迁移 (正确方式)
-wrangler d1 migrations apply proxy-go-data --remote
-
-# 或者使用完整命令
-npx wrangler d1 migrations apply proxy-go-data --remote
-```
-
-**验证迁移成功**:
-
-```bash
-# 查看远程数据库的表 (注意 --remote 标志)
-wrangler d1 execute proxy-go-data --remote --command "SELECT name FROM sqlite_master WHERE type='table'"
-
-# 应该看到输出:
-# 🌀 Executing on remote database proxy-go-data...
-# ┌─────────────────┐
-# │ name            │
-# ├─────────────────┤
-# │ config          │
-# │ path_stats      │
-# │ banned_ips      │
-# └─────────────────┘
-```
-
-**常见错误**:
-
-❌ **错误**: 忘记 `--remote` 标志
-```bash
-# 这只会在本地数据库创建表,Worker 无法访问!
-wrangler d1 migrations apply proxy-go-data  # 缺少 --remote
-```
-
-✅ **正确**: 使用 `--remote` 标志
-```bash
-# Worker 可以访问远程数据库的表
-wrangler d1 migrations apply proxy-go-data --remote
-```
-
-### 4. 设置 API Token (推荐)
-
-为了安全,设置一个 API token:
-
-```bash
-# 使用 wrangler secret 命令(推荐,用于生产环境)
+# 4. 设置 API Token
 wrangler secret put API_TOKEN
-# 输入你的 token,例如: your-secure-random-token-here
+# 提示输入 token 时粘贴
 
-# 或者在 wrangler.toml 中设置(仅用于开发)
-[vars]
-API_TOKEN = "your-secure-token"
-```
-
-**安全建议**:
-- 使用随机生成的强密码作为 token
-- 生产环境必须使用 `wrangler secret` 而不是写在配置文件中
-- 定期更换 token
-
-### 5. 部署 Worker
-
-```bash
+# 5. 部署
 npm run deploy
 ```
 
-部署成功后,你会看到 Worker URL,例如:
-```
-https://proxy-go-sync.your-account.workers.dev
-```
+注意事项：
+- D1 有"本地"和"远程"两个独立环境。Worker 上线后只访问 **远程**，所以一定要带 `--remote`，否则 Worker 看到的是空表。
+- `wrangler.toml` 含敏感信息（database_id 不算敏感，但 `[vars] API_TOKEN` 算）。仓库 `.gitignore` 已忽略它。
 
-### 6. 配置 proxy-go 服务器
+---
 
-在你的 proxy-go 服务器上设置环境变量:
+## proxy-go 端配置
+
+无论哪种部署方式，proxy-go 端都只需要这三个环境变量：
 
 ```bash
-# 启用 D1 同步
-export D1_SYNC_ENABLED=true
-
-# Worker URL
-export D1_SYNC_URL=https://proxy-go-sync.your-account.workers.dev
-
-# API Token (必需,与 Worker 中设置的相同)
-export D1_SYNC_TOKEN=your-secure-random-token-here
-```
-
-或者在 `.env` 文件中:
-
-```env
 D1_SYNC_ENABLED=true
-D1_SYNC_URL=https://proxy-go-sync.your-account.workers.dev
-D1_SYNC_TOKEN=your-secure-random-token-here
+D1_SYNC_URL=https://proxy-go-sync.<你的子域>.workers.dev
+D1_SYNC_TOKEN=<和 Worker 的 API_TOKEN 完全一致>
 ```
 
-### 7. 重启 proxy-go 服务
-
-```bash
-# 重启服务
-systemctl restart proxy-go
-
-# 或者直接运行
-./proxy-go
-```
-
-### 8. 验证同步
-
-检查日志,确认看到:
+启动后日志中应有：
 
 ```
-[Sync] Initializing D1 sync service...
-[Sync] D1 sync service initialized (endpoint: https://...)
-[Sync] Sync service initialized successfully
+[Sync] D1 sync service initialized
+[Sync] Downloading config from D1...
+[Sync] Config downloaded successfully
 ```
 
+---
 
-## 多节点部署
+## 同步策略
 
-在多个服务器上部署 proxy-go 时:
+| 数据 | 触发方式 | 频率 |
+|------|---------|------|
+| Config | 配置变更时 | 即时（3s 防抖合并连续修改） |
+| Path Stats | 后台任务 | 每 30 分钟 |
+| Status Codes / Latency | 后台任务 | 每 30 分钟 |
+| Banned IPs | IP 封禁/解封时 | 即时 |
 
-1. **首个节点**: 按上述步骤完整配置,数据会自动上传到 D1
-2. **其他节点**: 只需配置 D1 环境变量,启动时会从 D1 下载最新配置
+进程退出（SIGTERM）时会执行最后一次 flush，保证数据不丢。
 
-所有节点共享同一个配置,任何节点的修改都会同步到其他节点。
+---
 
-## 验证同步状态
+## 常见问题
 
-### 检查 Worker
+**Q: workflow 报错 "Could not find database"**
+A: D1 创建可能因 Token 权限不足失败，确认 Token 勾选了 `Account → D1:Edit`。
 
-访问 Worker URL:
-```bash
-curl https://your-worker.workers.dev/
-```
+**Q: Worker URL 是 `*.workers.dev`，能换成自定义域名吗？**
+A: 可以。在 Cloudflare Dashboard → Workers 找到该 Worker → **Triggers → Custom Domains** → 添加。proxy-go 端把 `D1_SYNC_URL` 换成自定义域名即可。
 
-应该返回 API 信息。
+**Q: 部署后忘了 token，怎么办？**
+A: 重新跑 workflow，输入框里填一个新的（或留空让它生成）。Worker secret 会被覆盖，Summary 里能再看一次。同时 proxy-go 端要同步更新 `D1_SYNC_TOKEN`。
 
-### 检查数据
-
-```bash
-# 获取配置
-curl https://your-worker.workers.dev/config \
-  -H "Authorization: Bearer your-token"
-
-# 获取统计
-curl https://your-worker.workers.dev/path_stats \
-  -H "Authorization: Bearer your-token"
-
-# 获取封禁IP
-curl https://your-worker.workers.dev/banned_ips \
-  -H "Authorization: Bearer your-token"
-```
-
-### 查看 D1 数据库
-
-```bash
-cd cloudflare-worker
-
-# ⚠️ 查询远程数据库 (别忘了 --remote)
-wrangler d1 execute proxy-go-data --remote \
-  --command "SELECT * FROM config"
-
-# 查看所有表
-wrangler d1 execute proxy-go-data --remote \
-  --command "SELECT name FROM sqlite_master WHERE type='table'"
-
-# 查看更新时间
-wrangler d1 execute proxy-go-data --remote \
-  --command "SELECT updated_at FROM config"
-```
-
-## 成本估算
-
-Cloudflare Workers 免费额度:
-- **每天 100,000 次请求** (Workers)
-- **每天 5,000,000 次读取** (D1)
-- **每天 100,000 次写入** (D1)
-
-对于一般使用场景:
-- 单节点: ~1,000 次请求/天 (配置同步 + 统计同步)
-- 10 节点: ~10,000 次请求/天
-
-完全在免费额度内,无需付费。
-
-## 高级配置
-
-### 自定义同步间隔
-
-D1Manager 默认每 10 分钟同步一次。如需修改:
-
-在 `pkg/sync/d1_manager.go` 中修改:
-```go
-ticker := time.NewTicker(10 * time.Minute)  // 改为你需要的间隔
-```
-
-### 禁用自动同步
-
-如果只想手动触发同步,可以修改 `D1Manager.Start()` 方法,注释掉 `go m.syncLoop(ctx)`。
-
-### 监控同步状态
-
-在管理后台 (即将实现) 可以查看:
-- 最后同步时间
-- 同步状态 (成功/失败)
-- 远程版本 vs 本地版本
-
-## 相关文档
-
-- [cloudflare-worker/README.md](cloudflare-worker/README.md) - Worker 项目详细说明
-- [CLAUDE.md](CLAUDE.md) - 完整的项目文档
-- [Cloudflare D1 文档](https://developers.cloudflare.com/d1/)
-- [Cloudflare Workers 文档](https://developers.cloudflare.com/workers/)
+**Q: 想完全删除部署？**
+A: Cloudflare Dashboard → Workers & Pages 里删除 Worker；Workers → D1 里删除数据库。

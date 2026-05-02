@@ -46,6 +46,33 @@ A 'simple' reverse proxy server written in Go.
 - 📊 **缓存管理**: 智能缓存机制提升性能
 - 📈 **监控指标**: 内置监控和指标收集
 - 🎨 **自定义 Favicon**: 通过环境变量轻松设置自定义 favicon
+- ☁️ **D1 云同步**: 配置和指标跨节点同步，支持一键部署到 Cloudflare
+
+## D1 云同步部署（可选，推荐）
+
+启用后，配置/路径统计/IP 封禁/指标会持久化到 Cloudflare D1，支持多节点共享配置，**完全免费额度内可用**。
+
+### 一键部署（无需下载代码）
+
+整个流程在浏览器里完成：
+
+1. **Fork 本仓库**
+2. **拿 Cloudflare 凭据**：
+   - `CLOUDFLARE_ACCOUNT_ID`（Dashboard 任意域名 Overview 右下侧栏）
+   - `CLOUDFLARE_API_TOKEN`（[创建 Token](https://dash.cloudflare.com/profile/api-tokens) → 模板选 "Edit Cloudflare Workers"，并勾上 `Account → D1:Edit`）
+3. **写入仓库 Secret**：fork 后的仓库 → Settings → Secrets and variables → Actions → 添加 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID`
+4. **触发部署**：Actions → **Deploy Cloudflare Worker** → Run workflow（可全用默认）
+5. **复制结果**：workflow 跑完后 Summary 页面会输出三行环境变量，加到 proxy-go 的 `.env` 即可：
+
+   ```bash
+   D1_SYNC_ENABLED=true
+   D1_SYNC_URL=https://proxy-go-sync.<你的子域>.workers.dev
+   D1_SYNC_TOKEN=<自动生成>
+   ```
+
+> ⚠️ Token 只在 Summary 显示一次，请立即保存。
+
+详见 [D1_SYNC_SETUP.md](D1_SYNC_SETUP.md) 和 [cloudflare-worker/README.md](cloudflare-worker/README.md)（含本地部署方式）。
 
 ## Favicon 配置
 
