@@ -73,9 +73,9 @@
     --sidebar-ring: 200 75% 53%;
 
     /* 字体 — 系统栈, 不引 Google Fonts */
-    --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC",
-      "Helvetica Neue", "Segoe UI", "Microsoft YaHei", "Noto Sans SC",
-      Arial, sans-serif;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Noto Sans SC', system-ui,
+      'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+      'Helvetica Neue', Helvetica, Arial, sans-serif;
     --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
       "Liberation Mono", monospace;
 
@@ -151,9 +151,9 @@
 @layer base {
   * {
     @apply border-border;
+    font-family: var(--font-sans);
   }
   html {
-    font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
