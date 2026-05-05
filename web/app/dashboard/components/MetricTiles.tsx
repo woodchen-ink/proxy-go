@@ -51,7 +51,6 @@ export default function MetricTiles({ m }: { m: MetricsLite }) {
       <StatCard
         label="活跃请求"
         value={String(m.active_requests || 0)}
-        accent="chart-1"
       />
       <StatCard
         label="总请求数"
@@ -86,36 +85,28 @@ export default function MetricTiles({ m }: { m: MetricsLite }) {
   )
 }
 
-// StatCard 单个统计指标卡, 大字号数值 + 次级说明
+// StatCard 单个统计指标卡, 数值统一走中性深色, 不再为单系列引入彩色
 function StatCard({
   label,
   value,
   sub,
-  accent,
 }: {
   label: string
   value: string
   sub?: string
-  accent?: "chart-1" | "chart-2"
 }) {
-  const accentClass =
-    accent === "chart-1"
-      ? "text-[hsl(var(--chart-1))]"
-      : accent === "chart-2"
-      ? "text-[hsl(var(--chart-2))]"
-      : "text-foreground"
   return (
     <Card>
       <CardContent className="py-4">
         <div className="text-xs text-muted-foreground">{label}</div>
-        <div className={`mt-1 text-2xl font-semibold ${accentClass}`}>{value}</div>
+        <div className="mt-1 text-2xl font-semibold text-foreground">{value}</div>
         {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
       </CardContent>
     </Card>
   )
 }
 
-// ErrorRateCard 错误率卡片, 带圆环可视化 (语义上是状态色, 故用 destructive)
+// ErrorRateCard 错误率卡片, 带圆环可视化 (状态语义图表: 直接用 destructive / success)
 function ErrorRateCard({
   errorRate,
   totalErrors,
@@ -125,7 +116,7 @@ function ErrorRateCard({
 }) {
   const data = [{ name: "error", value: Math.min(errorRate, 100) }]
   const color =
-    errorRate >= 5 ? "hsl(var(--destructive))" : "hsl(var(--chart-2))"
+    errorRate >= 5 ? "hsl(var(--destructive))" : "hsl(var(--success))"
   return (
     <Card>
       <CardContent className="flex items-center gap-3 py-4">

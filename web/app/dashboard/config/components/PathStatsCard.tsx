@@ -26,6 +26,7 @@ interface PathStatsCardProps {
   onReset?: () => void
 }
 
+// formatBytes 字节数 → 友好单位
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B"
   const k = 1024
@@ -34,31 +35,55 @@ function formatBytes(bytes: number): string {
   return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i]
 }
 
+// formatNumber 千分位格式化
 function formatNumber(num: number): string {
   return num.toLocaleString()
+}
+
+// rateBadgeClass 命中率/错误率分档 → 语义色 badge 的 className
+//
+// 三档语义: 高 success / 中 warning / 低 destructive, 不再用 brand 或 chart token
+function rateBadgeClass(rate: number, kind: "hit" | "error") {
+  if (kind === "hit") {
+    if (rate > 70) return "bg-success/10 text-success border-transparent"
+    if (rate > 40) return "bg-warning/10 text-warning border-transparent"
+    return "bg-destructive/10 text-destructive border-transparent"
+  }
+  return rate > 5
+    ? "bg-destructive/10 text-destructive border-transparent"
+    : "bg-success/10 text-success border-transparent"
+}
+
+// statusBadgeClass HTTP 状态码区间 → 语义色 outline badge
+function statusBadgeClass(group: "2xx" | "3xx" | "4xx" | "5xx") {
+  switch (group) {
+    case "2xx":
+      return "bg-success/10 text-success border-success/30"
+    case "3xx":
+      return "bg-muted text-muted-foreground"
+    case "4xx":
+      return "bg-warning/10 text-warning border-warning/30"
+    case "5xx":
+      return "bg-destructive/10 text-destructive border-destructive/30"
+  }
 }
 
 export default function PathStatsCard({ stats, onReset }: PathStatsCardProps) {
   const [isResetting, setIsResetting] = useState(false)
 
   if (!stats || stats.request_count === 0) {
-    return (
-      <div className="text-sm" style={{ color: '#999' }}>
-        暂无统计数据
-      </div>
-    )
+    return <div className="text-sm text-muted-foreground">暂无统计数据</div>
   }
 
   const errorRate = stats.request_count > 0
-    ? ((stats.error_count / stats.request_count) * 100).toFixed(2)
-    : "0.00"
-
-  const cacheHitRate = (stats.cache_hit_rate * 100).toFixed(1)
+    ? ((stats.error_count / stats.request_count) * 100)
+    : 0
+  const cacheHitRate = stats.cache_hit_rate * 100
   const totalCacheRequests = stats.cache_hits + stats.cache_misses
 
+  // handleReset 触发外部重置回调, 完成后 toast 反馈
   const handleReset = async () => {
     if (!onReset) return
-
     setIsResetting(true)
     try {
       await onReset()
@@ -76,38 +101,26 @@ export default function PathStatsCard({ stats, onReset }: PathStatsCardProps) {
       <div className="flex items-center justify-between">
         <div className="flex flex-wrap gap-4 text-sm">
           <div className="flex items-center gap-2">
-            <span style={{ color: '#666' }}>总请求:</span>
+            <span className="text-muted-foreground">总请求:</span>
             <span className="font-semibold">{formatNumber(stats.request_count)}</span>
           </div>
 
           <div className="flex items-center gap-2">
-            <span style={{ color: '#666' }}>缓存命中率:</span>
-            <Badge
-              style={{
-                backgroundColor: parseFloat(cacheHitRate) > 70 ? '#F4E8E0' : parseFloat(cacheHitRate) > 40 ? '#fcfce0' : '#fce8e8',
-                color: parseFloat(cacheHitRate) > 70 ? '#518751' : parseFloat(cacheHitRate) > 40 ? '#9d8b00' : '#b85e48',
-                border: 'none'
-              }}
-            >
-              {totalCacheRequests > 0 ? cacheHitRate : '0.0'}%
+            <span className="text-muted-foreground">缓存命中率:</span>
+            <Badge className={rateBadgeClass(cacheHitRate, "hit")}>
+              {totalCacheRequests > 0 ? cacheHitRate.toFixed(1) : "0.0"}%
             </Badge>
           </div>
 
           <div className="flex items-center gap-2">
-            <span style={{ color: '#666' }}>错误率:</span>
-            <Badge
-              style={{
-                backgroundColor: parseFloat(errorRate) > 5 ? '#fce8e8' : '#F4E8E0',
-                color: parseFloat(errorRate) > 5 ? '#b85e48' : '#518751',
-                border: 'none'
-              }}
-            >
-              {errorRate}%
+            <span className="text-muted-foreground">错误率:</span>
+            <Badge className={rateBadgeClass(errorRate, "error")}>
+              {errorRate.toFixed(2)}%
             </Badge>
           </div>
 
           <div className="flex items-center gap-2">
-            <span style={{ color: '#666' }}>流量:</span>
+            <span className="text-muted-foreground">流量:</span>
             <span className="font-mono text-xs">{formatBytes(stats.bytes_transferred)}</span>
           </div>
         </div>
@@ -118,10 +131,9 @@ export default function PathStatsCard({ stats, onReset }: PathStatsCardProps) {
             size="sm"
             onClick={handleReset}
             disabled={isResetting}
-            className="h-7 px-2 hover:bg-[#EEEDEC]"
-            style={{ color: '#666' }}
+            className="h-7 px-2 text-muted-foreground"
           >
-            <RotateCcw className={`h-3.5 w-3.5 ${isResetting ? 'animate-spin' : ''}`} />
+            <RotateCcw className={`h-3.5 w-3.5 ${isResetting ? "animate-spin" : ""}`} />
             <span className="ml-1.5 text-xs">重置</span>
           </Button>
         )}
@@ -130,53 +142,25 @@ export default function PathStatsCard({ stats, onReset }: PathStatsCardProps) {
       {/* 状态码分布 */}
       <div className="flex flex-wrap gap-4 text-sm">
         <div className="flex items-center gap-2">
-          <span style={{ color: '#666' }}>状态码:</span>
+          <span className="text-muted-foreground">状态码:</span>
           <div className="flex gap-2">
             {stats.status_2xx > 0 && (
-              <Badge
-                variant="outline"
-                style={{
-                  backgroundColor: '#F4E8E0',
-                  color: '#518751',
-                  borderColor: '#518751'
-                }}
-              >
+              <Badge variant="outline" className={statusBadgeClass("2xx")}>
                 2xx: {formatNumber(stats.status_2xx)}
               </Badge>
             )}
             {stats.status_3xx > 0 && (
-              <Badge
-                variant="outline"
-                style={{
-                  backgroundColor: '#F8F7F6',
-                  color: '#666',
-                  borderColor: '#999'
-                }}
-              >
+              <Badge variant="outline" className={statusBadgeClass("3xx")}>
                 3xx: {formatNumber(stats.status_3xx)}
               </Badge>
             )}
             {stats.status_4xx > 0 && (
-              <Badge
-                variant="outline"
-                style={{
-                  backgroundColor: '#fcfce0',
-                  color: '#9d8b00',
-                  borderColor: '#ecec70'
-                }}
-              >
+              <Badge variant="outline" className={statusBadgeClass("4xx")}>
                 4xx: {formatNumber(stats.status_4xx)}
               </Badge>
             )}
             {stats.status_5xx > 0 && (
-              <Badge
-                variant="outline"
-                style={{
-                  backgroundColor: '#fce8e8',
-                  color: '#b85e48',
-                  borderColor: '#b85e48'
-                }}
-              >
+              <Badge variant="outline" className={statusBadgeClass("5xx")}>
                 5xx: {formatNumber(stats.status_5xx)}
               </Badge>
             )}
@@ -188,21 +172,21 @@ export default function PathStatsCard({ stats, onReset }: PathStatsCardProps) {
       {totalCacheRequests > 0 && (
         <div className="flex flex-wrap gap-4 text-sm">
           <div className="flex items-center gap-2">
-            <span style={{ color: '#666' }}>缓存命中:</span>
+            <span className="text-muted-foreground">缓存命中:</span>
             <span className="text-xs">
               {formatNumber(stats.cache_hits)} / {formatNumber(totalCacheRequests)}
             </span>
           </div>
 
           <div className="flex items-center gap-2">
-            <span style={{ color: '#666' }}>节省流量:</span>
-            <span className="font-mono text-xs" style={{ color: '#518751' }}>
+            <span className="text-muted-foreground">节省流量:</span>
+            <span className="font-mono text-xs text-success">
               {formatBytes(stats.bytes_saved)}
             </span>
           </div>
 
           <div className="flex items-center gap-2">
-            <span style={{ color: '#666' }}>平均延迟:</span>
+            <span className="text-muted-foreground">平均延迟:</span>
             <span className="font-mono text-xs">{stats.avg_latency}</span>
           </div>
         </div>

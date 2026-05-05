@@ -252,7 +252,7 @@ export default function SecurityPage() {
       <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
         <div className="text-center">
           <div className="text-lg font-medium">加载中...</div>
-          <div className="text-sm text-gray-500 mt-1">正在获取安全数据</div>
+          <div className="text-sm text-muted-foreground mt-1">正在获取安全数据</div>
         </div>
       </div>
     )
@@ -274,34 +274,34 @@ export default function SecurityPage() {
         <CardContent>
           {stats && (
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-              <div className="bg-red-50 p-4 rounded-lg">
+              <div className="bg-destructive/10 p-4 rounded-lg">
                 <div className="flex items-center gap-2">
-                  <Ban className="w-5 h-5 text-red-600" />
+                  <Ban className="w-5 h-5 text-destructive" />
                   <div>
-                    <div className="text-2xl font-bold text-red-600">{stats.banned_ips_count}</div>
-                    <div className="text-sm text-red-600">被封禁IP</div>
+                    <div className="text-2xl font-semibold text-destructive">{stats.banned_ips_count}</div>
+                    <div className="text-sm text-destructive">被封禁 IP</div>
                   </div>
                 </div>
               </div>
-              <div className="bg-yellow-50 p-4 rounded-lg">
+              <div className="bg-warning/10 p-4 rounded-lg">
                 <div className="flex items-center gap-2">
-                  <Clock className="w-5 h-5 text-yellow-600" />
+                  <Clock className="w-5 h-5 text-warning" />
                   <div>
-                    <div className="text-2xl font-bold text-yellow-600">{stats.error_records_count}</div>
-                    <div className="text-sm text-yellow-600">错误记录</div>
+                    <div className="text-2xl font-semibold text-warning">{stats.error_records_count}</div>
+                    <div className="text-sm text-warning">错误记录</div>
                   </div>
                 </div>
               </div>
-              <div className="bg-blue-50 p-4 rounded-lg">
-                <div className="text-sm text-blue-600 mb-1">错误阈值</div>
-                <div className="text-lg font-bold text-blue-600">
-                  {stats.config.ErrorThreshold}次/{stats.config.WindowMinutes}分钟
+              <div className="bg-muted p-4 rounded-lg">
+                <div className="text-sm text-muted-foreground mb-1">错误阈值</div>
+                <div className="text-lg font-semibold">
+                  {stats.config.ErrorThreshold} 次 / {stats.config.WindowMinutes} 分钟
                 </div>
               </div>
-              <div className="bg-green-50 p-4 rounded-lg">
-                <div className="text-sm text-green-600 mb-1">封禁时长</div>
-                <div className="text-lg font-bold text-green-600">
-                  {stats.config.BanDurationMinutes}分钟
+              <div className="bg-muted p-4 rounded-lg">
+                <div className="text-sm text-muted-foreground mb-1">封禁时长</div>
+                <div className="text-lg font-semibold">
+                  {stats.config.BanDurationMinutes} 分钟
                 </div>
               </div>
             </div>
@@ -330,9 +330,9 @@ export default function SecurityPage() {
                       <strong>IP: {ipStatus.ip}</strong>
                     </div>
                     <div className={`px-2 py-1 rounded text-sm ${
-                      ipStatus.banned 
-                        ? 'bg-red-100 text-red-800' 
-                        : 'bg-green-100 text-green-800'
+                      ipStatus.banned
+                        ? 'bg-destructive/10 text-destructive'
+                        : 'bg-success/10 text-success'
                     }`}>
                       {ipStatus.banned ? '已封禁' : '正常'}
                     </div>
@@ -374,7 +374,7 @@ export default function SecurityPage() {
                     <TableCell className="font-mono">{bannedIP.ip}</TableCell>
                     <TableCell>{bannedIP.ban_end_time}</TableCell>
                     <TableCell>
-                      <span className={bannedIP.remaining_seconds <= 0 ? 'text-muted-foreground' : 'text-orange-600'}>
+                      <span className={bannedIP.remaining_seconds <= 0 ? 'text-muted-foreground' : 'text-warning'}>
                         {formatTime(bannedIP.remaining_seconds)}
                       </span>
                     </TableCell>
@@ -442,8 +442,8 @@ export default function SecurityPage() {
                       <TableCell>
                         <span className={`px-2 py-1 rounded text-xs ${
                           item.is_active
-                            ? 'bg-red-100 text-red-800'
-                            : 'bg-gray-100 text-gray-800'
+                            ? 'bg-destructive/10 text-destructive'
+                            : 'bg-muted text-muted-foreground'
                         }`}>
                           {item.is_active ? '封禁中' : '已解封'}
                         </span>

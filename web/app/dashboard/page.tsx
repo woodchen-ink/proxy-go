@@ -331,10 +331,10 @@ function getTimeAgo(date: Date) {
   return date.toLocaleDateString()
 }
 
-// getStatusBadge HTTP 状态码映射到 badge 配色
+// getStatusBadge HTTP 状态码 → 语义色 badge (规范: 错误/成功类直接用语义色, 不复用 chart 分类色)
 function getStatusBadge(status: number) {
-  if (status >= 500) return "bg-destructive/15 text-destructive"
-  if (status >= 400) return "bg-[hsl(var(--chart-3))]/20 text-[hsl(var(--chart-3))]"
-  if (status >= 300) return "bg-[hsl(var(--chart-1))]/20 text-[hsl(var(--chart-1))]"
-  return "bg-[hsl(var(--chart-2))]/20 text-[hsl(var(--chart-2))]"
+  if (status >= 500) return "bg-destructive/10 text-destructive"
+  if (status >= 400) return "bg-warning/10 text-warning"
+  if (status >= 300) return "bg-muted text-muted-foreground"
+  return "bg-success/10 text-success"
 }

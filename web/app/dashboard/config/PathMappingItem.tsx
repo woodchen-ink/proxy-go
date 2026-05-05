@@ -129,11 +129,7 @@ export default function PathMappingItem({
                 <div className="flex items-center gap-2">
                   <span className="font-mono font-semibold text-lg">{path}</span>
                   {isSystemPath && (
-                    <Badge variant="outline" style={{
-                      backgroundColor: '#F4E8E0',
-                      color: '#C08259',
-                      borderColor: '#C08259'
-                    }}>
+                    <Badge variant="secondary">
                       <Shield className="h-3 w-3 mr-1" />
                       系统路径
                     </Badge>
@@ -142,7 +138,6 @@ export default function PathMappingItem({
                     <Switch
                       checked={isEnabled}
                       onCheckedChange={(checked) => onToggleEnabled(path, checked)}
-                      className="data-[state=checked]:bg-[#518751]"
                     />
                     <span className="text-xs text-muted-foreground">
                       {isEnabled ? "已启用" : "已禁用"}
@@ -152,11 +147,7 @@ export default function PathMappingItem({
                     <Badge variant="outline">302重定向</Badge>
                   )}
                   {mappingObj.CacheConfig && (
-                    <Badge variant="outline" style={{
-                      backgroundColor: '#F4E8E0',
-                      color: '#C08259',
-                      borderColor: '#C08259'
-                    }}>
+                    <Badge variant="secondary">
                       <Database className="h-3 w-3 mr-1" />
                       自定义缓存
                     </Badge>
@@ -198,7 +189,7 @@ export default function PathMappingItem({
                     size="sm"
                     onClick={() => onClearCache(path)}
                     title="清理此路径缓存"
-                    className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                    className="text-warning hover:text-warning hover:bg-warning/10"
                   >
                     <Eraser className="h-4 w-4" />
                   </Button>

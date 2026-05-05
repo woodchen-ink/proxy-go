@@ -2,108 +2,149 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  font-family: Arial, Helvetica, sans-serif;
-}
+/*
+ * CZL 设计令牌 — 中性主导 + 单一品牌色 #2EA7E0 克制点缀
+ *
+ * 关键点 (与 czl-code-skill/frontend-design/1-color.md 对齐):
+ * 1. --primary 是近黑, 不是品牌蓝 (主 CTA 走中性深色)
+ * 2. --accent 是浅灰 hover, 与 shadcn 默认对齐, 不是品牌色
+ * 3. --brand = #2EA7E0 仅承载品牌强调, 通过 --ring 间接出场
+ * 4. 字体走系统栈, 不引网络字体
+ */
 
 @layer base {
   :root {
-    --background: 30 12.5000% 96.8627%;
-    --foreground: 0 0% 0%;
-    --card: 0 0% 100%;
-    --card-foreground: 0 0% 0%;
+    /* 表面 — 灰底浮白卡 */
+    --background: 220 13% 97%;          /* #F6F7F8 页面浅灰底 */
+    --background-subtle: 220 10% 94%;   /* 次级背景 */
+    --foreground: 0 0% 4%;              /* #0A0A0A 近黑正文 */
+    --foreground-muted: 0 0% 32%;       /* 次要文字 */
+
+    --card: 0 0% 100%;                  /* 卡片纯白 */
+    --card-foreground: 0 0% 4%;
     --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 0%;
-    --primary: 23.8835 44.9782% 55.0980%;
+    --popover-foreground: 0 0% 4%;
+
+    /* shadcn 语义 */
+    --primary: 0 0% 4%;                 /* 主 CTA 近黑 */
     --primary-foreground: 0 0% 100%;
-    --secondary: 0 0% 96.0784%;
-    --secondary-foreground: 0 0% 0%;
-    --muted: 0 0% 89.8039%;
-    --muted-foreground: 0 0% 45.0980%;
-    --accent: 23.8835 44.9782% 55.0980%;
-    --accent-foreground: 0 0% 0%;
-    --destructive: 11.7857 44.0945% 50.1961%;
+    --secondary: 220 10% 95%;           /* #F1F2F4 */
+    --secondary-foreground: 0 0% 4%;
+    --muted: 220 13% 97%;
+    --muted-foreground: 0 0% 45%;
+    --accent: 220 12% 93%;              /* #EEEFF1 hover 浅灰 */
+    --accent-foreground: 0 0% 4%;
+
+    /* 语义色 — 与 brand 区分 */
+    --destructive: 0 72% 51%;           /* #DC2626 */
     --destructive-foreground: 0 0% 100%;
-    --border: 0 0% 89.8039%;
-    --input: 0 0% 89.8039%;
-    --ring: 23.8835 44.9782% 55.0980%;
-    --chart-1: 23.8835 44.9782% 55.0980%;
-    --chart-2: 11.7857 44.0945% 50.1961%;
-    --chart-3: 120 25.0000% 42.3529%;
-    --chart-4: 346.0563 93.4211% 70.1961%;
-    --chart-5: 60 76.5432% 68.2353%;
-    --sidebar: 0 0% 96.0784%;
-    --sidebar-foreground: 0 0% 0%;
-    --sidebar-primary: 23.8835 44.9782% 55.0980%;
+    --success: 142 71% 36%;             /* #16A34A */
+    --success-foreground: 0 0% 100%;
+    --warning: 32 95% 44%;              /* #D97706 */
+    --warning-foreground: 0 0% 100%;
+    --info: 215 19% 35%;                /* #475569 slate-600, 避开 brand 蓝 */
+    --info-foreground: 0 0% 100%;
+
+    /* 边框 / 输入 / focus */
+    --border: 220 13% 91%;              /* #E5E5E5 */
+    --input: 220 13% 91%;
+
+    /* 品牌色 — CZL 唯一允许 brand 高频出场的位置是 --ring */
+    --brand: 200 75% 53%;               /* #2EA7E0 */
+    --brand-foreground: 0 0% 100%;
+    --ring: 200 75% 53%;
+
+    /* 数据可视化 — Vercel 风格, OKLCH L≈0.65, 避开 brand 青蓝区间 */
+    --chart-1: 215 60% 60%;             /* 钴蓝 #5B8FD9 */
+    --chart-2: 145 40% 50%;             /* 翠绿 #4FAE7E */
+    --chart-3: 28 76% 60%;              /* 暖橙 #E89A4B */
+    --chart-4: 273 51% 65%;             /* 紫罗兰 #A874D6 */
+    --chart-5: 343 71% 65%;             /* 玫粉 #E66A8E */
+    --chart-6: 47 65% 55%;              /* 金黄 #D9B73E */
+
+    /* sidebar — 与 background-subtle 同档, 不另起品牌色 */
+    --sidebar: 220 10% 94%;
+    --sidebar-foreground: 0 0% 4%;
+    --sidebar-primary: 0 0% 4%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 23.8835 44.9782% 55.0980%;
-    --sidebar-accent-foreground: 0 0% 0%;
-    --sidebar-border: 0 0% 89.8039%;
-    --sidebar-ring: 23.8835 44.9782% 55.0980%;
-    --font-sans: #000000;
-    --font-serif: #000000;
-    --font-mono: #000000;
+    --sidebar-accent: 220 12% 93%;
+    --sidebar-accent-foreground: 0 0% 4%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 200 75% 53%;
+
+    /* 字体 — 系统栈, 不引 Google Fonts */
+    --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC",
+      "Helvetica Neue", "Segoe UI", "Microsoft YaHei", "Noto Sans SC",
+      Arial, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+      "Liberation Mono", monospace;
+
+    /* 圆角 / 阴影 — 克制 */
     --radius: 0.5rem;
-    --shadow-2xs: 0 0 0 0 hsl(0 0% 0% / 0.00);
-    --shadow-xs: 0 0 0 0 hsl(0 0% 0% / 0.00);
-    --shadow-sm: 0 0 0 0 hsl(0 0% 0% / 0.00), 0 1px 2px -1px hsl(0 0% 0% / 0.00);
-    --shadow: 0 0 0 0 hsl(0 0% 0% / 0.00), 0 1px 2px -1px hsl(0 0% 0% / 0.00);
-    --shadow-md: 0 0 0 0 hsl(0 0% 0% / 0.00), 0 2px 4px -1px hsl(0 0% 0% / 0.00);
-    --shadow-lg: 0 0 0 0 hsl(0 0% 0% / 0.00), 0 4px 6px -1px hsl(0 0% 0% / 0.00);
-    --shadow-xl: 0 0 0 0 hsl(0 0% 0% / 0.00), 0 8px 10px -1px hsl(0 0% 0% / 0.00);
-    --shadow-2xl: 0 0 0 0 hsl(0 0% 0% / 0.00);
-    --tracking-normal: -0.025em;
+    --shadow-xs: 0 1px 1px hsl(0 0% 0% / 0.04);
+    --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.04), 0 1px 3px hsl(0 0% 0% / 0.06);
+    --shadow: 0 1px 3px hsl(0 0% 0% / 0.06), 0 1px 2px hsl(0 0% 0% / 0.04);
+    --shadow-md: 0 4px 6px -1px hsl(0 0% 0% / 0.06), 0 2px 4px -2px hsl(0 0% 0% / 0.04);
+    --shadow-lg: 0 10px 15px -3px hsl(0 0% 0% / 0.08), 0 4px 6px -4px hsl(0 0% 0% / 0.04);
   }
-  
+
   .dark {
-    --background: 0 0% 10.1961%;
-    --foreground: 30 12.5000% 96.8627%;
-    --card: 0 0% 14.9020%;
-    --card-foreground: 30 12.5000% 96.8627%;
-    --popover: 0 0% 14.9020%;
-    --popover-foreground: 30 12.5000% 96.8627%;
-    --primary: 23.8835 44.9782% 55.0980%;
-    --primary-foreground: 0 0% 0%;
-    --secondary: 0 0% 25.0980%;
-    --secondary-foreground: 30 12.5000% 96.8627%;
-    --muted: 0 0% 25.0980%;
-    --muted-foreground: 0 0% 63.9216%;
-    --accent: 23.8835 44.9782% 55.0980%;
-    --accent-foreground: 0 0% 0%;
-    --destructive: 11.7857 44.0945% 50.1961%;
-    --destructive-foreground: 0 0% 0%;
-    --border: 0 0% 25.0980%;
-    --input: 0 0% 14.9020%;
-    --ring: 23.8835 44.9782% 55.0980%;
-    --chart-1: 23.8835 44.9782% 55.0980%;
-    --chart-2: 11.7857 44.0945% 50.1961%;
-    --chart-3: 120 25.0000% 42.3529%;
-    --chart-4: 346.0563 93.4211% 70.1961%;
-    --chart-5: 60 76.5432% 68.2353%;
-    --sidebar: 0 0% 12.1569%;
-    --sidebar-foreground: 30 12.5000% 96.8627%;
-    --sidebar-primary: 23.8835 44.9782% 55.0980%;
-    --sidebar-primary-foreground: 0 0% 0%;
-    --sidebar-accent: 23.8835 44.9782% 55.0980%;
-    --sidebar-accent-foreground: 0 0% 0%;
-    --sidebar-border: 0 0% 20%;
-    --sidebar-ring: 23.8835 44.9782% 55.0980%;
-    --font-sans: #F8F7F6;
-    --font-serif: #F8F7F6;
-    --font-mono: #F8F7F6;
-    --radius: 0.5rem;
-    --shadow-2xs: 0 0 0 0 hsl(0 0% 0% / 0.00);
-    --shadow-xs: 0 0 0 0 hsl(0 0% 0% / 0.00);
-    --shadow-sm: 0 0 0 0 hsl(0 0% 0% / 0.00), 0 1px 2px -1px hsl(0 0% 0% / 0.00);
-    --shadow: 0 0 0 0 hsl(0 0% 0% / 0.00), 0 1px 2px -1px hsl(0 0% 0% / 0.00);
-    --shadow-md: 0 0 0 0 hsl(0 0% 0% / 0.00), 0 2px 4px -1px hsl(0 0% 0% / 0.00);
-    --shadow-lg: 0 0 0 0 hsl(0 0% 0% / 0.00), 0 4px 6px -1px hsl(0 0% 0% / 0.00);
-    --shadow-xl: 0 0 0 0 hsl(0 0% 0% / 0.00), 0 8px 10px -1px hsl(0 0% 0% / 0.00);
-    --shadow-2xl: 0 0 0 0 hsl(0 0% 0% / 0.00);
-  }
-  
-  body {
-    letter-spacing: var(--tracking-normal);
+    --background: 240 4% 9%;            /* #171718 页面深底, 不用纯黑 */
+    --background-subtle: 240 4% 11%;
+    --foreground: 0 0% 93%;             /* #EDEDED 近白 */
+    --foreground-muted: 0 0% 63%;
+
+    --card: 0 0% 13%;                   /* #212121 卡片浮起 */
+    --card-foreground: 0 0% 93%;
+    --popover: 0 0% 16%;                /* #2A2A2A 浮层再亮一档 */
+    --popover-foreground: 0 0% 93%;
+
+    --primary: 0 0% 98%;                /* 暗色 CTA 反相: 近白底近黑字 */
+    --primary-foreground: 0 0% 4%;
+    --secondary: 0 0% 15%;
+    --secondary-foreground: 0 0% 93%;
+    --muted: 240 4% 11%;
+    --muted-foreground: 0 0% 63%;
+    --accent: 0 0% 15%;
+    --accent-foreground: 0 0% 93%;
+
+    --destructive: 0 84% 70%;           /* red-400 */
+    --destructive-foreground: 0 0% 4%;
+    --success: 142 69% 58%;             /* green-400 */
+    --success-foreground: 0 0% 4%;
+    --warning: 43 96% 56%;              /* amber-400 */
+    --warning-foreground: 0 0% 4%;
+    --info: 215 20% 65%;                /* slate-400 */
+    --info-foreground: 0 0% 4%;
+
+    --border: 0 0% 16%;
+    --input: 0 0% 16%;
+
+    --brand: 200 75% 61%;               /* #4FB8E8 暗色提亮 */
+    --brand-foreground: 0 0% 4%;
+    --ring: 200 75% 61%;
+
+    --chart-1: 215 70% 70%;
+    --chart-2: 145 35% 60%;
+    --chart-3: 28 78% 70%;
+    --chart-4: 273 55% 75%;
+    --chart-5: 343 76% 75%;
+    --chart-6: 47 70% 65%;
+
+    --sidebar: 240 4% 11%;
+    --sidebar-foreground: 0 0% 93%;
+    --sidebar-primary: 0 0% 98%;
+    --sidebar-primary-foreground: 0 0% 4%;
+    --sidebar-accent: 0 0% 15%;
+    --sidebar-accent-foreground: 0 0% 93%;
+    --sidebar-border: 0 0% 16%;
+    --sidebar-ring: 200 75% 61%;
+
+    --shadow-xs: 0 1px 1px hsl(0 0% 0% / 0.3);
+    --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.3), 0 1px 3px hsl(0 0% 0% / 0.4);
+    --shadow: 0 1px 3px hsl(0 0% 0% / 0.4), 0 1px 2px hsl(0 0% 0% / 0.3);
+    --shadow-md: 0 4px 6px -1px hsl(0 0% 0% / 0.4), 0 2px 4px -2px hsl(0 0% 0% / 0.3);
+    --shadow-lg: 0 10px 15px -3px hsl(0 0% 0% / 0.5), 0 4px 6px -4px hsl(0 0% 0% / 0.3);
   }
 }
 
@@ -111,7 +152,15 @@ body {
   * {
     @apply border-border;
   }
+  html {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
   body {
     @apply bg-background text-foreground;
+  }
+  code, kbd, samp, pre {
+    font-family: var(--font-mono);
   }
 }

@@ -12,12 +12,12 @@ import {
   Cell,
 } from "recharts"
 
-// statusColor 按 HTTP 状态码区间映射到语义色或图表色
+// statusColor HTTP 状态码 → 语义色 (状态语义图表直接走 destructive/warning/info/success)
 function statusColor(code: number) {
   if (code >= 500) return "hsl(var(--destructive))"
-  if (code >= 400) return "hsl(var(--chart-3))" // 偏暖橙, 表示警告
-  if (code >= 300) return "hsl(var(--chart-1))"
-  return "hsl(var(--chart-2))"
+  if (code >= 400) return "hsl(var(--warning))"
+  if (code >= 300) return "hsl(var(--info))"
+  return "hsl(var(--success))"
 }
 
 // StatusCodeChart 状态码分布柱状图, 替换原"状态码统计"网格文字

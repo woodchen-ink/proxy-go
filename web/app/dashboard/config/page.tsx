@@ -823,7 +823,7 @@ export default function ConfigPage() {
       <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
         <div className="text-center">
           <div className="text-lg font-medium">加载中...</div>
-          <div className="text-sm text-gray-500 mt-1">正在获取配置数据</div>
+          <div className="text-sm text-muted-foreground mt-1">正在获取配置数据</div>
         </div>
       </div>
     )
@@ -901,15 +901,15 @@ export default function ConfigPage() {
                           onClick={() => handleSelectPath(path)}
                           className={`w-full text-left px-3 py-2 rounded-md transition-colors ${
                             isSelected
-                              ? 'bg-[#E8DDD0] text-[#2D2A26]'
-                              : 'hover:bg-[#E8E5E0] text-[#3D3A36]'
+                              ? 'bg-accent text-accent-foreground font-medium'
+                              : 'text-foreground hover:bg-accent/60'
                           }`}
                         >
                           <div className="flex items-center gap-2">
                             {isEnabled ? (
-                              <CheckCircle2 className="w-4 h-4 text-[#518751] flex-shrink-0" />
+                              <CheckCircle2 className="w-4 h-4 text-success flex-shrink-0" />
                             ) : (
-                              <Circle className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                              <Circle className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                             )}
                             <span className="font-mono text-sm truncate">{path}</span>
                           </div>
@@ -1039,7 +1039,6 @@ export default function ConfigPage() {
                               <Switch
                                 checked={selectedMappingObj.Enabled !== false}
                                 onCheckedChange={(checked) => handleToggleEnabled(selectedPath, checked)}
-                                className="data-[state=checked]:bg-[#518751]"
                               />
                               <span className="text-sm text-muted-foreground">
                                 {selectedMappingObj.Enabled !== false ? "已启用" : "已禁用"}
@@ -1101,7 +1100,7 @@ export default function ConfigPage() {
                               variant="outline"
                               size="sm"
                               onClick={() => handleClearPathCache(selectedPath)}
-                              className="text-orange-600 hover:text-orange-700"
+                              className="text-warning hover:text-warning hover:bg-warning/10"
                             >
                               <Eraser className="w-4 h-4 mr-2" />
                               清理缓存

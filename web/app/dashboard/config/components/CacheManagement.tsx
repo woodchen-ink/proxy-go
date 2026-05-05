@@ -346,10 +346,10 @@ export default function CacheManagement() {
 
     const config = configs[type]
     return (
-      <div className="space-y-4 mt-4 p-4 bg-gray-50 rounded-lg border">
+      <div className="space-y-4 mt-4 p-4 bg-muted rounded-lg border">
         <div className="flex items-center gap-2">
-          <Settings className="h-4 w-4 text-gray-600" />
-          <h3 className="text-sm font-medium text-gray-800">缓存配置</h3>
+          <Settings className="h-4 w-4 text-muted-foreground" />
+          <h3 className="text-sm font-medium">缓存配置</h3>
         </div>
         <div className="grid gap-4">
           <div className="grid grid-cols-2 items-center gap-4">
@@ -406,9 +406,9 @@ export default function CacheManagement() {
     return (
       <div className="flex h-[calc(100vh-16rem)] items-center justify-center">
         <div className="text-center">
-          <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-4" style={{ color: '#C08259' }} />
+          <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-4 text-muted-foreground" />
           <div className="text-lg font-medium">加载中...</div>
-          <div className="text-sm text-gray-500 mt-1">正在获取缓存统计信息</div>
+          <div className="text-sm text-muted-foreground mt-1">正在获取缓存统计信息</div>
         </div>
       </div>
     )
@@ -419,8 +419,8 @@ export default function CacheManagement() {
       <div className="space-y-6">
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-2">
-            <Database className="h-6 w-6" style={{ color: '#C08259' }} />
-            <h2 className="text-xl font-bold">缓存管理</h2>
+            <Database className="h-6 w-6 text-muted-foreground" />
+            <h2 className="text-xl font-semibold tracking-tight">缓存管理</h2>
           </div>
           <div className="flex items-center gap-2">
             <Dialog open={urlListDialogOpen} onOpenChange={setUrlListDialogOpen}>
@@ -450,8 +450,8 @@ export default function CacheManagement() {
                       onChange={(e) => setUrlListText(e.target.value)}
                       className="min-h-[200px] font-mono text-sm"
                     />
-                    <p className="text-sm text-gray-500">
-                      提示：支持换行符或逗号分隔，例如 <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">/b2/img/photo.jpg</code>
+                    <p className="text-sm text-muted-foreground">
+                      提示：支持换行符或逗号分隔，例如 <code className="text-xs bg-muted px-1 py-0.5 rounded">/b2/img/photo.jpg</code>
                     </p>
                   </div>
                 </div>
@@ -468,7 +468,6 @@ export default function CacheManagement() {
                   <Button
                     onClick={handleClearCacheByURLs}
                     disabled={clearingUrls || !urlListText.trim()}
-                    className="bg-[#C08259] hover:bg-[#A06847] text-white"
                   >
                     {clearingUrls ? "清理中..." : "确认清理"}
                   </Button>
@@ -487,334 +486,260 @@ export default function CacheManagement() {
         </div>
 
         {/* 智能缓存汇总 */}
-        <Card style={{ border: '2px solid #EEEDEC', backgroundColor: '#F8F7F6' }}>
+        <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2" style={{ color: '#C08259' }}>
-              <Zap className="h-5 w-5" />
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Zap className="h-5 w-5 text-muted-foreground" />
               智能缓存汇总
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="text-center p-4 rounded-lg shadow-sm border cursor-help hover:shadow-md transition-shadow" style={{ backgroundColor: 'white' }}>
-                    <div className="flex items-center justify-center gap-2 mb-2">
-                      <FileText className="h-5 w-5" style={{ color: '#C08259' }} />
-                      <Info className="h-3 w-3" style={{ color: '#999' }} />
-                    </div>
-                    <div className="text-2xl font-bold" style={{ color: '#C08259' }}>
-                      {(stats?.proxy.regular_cache_hit ?? 0) + (stats?.mirror.regular_cache_hit ?? 0)}
-                    </div>
-                    <div className="text-sm font-medium" style={{ color: '#666' }}>常规缓存命中</div>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>所有常规文件的精确缓存命中总数</p>
-                </TooltipContent>
-              </Tooltip>
-
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="text-center p-4 rounded-lg shadow-sm border cursor-help hover:shadow-md transition-shadow" style={{ backgroundColor: 'white' }}>
-                    <div className="flex items-center justify-center gap-2 mb-2">
-                      <ImageIcon className="h-5 w-5" style={{ color: '#518751' }} aria-hidden="true" />
-                      <Info className="h-3 w-3" style={{ color: '#999' }} />
-                    </div>
-                    <div className="text-2xl font-bold" style={{ color: '#518751' }}>
-                      {(stats?.proxy.image_cache_hit ?? 0) + (stats?.mirror.image_cache_hit ?? 0)}
-                    </div>
-                    <div className="text-sm font-medium" style={{ color: '#666' }}>图片精确命中</div>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>所有图片文件的精确格式缓存命中总数</p>
-                </TooltipContent>
-              </Tooltip>
-
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="text-center p-4 rounded-lg shadow-sm border cursor-help hover:shadow-md transition-shadow" style={{ backgroundColor: 'white' }}>
-                    <div className="flex items-center justify-center gap-2 mb-2">
-                      <RotateCcw className="h-5 w-5" style={{ color: '#b85e48' }} />
-                      <Info className="h-3 w-3" style={{ color: '#999' }} />
-                    </div>
-                    <div className="text-2xl font-bold" style={{ color: '#b85e48' }}>
-                      {(stats?.proxy.format_fallback_hit ?? 0) + (stats?.mirror.format_fallback_hit ?? 0)}
-                    </div>
-                    <div className="text-sm font-medium" style={{ color: '#666' }}>格式回退命中</div>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>图片格式回退命中总数，提高了缓存效率</p>
-                </TooltipContent>
-              </Tooltip>
-
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="text-center p-4 rounded-lg shadow-sm border cursor-help hover:shadow-md transition-shadow" style={{ backgroundColor: 'white' }}>
-                    <div className="flex items-center justify-center gap-2 mb-2">
-                      <Target className="h-5 w-5" style={{ color: '#C08259' }} />
-                      <Info className="h-3 w-3" style={{ color: '#999' }} />
-                    </div>
-                    <div className="text-2xl font-bold" style={{ color: '#C08259' }}>
-                      {(() => {
-                        const totalImageRequests = (stats?.proxy.image_cache_hit ?? 0) + (stats?.mirror.image_cache_hit ?? 0) + (stats?.proxy.format_fallback_hit ?? 0) + (stats?.mirror.format_fallback_hit ?? 0)
-                        const fallbackHits = (stats?.proxy.format_fallback_hit ?? 0) + (stats?.mirror.format_fallback_hit ?? 0)
-                        return totalImageRequests > 0 ? ((fallbackHits / totalImageRequests) * 100).toFixed(1) : '0.0'
-                      })()}%
-                    </div>
-                    <div className="text-sm font-medium" style={{ color: '#666' }}>格式回退率</div>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>格式回退在所有图片请求中的占比，显示智能缓存的效果</p>
-                </TooltipContent>
-              </Tooltip>
+              <SummaryTile
+                icon={<FileText className="h-5 w-5 text-muted-foreground" />}
+                value={(stats?.proxy.regular_cache_hit ?? 0) + (stats?.mirror.regular_cache_hit ?? 0)}
+                label="常规缓存命中"
+                tip="所有常规文件的精确缓存命中总数"
+              />
+              <SummaryTile
+                icon={<ImageIcon className="h-5 w-5 text-muted-foreground" aria-hidden="true" />}
+                value={(stats?.proxy.image_cache_hit ?? 0) + (stats?.mirror.image_cache_hit ?? 0)}
+                label="图片精确命中"
+                tip="所有图片文件的精确格式缓存命中总数"
+              />
+              <SummaryTile
+                icon={<RotateCcw className="h-5 w-5 text-muted-foreground" />}
+                value={(stats?.proxy.format_fallback_hit ?? 0) + (stats?.mirror.format_fallback_hit ?? 0)}
+                label="格式回退命中"
+                tip="图片格式回退命中总数, 提高了缓存效率"
+              />
+              <SummaryTile
+                icon={<Target className="h-5 w-5 text-muted-foreground" />}
+                value={(() => {
+                  const totalImageRequests = (stats?.proxy.image_cache_hit ?? 0) + (stats?.mirror.image_cache_hit ?? 0) + (stats?.proxy.format_fallback_hit ?? 0) + (stats?.mirror.format_fallback_hit ?? 0)
+                  const fallbackHits = (stats?.proxy.format_fallback_hit ?? 0) + (stats?.mirror.format_fallback_hit ?? 0)
+                  return totalImageRequests > 0 ? `${((fallbackHits / totalImageRequests) * 100).toFixed(1)}%` : "0.0%"
+                })()}
+                label="格式回退率"
+                tip="格式回退在所有图片请求中的占比, 显示智能缓存的效果"
+              />
             </div>
           </CardContent>
         </Card>
 
         <div className="grid gap-6 md:grid-cols-2">
-          {/* 代理缓存 */}
-          <Card style={{ borderLeft: '4px solid #C08259' }}>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="flex items-center gap-2">
-                <HardDrive className="h-5 w-5" style={{ color: '#C08259' }} />
-                代理缓存
-              </CardTitle>
-              <div className="flex items-center space-x-2">
-                <Switch
-                  checked={stats?.proxy.enabled ?? false}
-                  onCheckedChange={(checked) => handleToggleCache("proxy", checked)}
-                />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleClearCache("proxy")}
-                  className="flex items-center gap-1"
-                >
-                  <Trash2 className="h-3 w-3" />
-                  清理
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <dl className="space-y-3">
-                <div className="flex justify-between items-center p-2 bg-gray-50 rounded">
-                  <dt className="text-sm font-medium text-gray-600 flex items-center gap-2">
-                    <Database className="h-4 w-4" />
-                    缓存项数量
-                  </dt>
-                  <dd className="text-sm font-semibold text-gray-900">{stats?.proxy.total_items ?? 0}</dd>
-                </div>
-                <div className="flex justify-between items-center p-2 bg-gray-50 rounded">
-                  <dt className="text-sm font-medium text-gray-600 flex items-center gap-2">
-                    <HardDrive className="h-4 w-4" />
-                    总大小
-                  </dt>
-                  <dd className="text-sm font-semibold text-gray-900">{formatBytes(stats?.proxy.total_size ?? 0)}</dd>
-                </div>
-                <div className="flex justify-between items-center p-2 bg-green-50 rounded">
-                  <dt className="text-sm font-medium text-green-700 flex items-center gap-2">
-                    <TrendingUp className="h-4 w-4" />
-                    命中次数
-                  </dt>
-                  <dd className="text-sm font-semibold text-green-800">{stats?.proxy.hit_count ?? 0}</dd>
-                </div>
-                <div className="flex justify-between items-center p-2 bg-red-50 rounded">
-                  <dt className="text-sm font-medium text-red-700 flex items-center gap-2">
-                    <TrendingDown className="h-4 w-4" />
-                    未命中次数
-                  </dt>
-                  <dd className="text-sm font-semibold text-red-800">{stats?.proxy.miss_count ?? 0}</dd>
-                </div>
-                <div className="flex justify-between items-center p-2 bg-[#F4E8E0] rounded">
-                  <dt className="text-sm font-medium text-[#666] flex items-center gap-2">
-                    <Activity className="h-4 w-4" />
-                    命中率
-                  </dt>
-                  <dd className="text-sm font-semibold text-[#C08259]">{(stats?.proxy.hit_rate ?? 0).toFixed(2)}%</dd>
-                </div>
-                <div className="flex justify-between items-center p-2 bg-[#F4E8E0] rounded">
-                  <dt className="text-sm font-medium text-[#666] flex items-center gap-2">
-                    <Zap className="h-4 w-4" />
-                    节省带宽
-                  </dt>
-                  <dd className="text-sm font-semibold text-[#C08259]">{formatBytes(stats?.proxy.bytes_saved ?? 0)}</dd>
-                </div>
-              </dl>
-
-              <div className="border-t pt-4 mt-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <Zap className="h-4 w-4 text-gray-600" />
-                  <div className="text-sm font-medium text-gray-800">智能缓存统计</div>
-                </div>
-                <div className="grid grid-cols-3 gap-3">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="text-center p-3 bg-[#F4E8E0] rounded-lg border cursor-help hover:bg-blue-100 transition-colors">
-                        <FileText className="h-4 w-4 mx-auto mb-1 text-[#C08259]" />
-                        <div className="text-lg font-bold text-[#C08259]">{stats?.proxy.regular_cache_hit ?? 0}</div>
-                        <div className="text-xs text-[#666]">常规命中</div>
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>常规文件的精确缓存命中</p>
-                    </TooltipContent>
-                  </Tooltip>
-
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="text-center p-3 bg-green-50 rounded-lg border cursor-help hover:bg-green-100 transition-colors">
-                        <ImageIcon className="h-4 w-4 mx-auto mb-1 text-green-600" aria-hidden="true" />
-                        <div className="text-lg font-bold text-green-600">{stats?.proxy.image_cache_hit ?? 0}</div>
-                        <div className="text-xs text-green-700">图片命中</div>
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>图片文件的精确格式缓存命中</p>
-                    </TooltipContent>
-                  </Tooltip>
-
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="text-center p-3 bg-orange-50 rounded-lg border cursor-help hover:bg-orange-100 transition-colors">
-                        <RotateCcw className="h-4 w-4 mx-auto mb-1 text-orange-600" />
-                        <div className="text-lg font-bold text-orange-600">{stats?.proxy.format_fallback_hit ?? 0}</div>
-                        <div className="text-xs text-orange-700">格式回退</div>
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>图片格式回退命中（如请求WebP但提供JPEG）</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-              </div>
-              {renderCacheConfig("proxy")}
-            </CardContent>
-          </Card>
-
-          {/* 镜像缓存 */}
-          <Card style={{ borderLeft: '4px solid #518751' }}>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="flex items-center gap-2">
-                <Database className="h-5 w-5 text-green-600" />
-                镜像缓存
-              </CardTitle>
-              <div className="flex items-center space-x-2">
-                <Switch
-                  checked={stats?.mirror.enabled ?? false}
-                  onCheckedChange={(checked) => handleToggleCache("mirror", checked)}
-                />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleClearCache("mirror")}
-                  className="flex items-center gap-1"
-                >
-                  <Trash2 className="h-3 w-3" />
-                  清理
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <dl className="space-y-3">
-                <div className="flex justify-between items-center p-2 bg-gray-50 rounded">
-                  <dt className="text-sm font-medium text-gray-600 flex items-center gap-2">
-                    <Database className="h-4 w-4" />
-                    缓存项数量
-                  </dt>
-                  <dd className="text-sm font-semibold text-gray-900">{stats?.mirror.total_items ?? 0}</dd>
-                </div>
-                <div className="flex justify-between items-center p-2 bg-gray-50 rounded">
-                  <dt className="text-sm font-medium text-gray-600 flex items-center gap-2">
-                    <HardDrive className="h-4 w-4" />
-                    总大小
-                  </dt>
-                  <dd className="text-sm font-semibold text-gray-900">{formatBytes(stats?.mirror.total_size ?? 0)}</dd>
-                </div>
-                <div className="flex justify-between items-center p-2 bg-green-50 rounded">
-                  <dt className="text-sm font-medium text-green-700 flex items-center gap-2">
-                    <TrendingUp className="h-4 w-4" />
-                    命中次数
-                  </dt>
-                  <dd className="text-sm font-semibold text-green-800">{stats?.mirror.hit_count ?? 0}</dd>
-                </div>
-                <div className="flex justify-between items-center p-2 bg-red-50 rounded">
-                  <dt className="text-sm font-medium text-red-700 flex items-center gap-2">
-                    <TrendingDown className="h-4 w-4" />
-                    未命中次数
-                  </dt>
-                  <dd className="text-sm font-semibold text-red-800">{stats?.mirror.miss_count ?? 0}</dd>
-                </div>
-                <div className="flex justify-between items-center p-2 bg-[#F4E8E0] rounded">
-                  <dt className="text-sm font-medium text-[#666] flex items-center gap-2">
-                    <Activity className="h-4 w-4" />
-                    命中率
-                  </dt>
-                  <dd className="text-sm font-semibold text-[#C08259]">{(stats?.mirror.hit_rate ?? 0).toFixed(2)}%</dd>
-                </div>
-                <div className="flex justify-between items-center p-2 bg-[#F4E8E0] rounded">
-                  <dt className="text-sm font-medium text-[#666] flex items-center gap-2">
-                    <Zap className="h-4 w-4" />
-                    节省带宽
-                  </dt>
-                  <dd className="text-sm font-semibold text-[#C08259]">{formatBytes(stats?.mirror.bytes_saved ?? 0)}</dd>
-                </div>
-              </dl>
-
-              <div className="border-t pt-4 mt-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <Zap className="h-4 w-4 text-gray-600" />
-                  <div className="text-sm font-medium text-gray-800">智能缓存统计</div>
-                </div>
-                <div className="grid grid-cols-3 gap-3">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="text-center p-3 bg-[#F4E8E0] rounded-lg border cursor-help hover:bg-blue-100 transition-colors">
-                        <FileText className="h-4 w-4 mx-auto mb-1 text-[#C08259]" />
-                        <div className="text-lg font-bold text-[#C08259]">{stats?.mirror.regular_cache_hit ?? 0}</div>
-                        <div className="text-xs text-[#666]">常规命中</div>
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>常规文件的精确缓存命中</p>
-                    </TooltipContent>
-                  </Tooltip>
-
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="text-center p-3 bg-green-50 rounded-lg border cursor-help hover:bg-green-100 transition-colors">
-                        <ImageIcon className="h-4 w-4 mx-auto mb-1 text-green-600" aria-hidden="true" />
-                        <div className="text-lg font-bold text-green-600">{stats?.mirror.image_cache_hit ?? 0}</div>
-                        <div className="text-xs text-green-700">图片命中</div>
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>图片文件的精确格式缓存命中</p>
-                    </TooltipContent>
-                  </Tooltip>
-
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="text-center p-3 bg-orange-50 rounded-lg border cursor-help hover:bg-orange-100 transition-colors">
-                        <RotateCcw className="h-4 w-4 mx-auto mb-1 text-orange-600" />
-                        <div className="text-lg font-bold text-orange-600">{stats?.mirror.format_fallback_hit ?? 0}</div>
-                        <div className="text-xs text-orange-700">格式回退</div>
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>图片格式回退命中（如请求WebP但提供JPEG）</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-              </div>
-              {renderCacheConfig("mirror")}
-            </CardContent>
-          </Card>
+          <CacheTypeCard
+            title="代理缓存"
+            icon={<HardDrive className="h-5 w-5 text-muted-foreground" />}
+            stats={stats?.proxy}
+            onToggle={(checked) => handleToggleCache("proxy", checked)}
+            onClear={() => handleClearCache("proxy")}
+            renderConfig={() => renderCacheConfig("proxy")}
+            formatBytes={formatBytes}
+          />
+          <CacheTypeCard
+            title="镜像缓存"
+            icon={<Database className="h-5 w-5 text-muted-foreground" />}
+            stats={stats?.mirror}
+            onToggle={(checked) => handleToggleCache("mirror", checked)}
+            onClear={() => handleClearCache("mirror")}
+            renderConfig={() => renderCacheConfig("mirror")}
+            formatBytes={formatBytes}
+          />
         </div>
       </div>
     </TooltipProvider>
+  )
+}
+
+// SummaryTile 顶部"智能缓存汇总"中的小格子, 数值统一走前景色
+function SummaryTile({
+  icon,
+  value,
+  label,
+  tip,
+}: {
+  icon: React.ReactNode
+  value: number | string
+  label: string
+  tip: string
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className="text-center p-4 rounded-lg border bg-card cursor-help hover:bg-accent/40 transition-colors">
+          <div className="flex items-center justify-center gap-2 mb-2">
+            {icon}
+            <Info className="h-3 w-3 text-muted-foreground" />
+          </div>
+          <div className="text-2xl font-semibold text-foreground">{value}</div>
+          <div className="mt-0.5 text-sm text-muted-foreground">{label}</div>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent>
+        <p>{tip}</p>
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+// CacheTypeCard 单个缓存类型 (proxy / mirror) 的统计 + 操作 + 配置卡
+function CacheTypeCard({
+  title,
+  icon,
+  stats,
+  onToggle,
+  onClear,
+  renderConfig,
+  formatBytes,
+}: {
+  title: string
+  icon: React.ReactNode
+  stats: CacheStats | undefined
+  onToggle: (checked: boolean) => void
+  onClear: () => void
+  renderConfig: () => React.ReactNode
+  formatBytes: (bytes: number) => string
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="flex items-center gap-2 text-base">
+          {icon}
+          {title}
+        </CardTitle>
+        <div className="flex items-center space-x-2">
+          <Switch
+            checked={stats?.enabled ?? false}
+            onCheckedChange={onToggle}
+          />
+          <Button variant="outline" size="sm" onClick={onClear}>
+            <Trash2 className="h-3 w-3 mr-1" />
+            清理
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <dl className="space-y-2">
+          <StatRow icon={<Database className="h-4 w-4" />} label="缓存项数量">
+            {stats?.total_items ?? 0}
+          </StatRow>
+          <StatRow icon={<HardDrive className="h-4 w-4" />} label="总大小">
+            {formatBytes(stats?.total_size ?? 0)}
+          </StatRow>
+          <StatRow
+            icon={<TrendingUp className="h-4 w-4 text-success" />}
+            label="命中次数"
+            tone="success"
+          >
+            {stats?.hit_count ?? 0}
+          </StatRow>
+          <StatRow
+            icon={<TrendingDown className="h-4 w-4 text-destructive" />}
+            label="未命中次数"
+            tone="destructive"
+          >
+            {stats?.miss_count ?? 0}
+          </StatRow>
+          <StatRow icon={<Activity className="h-4 w-4" />} label="命中率">
+            {(stats?.hit_rate ?? 0).toFixed(2)}%
+          </StatRow>
+          <StatRow icon={<Zap className="h-4 w-4" />} label="节省带宽">
+            {formatBytes(stats?.bytes_saved ?? 0)}
+          </StatRow>
+        </dl>
+
+        <div className="border-t pt-4 mt-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Zap className="h-4 w-4 text-muted-foreground" />
+            <div className="text-sm font-medium">智能缓存统计</div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <DetailTile
+              icon={<FileText className="h-4 w-4 mx-auto mb-1 text-muted-foreground" />}
+              value={stats?.regular_cache_hit ?? 0}
+              label="常规命中"
+              tip="常规文件的精确缓存命中"
+            />
+            <DetailTile
+              icon={<ImageIcon className="h-4 w-4 mx-auto mb-1 text-muted-foreground" aria-hidden="true" />}
+              value={stats?.image_cache_hit ?? 0}
+              label="图片命中"
+              tip="图片文件的精确格式缓存命中"
+            />
+            <DetailTile
+              icon={<RotateCcw className="h-4 w-4 mx-auto mb-1 text-muted-foreground" />}
+              value={stats?.format_fallback_hit ?? 0}
+              label="格式回退"
+              tip="图片格式回退命中 (如请求 WebP 但提供 JPEG)"
+            />
+          </div>
+        </div>
+        {renderConfig()}
+      </CardContent>
+    </Card>
+  )
+}
+
+// StatRow 缓存详情中的"标签 + 数值"行, 命中/未命中走 success/destructive 软底
+function StatRow({
+  icon,
+  label,
+  tone,
+  children,
+}: {
+  icon: React.ReactNode
+  label: string
+  tone?: "success" | "destructive"
+  children: React.ReactNode
+}) {
+  const toneClass =
+    tone === "success"
+      ? "bg-success/10"
+      : tone === "destructive"
+      ? "bg-destructive/10"
+      : "bg-muted"
+  const valueClass =
+    tone === "success"
+      ? "text-success"
+      : tone === "destructive"
+      ? "text-destructive"
+      : "text-foreground"
+  return (
+    <div className={`flex justify-between items-center p-2 rounded ${toneClass}`}>
+      <dt className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+        {icon}
+        {label}
+      </dt>
+      <dd className={`text-sm font-semibold ${valueClass}`}>{children}</dd>
+    </div>
+  )
+}
+
+// DetailTile 智能缓存统计三联格子
+function DetailTile({
+  icon,
+  value,
+  label,
+  tip,
+}: {
+  icon: React.ReactNode
+  value: number | string
+  label: string
+  tip: string
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className="text-center p-3 rounded-lg border bg-card cursor-help hover:bg-accent/40 transition-colors">
+          {icon}
+          <div className="text-lg font-semibold text-foreground">{value}</div>
+          <div className="text-xs text-muted-foreground">{label}</div>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent>
+        <p>{tip}</p>
+      </TooltipContent>
+    </Tooltip>
   )
 }

@@ -58,11 +58,7 @@ export default function PathDialogForm({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
-        <Button
-          onClick={onOpenAddDialog}
-          style={{ backgroundColor: '#C08259', color: '#F8F7F6' }}
-          className="hover:opacity-90"
-        >
+        <Button onClick={onOpenAddDialog}>
           <Plus className="w-4 h-4 mr-2" />
           添加路径
         </Button>
