@@ -78,8 +78,8 @@ export default function MetricTiles({ m }: { m: MetricsLite }) {
         value={m.avg_response_time || "0 ms"}
       />
       <StatCard
-        label="进程"
-        value={`${m.num_goroutine || 0} G`}
+        label="Goroutine"
+        value={String(m.num_goroutine || 0)}
         sub={`内存 ${m.memory_usage || "-"}`}
       />
     </div>
