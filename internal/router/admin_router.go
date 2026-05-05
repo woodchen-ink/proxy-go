@@ -3,7 +3,6 @@ package router
 import (
 	"encoding/json"
 	"net/http"
-	"os"
 	"proxy-go/internal/handler"
 	"strings"
 )
@@ -88,23 +87,7 @@ func SetupAdminRoutes(proxyHandler *handler.ProxyHandler, authHandler *handler.A
 				return
 			}
 
-			// 静态文件处理
-			path := r.URL.Path
-			if path == "/admin" || path == "/admin/" {
-				path = "/admin/index.html"
-			}
-
-			filePath := "web/out" + strings.TrimPrefix(path, "/admin")
-			if _, err := os.Stat(filePath); os.IsNotExist(err) {
-				filePath = "web/out/index.html"
-			}
-			// Next.js 静态导出 (output: 'export' + trailingSlash) 会为每个路由产出 index.txt 作为 RSC payload,
-			// 用于客户端导航时的预取; 默认 .txt 会被识别为 text/plain, Next 解析失败会退化为硬跳转 (浏览器直接打开 .txt URL).
-			// 这里显式纠正 Content-Type, 让 SPA 导航正常工作
-			if strings.HasSuffix(filePath, "/index.txt") {
-				w.Header().Set("Content-Type", "text/x-component")
-			}
-			http.ServeFile(w, r, filePath)
+			serveAdminStatic(w, r)
 		}),
 	}
 
