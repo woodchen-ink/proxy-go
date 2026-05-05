@@ -68,7 +68,7 @@ export default function LatencyChart({ stats }: { stats?: LatencyStats }) {
                 />
                 <Bar
                   dataKey="count"
-                  fill="hsl(var(--foreground))"
+                  fill="hsl(var(--chart-2))"
                   radius={[4, 4, 0, 0]}
                   isAnimationActive={false}
                 />

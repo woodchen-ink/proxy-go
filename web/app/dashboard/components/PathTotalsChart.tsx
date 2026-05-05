@@ -202,7 +202,7 @@ export default function PathTotalsChart() {
                 />
                 <Bar
                   dataKey="_value"
-                  fill="hsl(var(--foreground))"
+                  fill="hsl(var(--chart-4))"
                   radius={[0, 4, 4, 0]}
                   isAnimationActive={false}
                 />
