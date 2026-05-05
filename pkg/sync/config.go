@@ -54,3 +54,18 @@ func getEnvDefault(key, defaultValue string) string {
 	}
 	return defaultValue
 }
+
+// NodeID 返回当前节点 ID, 用于多节点上报区分写入键
+//
+// 优先级: 环境变量 NODE_ID > 主机名 > "default"
+// 多节点部署时为每个节点配置独立的 NODE_ID, D1 端按 (path, ts_hour, node_id) 主键存储,
+// 查询时由 worker GROUP BY 聚合; 单节点不配置即用主机名, 行为不受影响
+func NodeID() string {
+	if v := os.Getenv("NODE_ID"); v != "" {
+		return v
+	}
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return h
+	}
+	return "default"
+}

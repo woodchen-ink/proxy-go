@@ -20,6 +20,7 @@ type MetricsStorage struct {
 	wg           gosync.WaitGroup
 	lastSaveTime time.Time
 	mutex        gosync.RWMutex
+	saveCount    int64 // 已执行保存次数, 用于按频率触发清理任务
 }
 
 // NewMetricsStorage 创建新的指标存储
@@ -116,6 +117,17 @@ func (ms *MetricsStorage) SaveMetrics() error {
 			log.Printf("[MetricsStorage] 保存路径统计失败: %v", err)
 		}
 	}
+
+	// 上报路径时间序列 (近 48 小时, 跨节点聚合由 D1 完成)
+	tsPoints := ms.getTimeseriesPoints()
+	if len(tsPoints) > 0 {
+		if err := sync.SavePathTimeseries(ctx, tsPoints); err != nil {
+			log.Printf("[MetricsStorage] 保存路径时间序列失败: %v", err)
+		}
+	}
+
+	// 清理 31 天之前的旧时间序列 (低频, 每 24 次保存触发一次)
+	ms.maybePruneTimeseries(ctx)
 
 	// 更新最后保存时间
 	ms.mutex.Lock()
@@ -234,6 +246,50 @@ func (ms *MetricsStorage) getLatencyDistributionMap() map[string]int64 {
 		"50-200ms":   atomic.LoadInt64(&ms.collector.latencyBuckets.ms50_200),
 		"200-1000ms": atomic.LoadInt64(&ms.collector.latencyBuckets.ms200_1000),
 		"gt1s":       atomic.LoadInt64(&ms.collector.latencyBuckets.gt1s),
+	}
+}
+
+// getTimeseriesPoints 把 PathTimeSeries 当前快照转换为 sync.PathTimeseriesPoint
+//
+// 每次同步上报近 48 小时的全部桶, D1 端按 (path, ts_hour, node_id) UPSERT,
+// 等价于本节点对自身贡献的 idempotent 覆盖, 不会双计
+func (ms *MetricsStorage) getTimeseriesPoints() []sync.PathTimeseriesPoint {
+	ts := ms.collector.PathTimeSeries()
+	if ts == nil {
+		return nil
+	}
+	buckets := ts.SnapshotForUpload(time.Now(), 48)
+	if len(buckets) == 0 {
+		return nil
+	}
+	nodeID := sync.NodeID()
+	now := time.Now().UnixMilli()
+	out := make([]sync.PathTimeseriesPoint, 0, len(buckets))
+	for _, b := range buckets {
+		out = append(out, sync.PathTimeseriesPoint{
+			Path:      b.Path,
+			TsHour:    b.Hour,
+			NodeID:    nodeID,
+			Requests:  b.Requests,
+			Bytes:     b.Bytes,
+			Errors:    b.Errors,
+			UpdatedAt: now,
+		})
+	}
+	return out
+}
+
+// maybePruneTimeseries 每 N 次保存触发一次旧数据清理 (默认每 24 次, 即每 12 小时左右)
+func (ms *MetricsStorage) maybePruneTimeseries(ctx context.Context) {
+	ms.saveCount++
+	if ms.saveCount%24 != 0 {
+		return
+	}
+	cutoff := time.Now().Unix()/3600 - 31*24
+	if deleted, err := sync.PruneTimeseries(ctx, cutoff); err != nil {
+		log.Printf("[MetricsStorage] 清理旧时间序列失败: %v", err)
+	} else if deleted > 0 {
+		log.Printf("[MetricsStorage] 已清理 %d 条 31 天前的时间序列桶", deleted)
 	}
 }
 

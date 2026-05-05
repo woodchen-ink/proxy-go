@@ -44,6 +44,7 @@ func SetupAdminRoutes(proxyHandler *handler.ProxyHandler, authHandler *handler.A
 		{http.MethodGet, "/admin/api/path-stats", pathStatsHandler.GetAllPathStats, true},
 		{http.MethodPost, "/admin/api/path-stats/reset", pathStatsHandler.ResetPathStats, true},
 		{http.MethodPost, "/admin/api/path-stats/reset-all", pathStatsHandler.ResetAllPathStats, true},
+		{http.MethodGet, "/admin/api/metrics/timeseries", handler.NewTimeseriesHandler().GetTimeseries, true},
 	}
 
 	// 添加安全API路由（如果启用了安全功能）

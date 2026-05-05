@@ -248,7 +248,7 @@ curl -X POST 'http://127.0.0.1:3336/api/cache/clear-url' \
 
 ### 功能作用
 
-主要是最好有一台国外服务器, 回国又不慢的, 可以反代国外资源, 然后在proxy-go外面套个cloudfront或者Edgeone, 方便国内访问.
+用于统一路径管理与 CDN 调度: 一个域名后接多个源 (对象存储 / CDN / 站点静态文件), 通过 proxy-go 做路径级路由, 外层再套 Cloudflare 或 EdgeOne 等 CDN, 优化全球访问。
 
 config里MAP的功能
 

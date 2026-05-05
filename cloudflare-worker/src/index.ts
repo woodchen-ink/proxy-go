@@ -4,6 +4,7 @@
  */
 
 import * as db from './db';
+import { applyPendingMigrations } from './migrations';
 
 export interface Env {
 	DB: D1Database;
@@ -164,6 +165,69 @@ export default {
 			}
 
 			// ============================================
+			// Migrations API: Go 服务启动时调用, 自动补齐缺失的 schema
+			// ============================================
+			if (path === '/migrations/apply' && request.method === 'POST') {
+				const result = await applyPendingMigrations(env.DB);
+				return jsonResponse({ success: true, ...result }, 200, corsHeaders);
+			}
+
+			// ============================================
+			// Path Time Series API
+			// ============================================
+			if (path === '/metrics/path-timeseries' && request.method === 'POST') {
+				const body = await request.json<{ points: db.PathTimeseriesPoint[] }>();
+				if (!body.points || !Array.isArray(body.points)) {
+					return jsonResponse(
+						{ error: 'Invalid request: points array required' },
+						400,
+						corsHeaders
+					);
+				}
+				await db.batchUpsertPathTimeseries(env.DB, body.points);
+				return jsonResponse(
+					{ success: true, updated: body.points.length },
+					200,
+					corsHeaders
+				);
+			}
+
+			if (path === '/metrics/path-timeseries' && request.method === 'GET') {
+				const minHour = parseInt(url.searchParams.get('min_hour') || '0');
+				const maxHour = parseInt(url.searchParams.get('max_hour') || '0');
+				if (!minHour || !maxHour || maxHour < minHour) {
+					return jsonResponse(
+						{ error: 'min_hour and max_hour required (max_hour >= min_hour)' },
+						400,
+						corsHeaders
+					);
+				}
+				// 上限保护: 单次最多查询 31 天 (744 小时)
+				if (maxHour - minHour > 744) {
+					return jsonResponse(
+						{ error: 'range too wide, max 744 hours' },
+						400,
+						corsHeaders
+					);
+				}
+				const data = await db.getAggregatedTimeseries(env.DB, minHour, maxHour);
+				return jsonResponse({ success: true, data }, 200, corsHeaders);
+			}
+
+			if (path === '/metrics/path-timeseries' && request.method === 'DELETE') {
+				const cutoff = parseInt(url.searchParams.get('cutoff_hour') || '0');
+				if (!cutoff) {
+					return jsonResponse(
+						{ error: 'cutoff_hour required' },
+						400,
+						corsHeaders
+					);
+				}
+				const deleted = await db.pruneOldTimeseries(env.DB, cutoff);
+				return jsonResponse({ success: true, deleted }, 200, corsHeaders);
+			}
+
+			// ============================================
 			// 根路径 - API 信息
 			// ============================================
 			if (path === '/' || path === '') {
@@ -196,11 +260,17 @@ export default {
 								'GET /config-other?key=xxx': 'Get specific config',
 								'POST /config-other': 'Batch update system configs',
 							},
+							'Migrations': {
+								'POST /migrations/apply': 'Apply pending schema migrations (idempotent)',
+							},
 							'Metrics': {
 								'GET /metrics/status-codes': 'Get HTTP status code statistics',
 								'POST /metrics/status-codes': 'Batch update status code stats',
 								'GET /metrics/latency': 'Get latency distribution',
 								'POST /metrics/latency': 'Batch update latency distribution',
+								'GET /metrics/path-timeseries?min_hour&max_hour': 'Get aggregated path time series',
+								'POST /metrics/path-timeseries': 'Batch upload node-local time-series buckets',
+								'DELETE /metrics/path-timeseries?cutoff_hour': 'Prune old time-series buckets',
 							},
 						},
 					},

@@ -434,3 +434,89 @@ export async function batchUpsertLatencyDistribution(db: D1Database, metrics: La
 
 	await db.batch(batch);
 }
+
+// ============================================
+// Path Time Series 操作
+// ============================================
+
+// PathTimeseriesPoint 单节点单小时的桶记录
+export interface PathTimeseriesPoint {
+	path: string;
+	ts_hour: number;
+	node_id?: string;
+	requests: number;
+	bytes: number;
+	errors: number;
+	updated_at: number;
+}
+
+// AggregatedHourPoint 聚合后的单小时记录 (跨 node_id 求和)
+export interface AggregatedHourPoint {
+	path: string;
+	ts_hour: number;
+	requests: number;
+	bytes: number;
+	errors: number;
+}
+
+// batchUpsertPathTimeseries 批量写入本节点上报的桶, 同 (path, ts_hour, node_id) 主键覆盖
+export async function batchUpsertPathTimeseries(
+	db: D1Database,
+	points: PathTimeseriesPoint[]
+): Promise<void> {
+	if (points.length === 0) return;
+
+	// 用 MAX 而非直接覆盖, 避免节点重启后内存桶清零导致上报值小于已存值, 反而把历史值踩回去
+	const batch = points.map((p) =>
+		db.prepare(
+			`INSERT INTO path_timeseries (path, ts_hour, node_id, requests, bytes, errors, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+       ON CONFLICT(path, ts_hour, node_id) DO UPDATE SET
+         requests = MAX(excluded.requests, requests),
+         bytes = MAX(excluded.bytes, bytes),
+         errors = MAX(excluded.errors, errors),
+         updated_at = excluded.updated_at`
+		).bind(
+			p.path,
+			p.ts_hour,
+			p.node_id || 'default',
+			p.requests,
+			p.bytes,
+			p.errors,
+			p.updated_at
+		)
+	);
+
+	await db.batch(batch);
+}
+
+// getAggregatedTimeseries 读取 [minHour, maxHour] 范围内全部路径的聚合数据 (跨节点求和)
+export async function getAggregatedTimeseries(
+	db: D1Database,
+	minHour: number,
+	maxHour: number
+): Promise<AggregatedHourPoint[]> {
+	const result = await db
+		.prepare(
+			`SELECT path, ts_hour,
+              SUM(requests) AS requests,
+              SUM(bytes) AS bytes,
+              SUM(errors) AS errors
+         FROM path_timeseries
+        WHERE ts_hour >= ?1 AND ts_hour <= ?2
+        GROUP BY path, ts_hour
+        ORDER BY path, ts_hour`
+		)
+		.bind(minHour, maxHour)
+		.all<AggregatedHourPoint>();
+	return result.results || [];
+}
+
+// pruneOldTimeseries 删除 ts_hour < cutoff 的旧数据, 防止表无限增长
+export async function pruneOldTimeseries(db: D1Database, cutoffHour: number): Promise<number> {
+	const result = await db
+		.prepare(`DELETE FROM path_timeseries WHERE ts_hour < ?1`)
+		.bind(cutoffHour)
+		.run();
+	return result.meta?.changes || 0;
+}

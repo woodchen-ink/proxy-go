@@ -530,6 +530,167 @@ func (c *D1Client) GetLatencyDistribution(ctx context.Context) ([]LatencyMetric,
 	return result.Data, nil
 }
 
+// MigrationResult /migrations/apply 返回结构
+type MigrationResult struct {
+	Applied []string `json:"applied"`
+	Skipped []string `json:"skipped"`
+}
+
+// ApplyMigrations 触发 worker 端自动迁移, 已应用的 id 自动跳过
+//
+// 设计为启动期一次性调用; 失败时返回 error, 调用方可记录日志后继续 (D1 不可用不应阻塞主服务启动)
+func (c *D1Client) ApplyMigrations(ctx context.Context) (*MigrationResult, error) {
+	url := fmt.Sprintf("%s/migrations/apply", c.endpoint)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.token))
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("D1 API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Success bool     `json:"success"`
+		Applied []string `json:"applied"`
+		Skipped []string `json:"skipped"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &MigrationResult{Applied: result.Applied, Skipped: result.Skipped}, nil
+}
+
+// PathTimeseriesPoint 单节点单小时的桶记录 (上报)
+type PathTimeseriesPoint struct {
+	Path      string `json:"path"`
+	TsHour    int64  `json:"ts_hour"`
+	NodeID    string `json:"node_id,omitempty"`
+	Requests  int64  `json:"requests"`
+	Bytes     int64  `json:"bytes"`
+	Errors    int64  `json:"errors"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
+// AggregatedHourPoint 聚合后单小时记录 (跨节点求和)
+type AggregatedHourPoint struct {
+	Path     string `json:"path"`
+	TsHour   int64  `json:"ts_hour"`
+	Requests int64  `json:"requests"`
+	Bytes    int64  `json:"bytes"`
+	Errors   int64  `json:"errors"`
+}
+
+// BatchUpsertPathTimeseries 上报本节点 (path, ts_hour, node_id) 的桶, idempotent 覆盖
+func (c *D1Client) BatchUpsertPathTimeseries(ctx context.Context, points []PathTimeseriesPoint) error {
+	if len(points) == 0 {
+		return nil
+	}
+	reqBody := map[string]any{"points": points}
+	reqData, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/metrics/path-timeseries", c.endpoint)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.token))
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("D1 API error (status %d): %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// GetAggregatedTimeseries 拉取 [minHour, maxHour] 区间所有路径聚合后的小时序列
+func (c *D1Client) GetAggregatedTimeseries(ctx context.Context, minHour, maxHour int64) ([]AggregatedHourPoint, error) {
+	url := fmt.Sprintf("%s/metrics/path-timeseries?min_hour=%d&max_hour=%d", c.endpoint, minHour, maxHour)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.token))
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("D1 API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Success bool                  `json:"success"`
+		Data    []AggregatedHourPoint `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return result.Data, nil
+}
+
+// PruneTimeseries 删除 ts_hour < cutoffHour 的旧桶
+func (c *D1Client) PruneTimeseries(ctx context.Context, cutoffHour int64) (int, error) {
+	url := fmt.Sprintf("%s/metrics/path-timeseries?cutoff_hour=%d", c.endpoint, cutoffHour)
+
+	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create request: %w", err)
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.token))
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("D1 API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Success bool `json:"success"`
+		Deleted int  `json:"deleted"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return result.Deleted, nil
+}
+
 func (c *D1Client) BatchUpsertLatencyDistribution(ctx context.Context, metrics []LatencyMetric) error {
 	if len(metrics) == 0 {
 		return nil

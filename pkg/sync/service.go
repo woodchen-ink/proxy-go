@@ -64,6 +64,19 @@ func InitSyncService() error {
 	}
 
 	log.Printf("[Sync] D1 sync service initialized (endpoint: %s)", d1Config.Endpoint)
+
+	// 启动期触发一次自动迁移, 让远端 worker 把缺失的表 / 索引补齐;
+	// 失败不阻塞启动 (D1 临时不可达时主服务仍能跑, 下次重启再尝试)
+	migCtx, migCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer migCancel()
+	if mr, err := d1Client.ApplyMigrations(migCtx); err != nil {
+		log.Printf("[Sync] Auto-migration skipped: %v", err)
+	} else if len(mr.Applied) > 0 {
+		log.Printf("[Sync] Auto-migration applied %d new schema(s): %v (skipped %d already-applied)", len(mr.Applied), mr.Applied, len(mr.Skipped))
+	} else {
+		log.Printf("[Sync] Auto-migration: schema up to date (%d migrations tracked)", len(mr.Skipped))
+	}
+
 	return nil
 }
 
@@ -330,4 +343,37 @@ func SavePathStats(ctx context.Context, stats []PathStat) error {
 	}
 
 	return globalSyncService.manager.SavePathStats(ctx, stats)
+}
+
+// SavePathTimeseries 上报本节点的路径小时桶到 D1
+func SavePathTimeseries(ctx context.Context, points []PathTimeseriesPoint) error {
+	globalSyncMutex.RLock()
+	defer globalSyncMutex.RUnlock()
+
+	if globalSyncService == nil || !globalSyncService.isEnabled {
+		return nil
+	}
+	return globalSyncService.manager.storage.BatchUpsertPathTimeseries(ctx, points)
+}
+
+// LoadPathTimeseries 拉取 [minHour, maxHour] 范围的跨节点聚合数据
+func LoadPathTimeseries(ctx context.Context, minHour, maxHour int64) ([]AggregatedHourPoint, error) {
+	globalSyncMutex.RLock()
+	defer globalSyncMutex.RUnlock()
+
+	if globalSyncService == nil || !globalSyncService.isEnabled {
+		return nil, nil
+	}
+	return globalSyncService.manager.storage.GetAggregatedTimeseries(ctx, minHour, maxHour)
+}
+
+// PruneTimeseries 清理 cutoffHour 之前的旧桶, 返回删除条数
+func PruneTimeseries(ctx context.Context, cutoffHour int64) (int, error) {
+	globalSyncMutex.RLock()
+	defer globalSyncMutex.RUnlock()
+
+	if globalSyncService == nil || !globalSyncService.isEnabled {
+		return 0, nil
+	}
+	return globalSyncService.manager.storage.PruneTimeseries(ctx, cutoffHour)
 }

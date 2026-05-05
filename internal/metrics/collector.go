@@ -206,6 +206,9 @@ type Collector struct {
 	// 新增：路径统计持久化存储
 	pathStatsStorage *PathStatsStorage
 
+	// 新增：路径维度的小时级时间序列, 供仪表盘趋势图使用
+	pathTimeSeries *PathTimeSeries
+
 	// 异步通道丢弃事件计数（channel 满时累加）
 	droppedMetrics int64
 
@@ -247,6 +250,7 @@ func InitCollector(cfg *config.Config) error {
 			refererStats:     NewRefererStats(),
 			pathStats:        NewRefererStats(), // 初始化路径统计
 			pathStatsStorage: NewPathStatsStorage("data/path_stats.json"),
+			pathTimeSeries:   NewPathTimeSeries(),
 			stopChan:         make(chan struct{}),
 		}
 
@@ -884,6 +888,9 @@ func (c *Collector) updateMetricsBatch(batch []RequestMetric) {
 			atomic.AddInt64(&c.latencyBuckets.gt1s, 1)
 		}
 
+		// 记录路径维度的小时级时间序列 (按前缀聚合, 与 pathStats 保持一致)
+		c.pathTimeSeries.Record(m.StatsPrefix, m.Bytes, m.Status >= 400, time.Now())
+
 		// 记录路径统计(使用路径前缀)
 		var pathMetrics *models.PathMetrics
 		if existingMetrics, ok := c.pathStats.Load(m.StatsPrefix); ok {
@@ -1153,6 +1160,11 @@ func (c *Collector) ResetPathStats(pathPrefix string) error {
 	}
 
 	return nil
+}
+
+// PathTimeSeries 返回路径时间序列容器, 供同步 / 查询模块使用
+func (c *Collector) PathTimeSeries() *PathTimeSeries {
+	return c.pathTimeSeries
 }
 
 // ResetAllPathStats 重置所有路径的统计数据
