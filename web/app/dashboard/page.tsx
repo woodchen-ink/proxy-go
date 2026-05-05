@@ -10,6 +10,7 @@ import StatusCodeChart from "./components/StatusCodeChart"
 import LatencyChart from "./components/LatencyChart"
 import BandwidthChart from "./components/BandwidthChart"
 import PathTrendChart from "./components/PathTrendChart"
+import PathTotalsChart from "./components/PathTotalsChart"
 
 interface Metrics {
   uptime: string
@@ -155,6 +156,8 @@ export default function DashboardPage() {
       <MetricTiles m={metrics} />
 
       <PathTrendChart />
+
+      <PathTotalsChart />
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <StatusCodeChart stats={metrics.status_code_stats || {}} />
