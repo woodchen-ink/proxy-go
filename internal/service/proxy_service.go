@@ -29,25 +29,25 @@ type ProxyRequest struct {
 
 // ProxyResponse 代理响应结构
 type ProxyResponse struct {
-	StatusCode      int
-	Headers         http.Header
-	Body            io.ReadCloser
-	ContentLength   int64
-	FromCache       bool
-	AltTarget       bool
-	CacheKey        string
+	StatusCode    int
+	Headers       http.Header
+	Body          io.ReadCloser
+	ContentLength int64
+	FromCache     bool
+	AltTarget     bool
+	CacheKey      string
 }
 
 // ProxyResult 代理处理结果
 type ProxyResult struct {
-	Success       bool
-	StatusCode    int
-	ErrorMessage  string
-	BytesWritten  int64
-	Duration      time.Duration
-	FromCache     bool
-	AltTarget     bool
-	TargetURL     string
+	Success      bool
+	StatusCode   int
+	ErrorMessage string
+	BytesWritten int64
+	Duration     time.Duration
+	FromCache    bool
+	AltTarget    bool
+	TargetURL    string
 }
 
 type ProxyService struct {
@@ -111,7 +111,7 @@ func (s *ProxyService) SelectTarget(req *ProxyRequest) (string, bool) {
 func (s *ProxyService) CreateProxyRequest(req *ProxyRequest, targetURL string) (*http.Request, error) {
 	// 构建完整的目标URL
 	fullTargetURL := s.buildTargetURL(targetURL, req.TargetPath, req.OriginalRequest.URL.RawQuery)
-	
+
 	// 创建新请求
 	proxyReq, err := http.NewRequestWithContext(
 		req.OriginalRequest.Context(),
@@ -125,12 +125,12 @@ func (s *ProxyService) CreateProxyRequest(req *ProxyRequest, targetURL string) (
 
 	// 复制头部
 	s.copyHeaders(proxyReq.Header, req.OriginalRequest.Header)
-	
+
 	// 设置必要的头部
 	if parsedURL, err := url.Parse(fullTargetURL); err == nil {
 		proxyReq.Header.Set("Host", parsedURL.Host)
 		proxyReq.Host = parsedURL.Host
-		
+
 		// 添加常见浏览器User-Agent
 		if req.OriginalRequest.Header.Get("User-Agent") == "" {
 			proxyReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -211,15 +211,15 @@ func (s *ProxyService) ExecuteRequest(proxyReq *http.Request) (*http.Response, e
 func (s *ProxyService) ProcessResponse(req *ProxyRequest, resp *http.Response, w http.ResponseWriter, altTarget bool) (int64, error) {
 	// 复制响应头
 	s.copyHeaders(w.Header(), resp.Header)
-	
+
 	// 设置代理相关头部
-	w.Header().Set("Proxy-Go-Cache-HIT", "0")
+	w.Header().Set("CZL-Proxy-Cache-HIT", "0")
 	if altTarget {
-		w.Header().Set("Proxy-Go-AltTarget", "1")
+		w.Header().Set("CZL-Proxy-AltTarget", "1")
 	} else {
-		w.Header().Set("Proxy-Go-AltTarget", "0")
+		w.Header().Set("CZL-Proxy-AltTarget", "0")
 	}
-	
+
 	// 对于图片请求，添加 Vary 头部以支持 CDN 基于 Accept 头部的缓存
 	if utils.IsImageRequest(req.OriginalRequest.URL.Path) {
 		// 添加 Vary: Accept 头部，让 CDN 知道响应会根据 Accept 头部变化
@@ -231,7 +231,7 @@ func (s *ProxyService) ProcessResponse(req *ProxyRequest, resp *http.Response, w
 			w.Header().Set("Vary", "Accept")
 		}
 	}
-	
+
 	// 设置状态码
 	w.WriteHeader(resp.StatusCode)
 
@@ -320,13 +320,13 @@ func (s *ProxyService) buildTargetURL(baseURL, targetPath, rawQuery string) stri
 		}
 		return targetURL
 	}
-	
+
 	// 正确处理路径，保持URL编码
 	parsedBase.Path = strings.TrimSuffix(parsedBase.Path, "/") + targetPath
 	if rawQuery != "" {
 		parsedBase.RawQuery = rawQuery
 	}
-	
+
 	return parsedBase.String()
 }
 
@@ -353,4 +353,3 @@ func (s *ProxyService) CreateLogEntry(req *ProxyRequest, statusCode int, duratio
 		iputil.GetClientIP(req.OriginalRequest), utils.FormatBytes(bytesWritten),
 		utils.GetRequestSource(req.OriginalRequest), targetURL)
 }
-

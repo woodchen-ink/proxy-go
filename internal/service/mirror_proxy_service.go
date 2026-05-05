@@ -157,7 +157,7 @@ func (s *MirrorProxyService) ExecuteRequest(proxyReq *http.Request) (*http.Respo
 func (s *MirrorProxyService) ProcessResponse(req *MirrorProxyRequest, resp *http.Response, w http.ResponseWriter) (int64, error) {
 	// 复制响应头
 	s.copyHeaders(w.Header(), resp.Header)
-	w.Header().Set("Proxy-Go-Cache-HIT", "0")
+	w.Header().Set("CZL-Proxy-Cache-HIT", "0")
 	w.WriteHeader(resp.StatusCode)
 
 	var written int64

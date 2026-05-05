@@ -231,7 +231,6 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 	return handler
 }
 
-
 func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 添加 panic 恢复
 	defer func() {
@@ -342,8 +341,8 @@ func (h *ProxyHandler) handleCacheHit(w http.ResponseWriter, r *http.Request, it
 	if item.ContentEncoding != "" {
 		w.Header().Set("Content-Encoding", item.ContentEncoding)
 	}
-	w.Header().Set("Proxy-Go-Cache-HIT", "1")
-	w.Header().Set("Proxy-Go-AltTarget", "0") // 缓存命中时设为0
+	w.Header().Set("CZL-Proxy-Cache-HIT", "1")
+	w.Header().Set("CZL-Proxy-AltTarget", "0") // 缓存命中时设为0
 
 	if notModified {
 		w.WriteHeader(http.StatusNotModified)

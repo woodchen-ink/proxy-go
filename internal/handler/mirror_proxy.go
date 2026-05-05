@@ -25,7 +25,7 @@ const (
 
 type MirrorProxyHandler struct {
 	mirrorService *service.MirrorProxyService
-	Cache        *cache.CacheManager // 保留Cache字段以兼容现有代码
+	Cache         *cache.CacheManager // 保留Cache字段以兼容现有代码
 }
 
 func NewMirrorProxyHandler() *MirrorProxyHandler {
@@ -172,7 +172,7 @@ func (h *MirrorProxyHandler) handleCacheHit(w http.ResponseWriter, r *http.Reque
 	if item.ContentEncoding != "" {
 		w.Header().Set("Content-Encoding", item.ContentEncoding)
 	}
-	w.Header().Set("Proxy-Go-Cache-HIT", "1")
+	w.Header().Set("CZL-Proxy-Cache-HIT", "1")
 
 	if notModified {
 		w.WriteHeader(http.StatusNotModified)
