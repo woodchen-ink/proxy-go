@@ -38,6 +38,11 @@ type PathConfig struct {
 	RedirectMode  bool            `json:"RedirectMode"`  // 是否使用302跳转模式
 	Enabled       bool            `json:"Enabled"`       // 是否启用此路径映射，默认true
 	CacheConfig   *CacheConfig    `json:"CacheConfig"`   // 独立缓存配置，为nil则使用全局配置
+	// CFImageOpt 启用 Cloudflare Images 友好的缓存键策略:
+	// 图片请求按 Accept 头中的图片格式 (avif/webp/jpeg/...) + 标准化后的浏览器类型分桶缓存,
+	// 避免不同设备拿到对方格式。源站不做格式协商时, 务必保持 false,
+	// 此时所有请求共享同一份原文件缓存, 命中率显著更高。
+	CFImageOpt bool `json:"CFImageOpt"`
 }
 
 // ExtensionRule 表示一个扩展名映射规则（内部使用）

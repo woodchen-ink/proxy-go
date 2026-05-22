@@ -308,40 +308,27 @@ func NewCacheManager(cacheDir string, initialConfig *config.CacheConfig) (*Cache
 }
 
 // GenerateCacheKey 生成缓存键
-func (cm *CacheManager) GenerateCacheKey(r *http.Request) CacheKey {
-	// 处理 Vary 头部
-	varyHeaders := make([]string, 0)
-	for _, vary := range strings.Split(r.Header.Get("Vary"), ",") {
-		vary = strings.TrimSpace(vary)
-		if vary != "" {
-			value := r.Header.Get(vary)
-			varyHeaders = append(varyHeaders, vary+"="+value)
-		}
-	}
-	sort.Strings(varyHeaders)
-
+//
+// cfImageOpt 为 true 时, 图片请求按"标准化图片格式 + 标准化浏览器"分桶 (用于 Cloudflare Images
+// 这类按 Accept 返回不同格式的源, 避免 webp/jpeg 互相覆盖); 为 false 时所有请求只用 URL 做 key,
+// 让同一原文件在所有设备间共享同一份缓存, 显著提升命中率。源站不做格式协商时务必保持 false。
+func (cm *CacheManager) GenerateCacheKey(r *http.Request, cfImageOpt bool) CacheKey {
 	url := r.URL.String()
-	acceptHeaders := r.Header.Get("Accept")
-	userAgent := r.Header.Get("User-Agent")
 
-	// 🎯 针对图片请求进行智能缓存键优化
-	if utils.IsImageRequest(r.URL.Path) {
-		// 解析Accept头中的图片格式偏好
+	if cfImageOpt && utils.IsImageRequest(r.URL.Path) {
+		acceptHeaders := r.Header.Get("Accept")
+		userAgent := r.Header.Get("User-Agent")
 		imageFormat := cm.parseImageFormatPreference(acceptHeaders)
 
-		// 为图片请求生成格式感知的缓存键
 		return CacheKey{
 			URL:           url,
-			AcceptHeaders: imageFormat,                      // 使用标准化的图片格式
-			UserAgent:     cm.normalizeUserAgent(userAgent), // 标准化UserAgent
+			AcceptHeaders: imageFormat,
+			UserAgent:     cm.normalizeUserAgent(userAgent),
 		}
 	}
 
-	return CacheKey{
-		URL:           url,
-		AcceptHeaders: acceptHeaders,
-		UserAgent:     userAgent,
-	}
+	// 默认: 仅按 URL 缓存, 不区分 Accept / UA, 保证最高命中率
+	return CacheKey{URL: url}
 }
 
 // parseImageFormatPreference 解析图片格式偏好，返回标准化的格式标识
@@ -397,13 +384,15 @@ func (cm *CacheManager) normalizeUserAgent(ua string) string {
 }
 
 // Get 获取缓存项
-func (cm *CacheManager) Get(key CacheKey, r *http.Request) (*CacheItem, bool, bool) {
+//
+// cfImageOpt 与 GenerateCacheKey 的语义保持一致: 仅当启用时才会对图片请求执行格式回退
+// (avif → webp → jpeg 等), 否则按精确 key 命中即可。
+func (cm *CacheManager) Get(key CacheKey, r *http.Request, cfImageOpt bool) (*CacheItem, bool, bool) {
 	if !cm.enabled.Load() {
 		return nil, false, false
 	}
 
-	// 🎯 针对图片请求实现智能格式回退
-	if utils.IsImageRequest(r.URL.Path) {
+	if cfImageOpt && utils.IsImageRequest(r.URL.Path) {
 		return cm.getImageWithFallback(key, r)
 	}
 

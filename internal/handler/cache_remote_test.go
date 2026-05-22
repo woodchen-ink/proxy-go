@@ -172,7 +172,7 @@ func addRemoteTestCacheEntry(t *testing.T, cacheManager *cache.CacheManager, raw
 	t.Helper()
 
 	req := httptest.NewRequest(http.MethodGet, rawURL, nil)
-	key := cacheManager.GenerateCacheKey(req)
+	key := cacheManager.GenerateCacheKey(req, false)
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     make(http.Header),

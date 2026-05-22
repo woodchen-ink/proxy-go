@@ -275,7 +275,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 检查缓存
 	if item, hit, notModified := h.proxyService.CheckCache(proxyReq); hit {
-		h.handleCacheHit(w, r, item, notModified, start, collector, matchResult.MatchedPrefix)
+		h.handleCacheHit(w, r, item, notModified, start, collector, matchResult.MatchedPrefix, matchResult.PathConfig)
 		return
 	}
 
@@ -322,13 +322,13 @@ func (h *ProxyHandler) handleWelcome(w http.ResponseWriter, r *http.Request, sta
 }
 
 // handleCacheHit 处理缓存命中
-func (h *ProxyHandler) handleCacheHit(w http.ResponseWriter, r *http.Request, item *cache.CacheItem, notModified bool, start time.Time, collector *metrics.Collector, matchedPrefix string) {
+func (h *ProxyHandler) handleCacheHit(w http.ResponseWriter, r *http.Request, item *cache.CacheItem, notModified bool, start time.Time, collector *metrics.Collector, matchedPrefix string, pathCfg config.PathConfig) {
 	// 🔧 修复缓存文件被删除后404的问题：在提供文件前再次验证文件是否存在
 	if _, err := os.Stat(item.FilePath); err != nil {
 		// 缓存文件不存在，清理缓存记录并重新处理请求
 		if h.Cache != nil {
-			// 清理内存中的缓存记录
-			cacheKey := h.Cache.GenerateCacheKey(r)
+			// 清理内存中的缓存记录, 使用与命中时一致的 cfImageOpt 策略
+			cacheKey := h.Cache.GenerateCacheKey(r, pathCfg.CFImageOpt)
 			h.Cache.InvalidateCacheItem(cacheKey)
 			log.Printf("[Cache] File missing, invalidated cache for %s", r.URL.Path)
 		}

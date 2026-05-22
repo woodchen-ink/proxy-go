@@ -77,14 +77,14 @@ func (s *ProxyService) CheckCache(req *ProxyRequest) (*cache.CacheItem, bool, bo
 	}
 
 	cacheKey := s.getOrBuildCacheKey(req)
-	item, hit, notModified := s.cache.Get(cacheKey, req.OriginalRequest)
+	item, hit, notModified := s.cache.Get(cacheKey, req.OriginalRequest, req.PathConfig.CFImageOpt)
 	return item, hit, notModified
 }
 
 // getOrBuildCacheKey 从 ProxyRequest 取缓存键，首次调用时生成并复用
 func (s *ProxyService) getOrBuildCacheKey(req *ProxyRequest) cache.CacheKey {
 	if !req.cacheKeySet {
-		req.cacheKey = s.cache.GenerateCacheKey(req.OriginalRequest)
+		req.cacheKey = s.cache.GenerateCacheKey(req.OriginalRequest, req.PathConfig.CFImageOpt)
 		req.cacheKeySet = true
 	}
 	return req.cacheKey

@@ -52,6 +52,7 @@ interface PathMapping {
   RedirectMode?: boolean
   Enabled?: boolean
   CacheConfig?: CacheConfig
+  CFImageOpt?: boolean
 }
 
 interface CompressionConfig {
@@ -370,6 +371,29 @@ export default function ConfigPage() {
       newConfig.MAP[path] = {
         ...mapping,
         Enabled: enabled,
+      }
+    }
+
+    updateConfig(newConfig)
+  }
+
+  // handleToggleCFImageOpt 切换路径的 Cloudflare Images 缓存键策略;
+  // 关闭 (默认) 时所有设备共享同一份原文件缓存, 开启时按图片格式 + 浏览器分桶
+  const handleToggleCFImageOpt = (path: string, enabled: boolean) => {
+    if (!config) return
+    const newConfig = { ...config }
+    const mapping = newConfig.MAP[path]
+
+    if (typeof mapping === 'string') {
+      newConfig.MAP[path] = {
+        DefaultTarget: mapping,
+        Enabled: true,
+        CFImageOpt: enabled,
+      }
+    } else {
+      newConfig.MAP[path] = {
+        ...mapping,
+        CFImageOpt: enabled,
       }
     }
 
@@ -1089,6 +1113,26 @@ export default function ConfigPage() {
                                 {selectedMappingObj.Enabled !== false ? "已启用" : "已禁用"}
                               </span>
                             </div>
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <Label>Cloudflare Images 优化</Label>
+                              <div className="flex items-center gap-2">
+                                <Switch
+                                  checked={!!selectedMappingObj.CFImageOpt}
+                                  onCheckedChange={(checked) => handleToggleCFImageOpt(selectedPath, checked)}
+                                />
+                                <span className="text-sm text-muted-foreground">
+                                  {selectedMappingObj.CFImageOpt ? "已开启" : "已关闭"}
+                                </span>
+                              </div>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              开启后, 图片请求按 Accept 中的格式 (avif/webp/...) + 浏览器类型分桶缓存,
+                              用于源站会按设备返回不同图片格式的场景 (如 Cloudflare Images)。
+                              关闭时所有设备共享同一份原文件缓存, 命中率更高, 默认关闭。
+                            </p>
                           </div>
 
                           {isEditingPath ? (

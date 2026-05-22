@@ -96,20 +96,23 @@ func (s *MirrorProxyService) ExtractTargetURL(r *http.Request) (*MirrorProxyRequ
 }
 
 // CheckCache 检查缓存
+//
+// Mirror 模式面向任意上游 URL 透传, 没有路径级 PathConfig, 因此始终走默认的 URL-only 缓存键策略,
+// 不启用 CF Images 智能键。需要按格式分桶请改走带 PathConfig 的反代路径。
 func (s *MirrorProxyService) CheckCache(req *MirrorProxyRequest) (*cache.CacheItem, bool, bool) {
 	if req.OriginalRequest.Method != http.MethodGet || s.cache == nil {
 		return nil, false, false
 	}
 
 	cacheKey := s.getOrBuildCacheKey(req)
-	item, hit, notModified := s.cache.Get(cacheKey, req.OriginalRequest)
+	item, hit, notModified := s.cache.Get(cacheKey, req.OriginalRequest, false)
 	return item, hit, notModified
 }
 
 // getOrBuildCacheKey 从 MirrorProxyRequest 取缓存键，首次调用时生成并复用
 func (s *MirrorProxyService) getOrBuildCacheKey(req *MirrorProxyRequest) cache.CacheKey {
 	if !req.cacheKeySet {
-		req.cacheKey = s.cache.GenerateCacheKey(req.OriginalRequest)
+		req.cacheKey = s.cache.GenerateCacheKey(req.OriginalRequest, false)
 		req.cacheKeySet = true
 	}
 	return req.cacheKey
