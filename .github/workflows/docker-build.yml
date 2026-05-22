@@ -125,3 +125,15 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Trigger Dokploy deploy
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          DOKPLOY_WEBHOOK_URL: ${{ secrets.DOKPLOY_WEBHOOK_URL }}
+        run: |
+          if [ -z "$DOKPLOY_WEBHOOK_URL" ]; then
+            echo "DOKPLOY_WEBHOOK_URL secret 未配置, 跳过部署触发"
+            exit 0
+          fi
+          curl -fsSL -X POST "$DOKPLOY_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "{\"ref\":\"${GITHUB_REF}\",\"sha\":\"${GITHUB_SHA}\"}"
