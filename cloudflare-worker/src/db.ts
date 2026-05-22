@@ -520,3 +520,89 @@ export async function pruneOldTimeseries(db: D1Database, cutoffHour: number): Pr
 		.run();
 	return result.meta?.changes || 0;
 }
+
+// ============================================
+// Referer 天级时间序列 (referer_daily 表)
+// ============================================
+
+// RefererDailyPoint 单节点单天单 host 的桶记录
+export interface RefererDailyPoint {
+	host: string;
+	ts_date: number;
+	node_id?: string;
+	requests: number;
+	bytes: number;
+	errors: number;
+	updated_at: number;
+}
+
+// AggregatedRefererDayPoint 聚合后的单天单 host 记录 (跨 node_id 求和)
+export interface AggregatedRefererDayPoint {
+	host: string;
+	ts_date: number;
+	requests: number;
+	bytes: number;
+	errors: number;
+}
+
+// batchUpsertRefererDaily 批量写入本节点上报的天桶
+// 使用 MAX 语义, 与 path_timeseries 一致, 避免节点重启清零后踩回历史值
+export async function batchUpsertRefererDaily(
+	db: D1Database,
+	points: RefererDailyPoint[]
+): Promise<void> {
+	if (points.length === 0) return;
+
+	const batch = points.map((p) =>
+		db.prepare(
+			`INSERT INTO referer_daily (host, ts_date, node_id, requests, bytes, errors, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+       ON CONFLICT(host, ts_date, node_id) DO UPDATE SET
+         requests = MAX(excluded.requests, requests),
+         bytes = MAX(excluded.bytes, bytes),
+         errors = MAX(excluded.errors, errors),
+         updated_at = excluded.updated_at`
+		).bind(
+			p.host,
+			p.ts_date,
+			p.node_id || 'default',
+			p.requests,
+			p.bytes,
+			p.errors,
+			p.updated_at
+		)
+	);
+
+	await db.batch(batch);
+}
+
+// getAggregatedRefererDaily 读取 [minDate, maxDate] 范围内的聚合天桶 (跨节点求和)
+export async function getAggregatedRefererDaily(
+	db: D1Database,
+	minDate: number,
+	maxDate: number
+): Promise<AggregatedRefererDayPoint[]> {
+	const result = await db
+		.prepare(
+			`SELECT host, ts_date,
+              SUM(requests) AS requests,
+              SUM(bytes) AS bytes,
+              SUM(errors) AS errors
+         FROM referer_daily
+        WHERE ts_date >= ?1 AND ts_date <= ?2
+        GROUP BY host, ts_date
+        ORDER BY ts_date, host`
+		)
+		.bind(minDate, maxDate)
+		.all<AggregatedRefererDayPoint>();
+	return result.results || [];
+}
+
+// pruneOldRefererDaily 删除 ts_date < cutoff 的旧数据
+export async function pruneOldRefererDaily(db: D1Database, cutoffDate: number): Promise<number> {
+	const result = await db
+		.prepare(`DELETE FROM referer_daily WHERE ts_date < ?1`)
+		.bind(cutoffDate)
+		.run();
+	return result.meta?.changes || 0;
+}

@@ -44,6 +44,7 @@ func SetupAdminRoutes(proxyHandler *handler.ProxyHandler, authHandler *handler.A
 		{http.MethodPost, "/admin/api/path-stats/reset", pathStatsHandler.ResetPathStats, true},
 		{http.MethodPost, "/admin/api/path-stats/reset-all", pathStatsHandler.ResetAllPathStats, true},
 		{http.MethodGet, "/admin/api/metrics/timeseries", handler.NewTimeseriesHandler().GetTimeseries, true},
+		{http.MethodGet, "/admin/api/metrics/referer-daily", handler.NewRefererDailyHandler().GetRefererDaily, true},
 		{http.MethodGet, "/admin/api/cdn/providers", cdnHandler.ListProviders, true},
 		{http.MethodPost, "/admin/api/cdn/providers", cdnHandler.SaveProviders, true},
 		{http.MethodPost, "/admin/api/cdn/purge", cdnHandler.Purge, true},

@@ -13,6 +13,7 @@ import LatencyChart from "./components/LatencyChart"
 import BandwidthChart from "./components/BandwidthChart"
 import PathTrendChart from "./components/PathTrendChart"
 import PathTotalsChart from "./components/PathTotalsChart"
+import RefererDailyChart from "./components/RefererDailyChart"
 
 interface Metrics {
   uptime: string
@@ -194,6 +195,8 @@ export default function DashboardPage() {
       </TabsContent>
 
       <TabsContent value="requests" className="space-y-6">
+        <RefererDailyChart />
+
         {metrics.top_referers && metrics.top_referers.length > 0 && (
           <Card>
             <CardHeader>

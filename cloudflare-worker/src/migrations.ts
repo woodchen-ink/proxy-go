@@ -131,6 +131,24 @@ export const MIGRATIONS: Migration[] = [
 			`CREATE INDEX IF NOT EXISTS idx_path_timeseries_updated_at ON path_timeseries(updated_at)`,
 		],
 	},
+	{
+		id: '0004_add_referer_daily',
+		statements: [
+			`CREATE TABLE IF NOT EXISTS referer_daily (
+				host TEXT NOT NULL,
+				ts_date INTEGER NOT NULL,
+				node_id TEXT NOT NULL DEFAULT 'default',
+				requests INTEGER DEFAULT 0,
+				bytes INTEGER DEFAULT 0,
+				errors INTEGER DEFAULT 0,
+				updated_at INTEGER NOT NULL,
+				PRIMARY KEY (host, ts_date, node_id)
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_referer_daily_ts_date ON referer_daily(ts_date DESC)`,
+			`CREATE INDEX IF NOT EXISTS idx_referer_daily_host ON referer_daily(host)`,
+			`CREATE INDEX IF NOT EXISTS idx_referer_daily_updated_at ON referer_daily(updated_at)`,
+		],
+	},
 ];
 
 // MigrationResult 单次 apply 调用的返回结果

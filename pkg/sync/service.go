@@ -377,3 +377,36 @@ func PruneTimeseries(ctx context.Context, cutoffHour int64) (int, error) {
 	}
 	return globalSyncService.manager.storage.PruneTimeseries(ctx, cutoffHour)
 }
+
+// SaveRefererDaily 上报本节点的 referer host 天级桶到 D1
+func SaveRefererDaily(ctx context.Context, points []RefererDailyPoint) error {
+	globalSyncMutex.RLock()
+	defer globalSyncMutex.RUnlock()
+
+	if globalSyncService == nil || !globalSyncService.isEnabled {
+		return nil
+	}
+	return globalSyncService.manager.storage.BatchUpsertRefererDaily(ctx, points)
+}
+
+// LoadRefererDaily 拉取 [minDate, maxDate] 范围的跨节点聚合数据
+func LoadRefererDaily(ctx context.Context, minDate, maxDate int64) ([]AggregatedRefererDayPoint, error) {
+	globalSyncMutex.RLock()
+	defer globalSyncMutex.RUnlock()
+
+	if globalSyncService == nil || !globalSyncService.isEnabled {
+		return nil, nil
+	}
+	return globalSyncService.manager.storage.GetAggregatedRefererDaily(ctx, minDate, maxDate)
+}
+
+// PruneRefererDaily 清理 cutoffDate 之前的天级桶, 返回删除条数
+func PruneRefererDaily(ctx context.Context, cutoffDate int64) (int, error) {
+	globalSyncMutex.RLock()
+	defer globalSyncMutex.RUnlock()
+
+	if globalSyncService == nil || !globalSyncService.isEnabled {
+		return 0, nil
+	}
+	return globalSyncService.manager.storage.PruneRefererDaily(ctx, cutoffDate)
+}

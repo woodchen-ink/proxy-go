@@ -691,6 +691,126 @@ func (c *D1Client) PruneTimeseries(ctx context.Context, cutoffHour int64) (int, 
 	return result.Deleted, nil
 }
 
+// RefererDailyPoint 单节点单天单 host 的桶记录 (上报)
+type RefererDailyPoint struct {
+	Host      string `json:"host"`
+	TsDate    int64  `json:"ts_date"`
+	NodeID    string `json:"node_id,omitempty"`
+	Requests  int64  `json:"requests"`
+	Bytes     int64  `json:"bytes"`
+	Errors    int64  `json:"errors"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
+// AggregatedRefererDayPoint 聚合后单天单 host 记录 (跨节点求和)
+type AggregatedRefererDayPoint struct {
+	Host     string `json:"host"`
+	TsDate   int64  `json:"ts_date"`
+	Requests int64  `json:"requests"`
+	Bytes    int64  `json:"bytes"`
+	Errors   int64  `json:"errors"`
+}
+
+// BatchUpsertRefererDaily 上报本节点天级 referer host 桶
+func (c *D1Client) BatchUpsertRefererDaily(ctx context.Context, points []RefererDailyPoint) error {
+	if len(points) == 0 {
+		return nil
+	}
+	reqBody := map[string]any{"points": points}
+	reqData, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/metrics/referer-daily", c.endpoint)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.token))
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("D1 API error (status %d): %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// GetAggregatedRefererDaily 拉取 [minDate, maxDate] 区间内所有 host 聚合后的天序列
+func (c *D1Client) GetAggregatedRefererDaily(ctx context.Context, minDate, maxDate int64) ([]AggregatedRefererDayPoint, error) {
+	url := fmt.Sprintf("%s/metrics/referer-daily?min_date=%d&max_date=%d", c.endpoint, minDate, maxDate)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.token))
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("D1 API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Success bool                        `json:"success"`
+		Data    []AggregatedRefererDayPoint `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return result.Data, nil
+}
+
+// PruneRefererDaily 删除 ts_date < cutoffDate 的旧桶
+func (c *D1Client) PruneRefererDaily(ctx context.Context, cutoffDate int64) (int, error) {
+	url := fmt.Sprintf("%s/metrics/referer-daily?cutoff_date=%d", c.endpoint, cutoffDate)
+
+	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create request: %w", err)
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.token))
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("D1 API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Success bool `json:"success"`
+		Deleted int  `json:"deleted"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return result.Deleted, nil
+}
+
 func (c *D1Client) BatchUpsertLatencyDistribution(ctx context.Context, metrics []LatencyMetric) error {
 	if len(metrics) == 0 {
 		return nil

@@ -126,6 +126,14 @@ func (ms *MetricsStorage) SaveMetrics() error {
 		}
 	}
 
+	// 上报 referer host 天级序列 (近 40 天, 已在 snapshot 端按 min-requests 过滤)
+	rdPoints := ms.getRefererDailyPoints()
+	if len(rdPoints) > 0 {
+		if err := sync.SaveRefererDaily(ctx, rdPoints); err != nil {
+			log.Printf("[MetricsStorage] 保存 referer 天序列失败: %v", err)
+		}
+	}
+
 	// 清理 31 天之前的旧时间序列 (低频, 每 24 次保存触发一次)
 	ms.maybePruneTimeseries(ctx)
 
@@ -280,6 +288,7 @@ func (ms *MetricsStorage) getTimeseriesPoints() []sync.PathTimeseriesPoint {
 }
 
 // maybePruneTimeseries 每 N 次保存触发一次旧数据清理 (默认每 24 次, 即每 12 小时左右)
+// 同时清理 path_timeseries (31 天前) 与 referer_daily (35 天前, 留余量)
 func (ms *MetricsStorage) maybePruneTimeseries(ctx context.Context) {
 	ms.saveCount++
 	if ms.saveCount%24 != 0 {
@@ -291,6 +300,41 @@ func (ms *MetricsStorage) maybePruneTimeseries(ctx context.Context) {
 	} else if deleted > 0 {
 		log.Printf("[MetricsStorage] 已清理 %d 条 31 天前的时间序列桶", deleted)
 	}
+
+	dayCutoff := time.Now().Unix()/86400 - 35
+	if deleted, err := sync.PruneRefererDaily(ctx, dayCutoff); err != nil {
+		log.Printf("[MetricsStorage] 清理旧 referer 天序列失败: %v", err)
+	} else if deleted > 0 {
+		log.Printf("[MetricsStorage] 已清理 %d 条 35 天前的 referer 天序列桶", deleted)
+	}
+}
+
+// getRefererDailyPoints 把 RefererDailySeries 当前快照转换为 sync.RefererDailyPoint
+// 每次同步上报近 40 天的桶, D1 端按 (host, ts_date, node_id) UPSERT MAX
+func (ms *MetricsStorage) getRefererDailyPoints() []sync.RefererDailyPoint {
+	rd := ms.collector.RefererDaily()
+	if rd == nil {
+		return nil
+	}
+	buckets := rd.SnapshotForUpload(time.Now(), 40)
+	if len(buckets) == 0 {
+		return nil
+	}
+	nodeID := sync.NodeID()
+	now := time.Now().UnixMilli()
+	out := make([]sync.RefererDailyPoint, 0, len(buckets))
+	for _, b := range buckets {
+		out = append(out, sync.RefererDailyPoint{
+			Host:      b.Host,
+			TsDate:    b.Date,
+			NodeID:    nodeID,
+			Requests:  b.Requests,
+			Bytes:     b.Bytes,
+			Errors:    b.Errors,
+			UpdatedAt: now,
+		})
+	}
+	return out
 }
 
 // getPathStatsArray 获取路径统计数组（转换为 sync.PathStat 格式）

@@ -5,6 +5,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"net/url"
 	"proxy-go/internal/config"
 	"proxy-go/internal/models"
 	"proxy-go/internal/utils"
@@ -16,6 +17,18 @@ import (
 	"sync/atomic"
 	"time"
 )
+
+// extractRefererHost 从 Referer 头取出小写 host (不含端口); 解析失败返回空串
+func extractRefererHost(referer string) string {
+	if referer == "" {
+		return ""
+	}
+	u, err := url.Parse(referer)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
+}
 
 // 优化的状态码统计结构
 type StatusCodeStats struct {
@@ -178,8 +191,9 @@ type Collector struct {
 	minLatency      int64 // 最小响应时间
 	statusCodeStats *StatusCodeStats
 	latencyBuckets  *LatencyBuckets // 使用结构体替代 sync.Map
-	refererStats    *RefererStats   // 使用分片哈希表
-	pathStats       *RefererStats   // 路径统计（复用RefererStats的分片结构）
+	refererStats      *RefererStats       // 使用分片哈希表
+	pathStats         *RefererStats       // 路径统计（复用RefererStats的分片结构）
+	refererDaySeries  *RefererDailySeries // referer host 天级时间序列, 供 D1 上报
 	bandwidthStats  struct {
 		sync.RWMutex
 		window     time.Duration
@@ -249,6 +263,7 @@ func InitCollector(cfg *config.Config) error {
 			latencyBuckets:   &LatencyBuckets{},
 			refererStats:     NewRefererStats(),
 			pathStats:        NewRefererStats(), // 初始化路径统计
+			refererDaySeries: NewRefererDailySeries(),
 			pathStatsStorage: NewPathStatsStorage("data/path_stats.json"),
 			pathTimeSeries:   NewPathTimeSeries(),
 			stopChan:         make(chan struct{}),
@@ -928,7 +943,7 @@ func (c *Collector) updateMetricsBatch(batch []RequestMetric) {
 			pathMetrics.CacheMisses.Add(1)
 		}
 
-		// 记录引用来源
+		// 记录引用来源 (URL 维度 24h 累计 + host 维度天级时间序列)
 		if m.Request != nil {
 			referer := m.Request.Referer()
 			if referer != "" {
@@ -948,6 +963,11 @@ func (c *Collector) updateMetricsBatch(batch []RequestMetric) {
 				refererMetrics.AddLatency(m.Latency.Nanoseconds())
 				// 更新最后访问时间
 				refererMetrics.LastAccessTime.Store(time.Now().Unix())
+
+				// 同时按 host 维度落入天级桶, 供 D1 上报近 30 天数据
+				if host := extractRefererHost(referer); host != "" {
+					c.refererDaySeries.Record(host, m.Bytes, m.Status >= 400, time.Now())
+				}
 			}
 		}
 
@@ -1170,6 +1190,11 @@ func (c *Collector) ResetPathStats(pathPrefix string) error {
 // PathTimeSeries 返回路径时间序列容器, 供同步 / 查询模块使用
 func (c *Collector) PathTimeSeries() *PathTimeSeries {
 	return c.pathTimeSeries
+}
+
+// RefererDaily 返回引用来源 host 天级时间序列容器, 供同步 / 查询模块使用
+func (c *Collector) RefererDaily() *RefererDailySeries {
+	return c.refererDaySeries
 }
 
 // ResetAllPathStats 重置所有路径的统计数据

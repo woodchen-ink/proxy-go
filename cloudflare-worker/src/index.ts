@@ -228,6 +228,61 @@ export default {
 			}
 
 			// ============================================
+			// Referer Daily API (host 天级时间序列)
+			// ============================================
+			if (path === '/metrics/referer-daily' && request.method === 'POST') {
+				const body = await request.json<{ points: db.RefererDailyPoint[] }>();
+				if (!body.points || !Array.isArray(body.points)) {
+					return jsonResponse(
+						{ error: 'Invalid request: points array required' },
+						400,
+						corsHeaders
+					);
+				}
+				await db.batchUpsertRefererDaily(env.DB, body.points);
+				return jsonResponse(
+					{ success: true, updated: body.points.length },
+					200,
+					corsHeaders
+				);
+			}
+
+			if (path === '/metrics/referer-daily' && request.method === 'GET') {
+				const minDate = parseInt(url.searchParams.get('min_date') || '0');
+				const maxDate = parseInt(url.searchParams.get('max_date') || '0');
+				if (!minDate || !maxDate || maxDate < minDate) {
+					return jsonResponse(
+						{ error: 'min_date and max_date required (max_date >= min_date)' },
+						400,
+						corsHeaders
+					);
+				}
+				// 上限保护: 单次最多查询 90 天
+				if (maxDate - minDate > 90) {
+					return jsonResponse(
+						{ error: 'range too wide, max 90 days' },
+						400,
+						corsHeaders
+					);
+				}
+				const data = await db.getAggregatedRefererDaily(env.DB, minDate, maxDate);
+				return jsonResponse({ success: true, data }, 200, corsHeaders);
+			}
+
+			if (path === '/metrics/referer-daily' && request.method === 'DELETE') {
+				const cutoff = parseInt(url.searchParams.get('cutoff_date') || '0');
+				if (!cutoff) {
+					return jsonResponse(
+						{ error: 'cutoff_date required' },
+						400,
+						corsHeaders
+					);
+				}
+				const deleted = await db.pruneOldRefererDaily(env.DB, cutoff);
+				return jsonResponse({ success: true, deleted }, 200, corsHeaders);
+			}
+
+			// ============================================
 			// 根路径 - API 信息
 			// ============================================
 			if (path === '/' || path === '') {
@@ -271,6 +326,9 @@ export default {
 								'GET /metrics/path-timeseries?min_hour&max_hour': 'Get aggregated path time series',
 								'POST /metrics/path-timeseries': 'Batch upload node-local time-series buckets',
 								'DELETE /metrics/path-timeseries?cutoff_hour': 'Prune old time-series buckets',
+								'GET /metrics/referer-daily?min_date&max_date': 'Get aggregated referer host daily series',
+								'POST /metrics/referer-daily': 'Batch upload node-local referer daily buckets',
+								'DELETE /metrics/referer-daily?cutoff_date': 'Prune old referer daily buckets',
 							},
 						},
 					},
