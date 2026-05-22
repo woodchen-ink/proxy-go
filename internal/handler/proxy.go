@@ -10,10 +10,12 @@ import (
 	"proxy-go/internal/cache"
 	"proxy-go/internal/config"
 	"proxy-go/internal/metrics"
+	"proxy-go/internal/security"
 	"proxy-go/internal/service"
 	"proxy-go/internal/utils"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/woodchen-ink/go-web-utils/iputil"
@@ -57,6 +59,26 @@ type ProxyHandler struct {
 	config       *config.Config
 	errorHandler ErrorHandler
 	Cache        *cache.CacheManager
+
+	// pathRefererMatchers 按"路径前缀"持有路径级 Referer 黑名单 matcher;
+	// 配置热更新时整体替换 (build 出新的 map 再 Store), 读侧无锁。
+	pathRefererMatchers atomic.Pointer[map[string]*security.RefererMatcher]
+}
+
+// buildPathRefererMatchers 由 PathConfig 构建路径级 matcher; 只为配置了 RefererBan 的路径建立条目
+func buildPathRefererMatchers(pathMap map[string]config.PathConfig) map[string]*security.RefererMatcher {
+	out := make(map[string]*security.RefererMatcher)
+	for prefix, cfg := range pathMap {
+		rb := cfg.RefererBan
+		if rb == nil || !rb.Enabled {
+			continue
+		}
+		m := security.Compile(rb.Hosts, rb.BlockEmpty)
+		if m.HasRules() {
+			out[prefix] = m
+		}
+	}
+	return out
 }
 
 // GetProxyService 获取ProxyService实例
@@ -209,11 +231,19 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 		},
 	}
 
+	// 初始化路径级 Referer 黑名单
+	initMatchers := buildPathRefererMatchers(cfg.MAP)
+	handler.pathRefererMatchers.Store(&initMatchers)
+
 	// 注册配置更新回调
 	config.RegisterUpdateCallback(func(newCfg *config.Config) {
 		// 注意：config包已经在回调触发前处理了所有ExtRules，这里无需再次处理
 		handler.pathMatcherService.UpdatePaths(newCfg.MAP)
 		handler.config = newCfg
+
+		// 重建路径级 Referer 黑名单 matcher 整张表
+		newMatchers := buildPathRefererMatchers(newCfg.MAP)
+		handler.pathRefererMatchers.Store(&newMatchers)
 
 		// 清理ExtensionMatcher缓存，确保使用新配置
 		if handler.Cache != nil {
@@ -262,6 +292,15 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !matchResult.Matched {
 		http.NotFound(w, r)
 		return
+	}
+
+	// 路径级 Referer 黑名单 (与全局规则叠加, 任一命中即拒); 在缓存检查之前, 防止已缓存内容被盗链方拿到
+	if matchers := h.pathRefererMatchers.Load(); matchers != nil {
+		if m, ok := (*matchers)[matchResult.MatchedPrefix]; ok && m.IsBlocked(r.Header.Get("Referer")) {
+			http.Error(w, "Forbidden: referer not allowed", http.StatusForbidden)
+			collector.RecordRequest(r.URL.Path, matchResult.MatchedPrefix, http.StatusForbidden, time.Since(start), 0, iputil.GetClientIP(r), r)
+			return
+		}
 	}
 
 	// 创建代理请求结构

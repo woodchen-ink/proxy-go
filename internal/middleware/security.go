@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"proxy-go/internal/security"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/woodchen-ink/go-web-utils/iputil"
@@ -12,7 +13,8 @@ import (
 
 // SecurityMiddleware 安全中间件
 type SecurityMiddleware struct {
-	banManager *security.IPBanManager
+	banManager     *security.IPBanManager
+	refererMatcher atomic.Pointer[security.RefererMatcher] // 全局 Referer 黑名单, 热更新时整体替换
 }
 
 // NewSecurityMiddleware 创建安全中间件
@@ -20,6 +22,11 @@ func NewSecurityMiddleware(banManager *security.IPBanManager) *SecurityMiddlewar
 	return &SecurityMiddleware{
 		banManager: banManager,
 	}
+}
+
+// SetRefererMatcher 由 config 热更新回调调用; 传 nil 表示禁用 Referer 黑名单
+func (sm *SecurityMiddleware) SetRefererMatcher(m *security.RefererMatcher) {
+	sm.refererMatcher.Store(m)
 }
 
 // isAdminPath 判断是否是管理后台路径
@@ -39,7 +46,8 @@ func isAdminPath(path string) bool {
 	return false
 }
 
-// IPBanMiddleware IP封禁中间件
+// IPBanMiddleware IP 封禁 + 全局 Referer 黑名单中间件
+// 顺序: admin 放行 → Referer 黑名单 → IP 封禁; Referer 命中直接 403, 不计入 IP 封禁 404 计数
 func (sm *SecurityMiddleware) IPBanMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		clientIP := iputil.GetClientIP(r)
@@ -51,8 +59,14 @@ func (sm *SecurityMiddleware) IPBanMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// 检查IP是否被封禁
-		if sm.banManager.IsIPBanned(clientIP) {
+		// 全局 Referer 黑名单
+		if m := sm.refererMatcher.Load(); m.HasRules() && m.IsBlocked(r.Header.Get("Referer")) {
+			http.Error(w, "Forbidden: referer not allowed", http.StatusForbidden)
+			return
+		}
+
+		// 检查IP是否被封禁 (IPBan 未启用时 banManager 为 nil, 跳过)
+		if sm.banManager != nil && sm.banManager.IsIPBanned(clientIP) {
 			banned, banEndTime := sm.banManager.GetBanInfo(clientIP)
 			if banned {
 				// 返回429状态码和封禁信息
@@ -82,8 +96,8 @@ func (sm *SecurityMiddleware) IPBanMiddleware(next http.Handler) http.Handler {
 		// 继续处理请求
 		next.ServeHTTP(wrapper, r)
 
-		// 如果响应是404，记录错误
-		if wrapper.statusCode == http.StatusNotFound {
+		// 如果响应是404，记录错误 (banManager 可能未启用)
+		if wrapper.statusCode == http.StatusNotFound && sm.banManager != nil {
 			sm.banManager.RecordError(clientIP)
 		}
 	})

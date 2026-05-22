@@ -38,6 +38,8 @@ type PathConfig struct {
 	RedirectMode  bool            `json:"RedirectMode"`  // 是否使用302跳转模式
 	Enabled       bool            `json:"Enabled"`       // 是否启用此路径映射，默认true
 	CacheConfig   *CacheConfig    `json:"CacheConfig"`   // 独立缓存配置，为nil则使用全局配置
+	// RefererBan 路径级引用来源黑名单, 与全局 SecurityConfig.RefererBan 叠加 (任一命中即拒)
+	RefererBan *RefererBanConfig `json:"RefererBan"`
 	// CFImageOpt 启用 Cloudflare Images 友好的缓存键策略:
 	// 图片请求按 Accept 头中的图片格式 (avif/webp/jpeg/...) + 标准化后的浏览器类型分桶缓存,
 	// 避免不同设备拿到对方格式。源站不做格式协商时, 务必保持 false,
@@ -66,7 +68,17 @@ type CompressorConfig struct {
 }
 
 type SecurityConfig struct {
-	IPBan IPBanConfig `json:"IPBan"` // IP封禁配置
+	IPBan      IPBanConfig      `json:"IPBan"`      // IP封禁配置
+	RefererBan RefererBanConfig `json:"RefererBan"` // 引用来源 (Referer host) 黑名单, 全局生效
+}
+
+// RefererBanConfig 引用来源 host 黑名单
+// Hosts 中的条目按 host 后缀语义匹配 (e.g. "bad.com" 同时拦截 "bad.com" / "foo.bad.com" / "a.b.bad.com")
+// BlockEmpty 控制空 Referer 是否一并拦截; 默认 false (放行), 避免误伤 curl / 直接访问 / Telegram 预览等场景
+type RefererBanConfig struct {
+	Enabled    bool     `json:"Enabled"`
+	Hosts      []string `json:"Hosts"`
+	BlockEmpty bool     `json:"BlockEmpty"`
 }
 
 type IPBanConfig struct {

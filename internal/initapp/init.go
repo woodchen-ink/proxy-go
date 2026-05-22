@@ -163,8 +163,20 @@ func initServices(components *AppComponents) error {
 			CleanupIntervalMinutes: components.Config.Security.IPBan.CleanupIntervalMinutes,
 		}
 		components.BanManager = security.NewIPBanManager(banConfig)
-		components.SecurityMiddleware = middleware.NewSecurityMiddleware(components.BanManager)
 	}
+	// SecurityMiddleware 始终创建: 即使 IPBan 未启用, 也要承载 Referer 黑名单等其他全局规则
+	components.SecurityMiddleware = middleware.NewSecurityMiddleware(components.BanManager)
+	// 用启动时的配置初始化 Referer matcher; 后续热更新由 config 回调刷新
+	applyReferer := func(cfg *config.Config) {
+		rb := cfg.Security.RefererBan
+		if rb.Enabled {
+			components.SecurityMiddleware.SetRefererMatcher(security.Compile(rb.Hosts, rb.BlockEmpty))
+		} else {
+			components.SecurityMiddleware.SetRefererMatcher(security.Compile(nil, false))
+		}
+	}
+	applyReferer(components.Config)
+	config.RegisterUpdateCallback(applyReferer)
 
 	// 创建服务层
 	startTime := time.Now()

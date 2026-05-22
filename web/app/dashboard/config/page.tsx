@@ -27,6 +27,7 @@ import SecurityConfigPanel from "./components/SecurityConfigPanel"
 import ExtensionRuleDialog from "./components/ExtensionRuleDialog"
 import CacheManagement from "./components/CacheManagement"
 import CDNCacheManagement from "./components/CDNCacheManagement"
+import RefererBanEditor from "./components/RefererBanEditor"
 import { convertToBytes, convertBytesToUnit } from "./utils"
 
 interface ExtRuleConfig {
@@ -53,11 +54,18 @@ interface PathMapping {
   Enabled?: boolean
   CacheConfig?: CacheConfig
   CFImageOpt?: boolean
+  RefererBan?: RefererBanConfig
 }
 
 interface CompressionConfig {
   Enabled: boolean
   Level: number
+}
+
+interface RefererBanConfig {
+  Enabled: boolean
+  Hosts: string[]
+  BlockEmpty: boolean
 }
 
 interface SecurityConfig {
@@ -68,6 +76,7 @@ interface SecurityConfig {
     BanDurationMinutes: number
     CleanupIntervalMinutes: number
   }
+  RefererBan?: RefererBanConfig
 }
 
 interface PathStats {
@@ -400,6 +409,17 @@ export default function ConfigPage() {
     updateConfig(newConfig)
   }
 
+  // handlePathRefererBanUpdate 整段替换路径级 RefererBan; 与全局规则叠加 (任一命中即拒)
+  const handlePathRefererBanUpdate = (path: string, next: RefererBanConfig) => {
+    if (!config) return
+    const newConfig = { ...config }
+    const mapping = newConfig.MAP[path]
+    const base: PathMapping =
+      typeof mapping === "string" ? { DefaultTarget: mapping, Enabled: true } : mapping
+    newConfig.MAP[path] = { ...base, RefererBan: next }
+    updateConfig(newConfig)
+  }
+
   const handleSelectPath = (path: string) => {
     setSelectedPath(path)
     setIsAddingPath(false)
@@ -677,28 +697,10 @@ export default function ConfigPage() {
     }
   }
 
-  const updateSecurity = (field: keyof SecurityConfig['IPBan'], value: boolean | number) => {
+  // updateSecurity 整段替换 Security 子树, Panel 内部负责保持其它字段不变
+  const updateSecurity = (newSecurity: SecurityConfig) => {
     if (!config) return
-    const newConfig = { ...config }
-
-    if (!newConfig.Security) {
-      newConfig.Security = {
-        IPBan: {
-          Enabled: false,
-          ErrorThreshold: 10,
-          WindowMinutes: 5,
-          BanDurationMinutes: 5,
-          CleanupIntervalMinutes: 1
-        }
-      }
-    }
-
-    if (field === 'Enabled') {
-      newConfig.Security.IPBan.Enabled = value as boolean
-    } else {
-      newConfig.Security.IPBan[field] = value as number
-    }
-    updateConfig(newConfig)
+    updateConfig({ ...config, Security: newSecurity })
   }
 
   const handleExtensionRuleEdit = (_path: string, index?: number, rule?: ExtRuleConfig) => {
@@ -1224,6 +1226,29 @@ export default function ConfigPage() {
                           ) : (
                             <p className="text-sm text-muted-foreground">使用全局缓存配置</p>
                           )}
+                        </CardContent>
+                      </Card>
+
+                      {/* 引用来源黑名单 (路径级, 与全局叠加) */}
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="text-lg">引用来源 (Referer) 黑名单</CardTitle>
+                          <p className="text-sm font-normal text-muted-foreground">
+                            仅对当前路径生效, 与"安全策略"中的全局规则叠加, 任一命中即拒绝
+                          </p>
+                        </CardHeader>
+                        <CardContent>
+                          <RefererBanEditor
+                            config={
+                              selectedMappingObj.RefererBan ?? {
+                                Enabled: false,
+                                Hosts: [],
+                                BlockEmpty: false,
+                              }
+                            }
+                            onUpdate={(next) => handlePathRefererBanUpdate(selectedPath, next)}
+                            emptyHint="未添加 host, 即使开启黑名单也仅在拦截空 Referer 时生效"
+                          />
                         </CardContent>
                       </Card>
 
