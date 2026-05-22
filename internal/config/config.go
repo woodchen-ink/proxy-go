@@ -32,6 +32,9 @@ func NewConfigManager(configPath string) (*ConfigManager, error) {
 		return nil, err
 	}
 
+	// 规范化配置 (nil → 默认值, 旧字段补全)
+	cm.normalizeConfig(config)
+
 	// 确保所有路径配置的扩展名规则都已更新
 	for path, pc := range config.MAP {
 		pc.ProcessExtensionMap()
@@ -172,6 +175,10 @@ func (cm *ConfigManager) loadConfigFromFile() (*Config, error) {
 }
 
 // normalizeConfig 规范化配置，确保向后兼容
+// 要点:
+//  1. PathConfig.Enabled 旧配置默认 true
+//  2. SecurityConfig.RefererBan.Hosts / PathConfig.RefererBan.Hosts 把 nil 归一为空切片,
+//     避免 D1 / JSON round-trip 把空数组变 null 后, 前端访问 .length / .map 时崩溃
 func (cm *ConfigManager) normalizeConfig(config *Config) {
 	// 遍历所有路径配置，确保 Enabled 字段有默认值
 	for path, pathConfig := range config.MAP {
@@ -180,8 +187,16 @@ func (cm *ConfigManager) normalizeConfig(config *Config) {
 		// 我们将其设置为 true（默认启用）
 		if !pathConfig.Enabled && pathConfig.DefaultTarget != "" {
 			pathConfig.Enabled = true
-			config.MAP[path] = pathConfig
 		}
+		if pathConfig.RefererBan != nil && pathConfig.RefererBan.Hosts == nil {
+			pathConfig.RefererBan.Hosts = []string{}
+		}
+		config.MAP[path] = pathConfig
+	}
+
+	// 全局 RefererBan 也归一
+	if config.Security.RefererBan.Hosts == nil {
+		config.Security.RefererBan.Hosts = []string{}
 	}
 }
 
@@ -308,6 +323,9 @@ func (cm *ConfigManager) GetConfig() *Config {
 func (cm *ConfigManager) UpdateConfig(newConfig *Config) error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
+
+	// 规范化 (nil 字段归一)
+	cm.normalizeConfig(newConfig)
 
 	// 确保所有路径配置的扩展名规则都已更新
 	for path, pc := range newConfig.MAP {

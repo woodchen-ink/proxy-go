@@ -28,8 +28,11 @@ interface RefererBanEditorProps {
 export default function RefererBanEditor({ config, onUpdate, emptyHint }: RefererBanEditorProps) {
   const [draftHost, setDraftHost] = useState("")
 
+  // Hosts 在 D1 / JSON 反序列化后可能是 null (空数组序列化为 null 的常见副作用), 统一归一为 []
+  const hosts = Array.isArray(config.Hosts) ? config.Hosts : []
+
   const update = (patch: Partial<RefererBanConfig>) => {
-    onUpdate({ ...config, ...patch })
+    onUpdate({ ...config, Hosts: hosts, ...patch })
   }
 
   const addHost = () => {
@@ -41,16 +44,16 @@ export default function RefererBanEditor({ config, onUpdate, emptyHint }: Refere
       .replace(/[\/:?#].*$/, "")
       .replace(/\.+$/, "")
     if (!cleaned) return
-    if (config.Hosts.includes(cleaned)) {
+    if (hosts.includes(cleaned)) {
       setDraftHost("")
       return
     }
-    update({ Hosts: [...config.Hosts, cleaned] })
+    update({ Hosts: [...hosts, cleaned] })
     setDraftHost("")
   }
 
   const removeHost = (h: string) => {
-    update({ Hosts: config.Hosts.filter((x) => x !== h) })
+    update({ Hosts: hosts.filter((x) => x !== h) })
   }
 
   return (
@@ -106,9 +109,9 @@ export default function RefererBanEditor({ config, onUpdate, emptyHint }: Refere
               但不会误伤 evilbad.com
             </p>
 
-            {config.Hosts.length > 0 ? (
+            {hosts.length > 0 ? (
               <div className="flex flex-wrap gap-2 pt-2">
-                {config.Hosts.map((h) => (
+                {hosts.map((h) => (
                   <Badge key={h} variant="outline" className="gap-1 font-mono">
                     {h}
                     <button
