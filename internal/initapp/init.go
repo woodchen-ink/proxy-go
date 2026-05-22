@@ -198,10 +198,8 @@ func createHandlers(components *AppComponents) error {
 	// 创建配置处理器
 	components.ConfigHandler = handler.NewConfigHandler(components.ConfigManager)
 
-	// 创建安全管理处理器
-	if components.BanManager != nil {
-		components.SecurityHandler = handler.NewSecurityHandler(components.BanManager)
-	}
+	// 创建安全管理处理器 (始终创建; banManager 为 nil 时各端点返回空态而非 404)
+	components.SecurityHandler = handler.NewSecurityHandler(components.BanManager)
 
 	// 创建认证处理器
 	components.AuthHandler = handler.NewAuthHandler(components.AuthService)

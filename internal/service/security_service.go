@@ -43,9 +43,10 @@ func NewSecurityService(banManager *security.IPBanManager) *SecurityService {
 }
 
 // GetBannedIPs 获取被封禁的IP列表
+// IPBan 未启用时返回空列表 (而非错误), 让前端 security 页面正常渲染空态
 func (s *SecurityService) GetBannedIPs() (*BannedIPsResponse, error) {
 	if s.banManager == nil {
-		return nil, ErrSecurityManagerNotEnabled
+		return &BannedIPsResponse{BannedIPs: []BannedIPInfo{}, Count: 0}, nil
 	}
 
 	bannedIPs := s.banManager.GetBannedIPs()
@@ -90,9 +91,20 @@ func (s *SecurityService) UnbanIP(ip string) (*UnbanIPResponse, error) {
 }
 
 // GetSecurityStats 获取安全统计信息
+// IPBan 未启用时返回结构完整的零值, 避免前端访问 stats.config.X 时崩溃
 func (s *SecurityService) GetSecurityStats() (interface{}, error) {
 	if s.banManager == nil {
-		return nil, ErrSecurityManagerNotEnabled
+		return map[string]interface{}{
+			"banned_ips_count":    0,
+			"error_records_count": 0,
+			"enabled":             false,
+			"config": map[string]interface{}{
+				"ErrorThreshold":         0,
+				"WindowMinutes":          0,
+				"BanDurationMinutes":     0,
+				"CleanupIntervalMinutes": 0,
+			},
+		}, nil
 	}
 
 	return s.banManager.GetStats(), nil
@@ -143,9 +155,10 @@ type BanHistoryItem struct {
 }
 
 // GetBanHistory 获取封禁历史记录
+// IPBan 未启用时返回空历史 (而非错误), 让前端 security 页面正常渲染空态
 func (s *SecurityService) GetBanHistory(limit int) (*BanHistoryResponse, error) {
 	if s.banManager == nil {
-		return nil, ErrSecurityManagerNotEnabled
+		return &BanHistoryResponse{History: []BanHistoryItem{}, Total: 0}, nil
 	}
 
 	history, err := s.banManager.GetBanHistory(limit)

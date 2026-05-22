@@ -295,13 +295,13 @@ export default function SecurityPage() {
               <div className="bg-muted p-4 rounded-lg">
                 <div className="text-sm text-muted-foreground mb-1">错误阈值</div>
                 <div className="text-lg font-semibold">
-                  {stats.config.ErrorThreshold} 次 / {stats.config.WindowMinutes} 分钟
+                  {stats.config?.ErrorThreshold ?? "-"} 次 / {stats.config?.WindowMinutes ?? "-"} 分钟
                 </div>
               </div>
               <div className="bg-muted p-4 rounded-lg">
                 <div className="text-sm text-muted-foreground mb-1">封禁时长</div>
                 <div className="text-lg font-semibold">
-                  {stats.config.BanDurationMinutes} 分钟
+                  {stats.config?.BanDurationMinutes ?? "-"} 分钟
                 </div>
               </div>
             </div>
