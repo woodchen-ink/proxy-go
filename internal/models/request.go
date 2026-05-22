@@ -13,6 +13,7 @@ type RequestLog struct {
 	Latency   int64     `json:"Latency"`
 	BytesSent int64     `json:"BytesSent"`
 	ClientIP  string    `json:"ClientIP"`
+	Referer   string    `json:"Referer"` // 引用来源 URL, 来自请求头 Referer, 可能为空
 }
 
 // RequestQueue 请求队列

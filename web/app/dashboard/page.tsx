@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/ui/use-toast"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
@@ -31,6 +33,7 @@ interface Metrics {
     Latency: number
     BytesSent: number
     ClientIP: string
+    Referer?: string
   }>
   latency_stats: {
     min: string
@@ -51,10 +54,15 @@ interface Metrics {
   }>
 }
 
+// RECENT_PAGE_SIZE 最近请求每次加载的步长; 后端 RequestQueue 上限 100, 所以 50 + 50 刚好两次到顶
+const RECENT_PAGE_SIZE = 50
+const RECENT_MAX = 100
+
 export default function DashboardPage() {
   const [metrics, setMetrics] = useState<Metrics | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [recentLimit, setRecentLimit] = useState(RECENT_PAGE_SIZE)
   const { toast } = useToast()
   const router = useRouter()
   const failureCountRef = useRef(0)
@@ -151,31 +159,116 @@ export default function DashboardPage() {
 
   if (!metrics) return null
 
+  const recentRequests = metrics.recent_requests || []
+  const recentShown = recentRequests.slice(0, recentLimit)
+  const recentTotal = Math.min(recentRequests.length, RECENT_MAX)
+  const canLoadMore = recentLimit < recentTotal
+
   return (
-    <div className="space-y-6">
-      <MetricTiles m={metrics} />
+    <Tabs defaultValue="overview" className="space-y-6">
+      <TabsList>
+        <TabsTrigger value="overview">概览</TabsTrigger>
+        <TabsTrigger value="traffic">流量</TabsTrigger>
+        <TabsTrigger value="quality">质量</TabsTrigger>
+        <TabsTrigger value="requests">请求</TabsTrigger>
+      </TabsList>
 
-      <PathTrendChart />
+      <TabsContent value="overview" className="space-y-6">
+        <MetricTiles m={metrics} />
+      </TabsContent>
 
-      <PathTotalsChart />
+      <TabsContent value="traffic" className="space-y-6">
+        <PathTrendChart />
+        <PathTotalsChart />
+        <BandwidthChart
+          history={metrics.bandwidth_history || {}}
+          current={metrics.current_bandwidth}
+        />
+      </TabsContent>
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-        <StatusCodeChart stats={metrics.status_code_stats || {}} />
-        <LatencyChart stats={metrics.latency_stats} />
-      </div>
+      <TabsContent value="quality" className="space-y-6">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+          <StatusCodeChart stats={metrics.status_code_stats || {}} />
+          <LatencyChart stats={metrics.latency_stats} />
+        </div>
+      </TabsContent>
 
-      <BandwidthChart
-        history={metrics.bandwidth_history || {}}
-        current={metrics.current_bandwidth}
-      />
+      <TabsContent value="requests" className="space-y-6">
+        {metrics.top_referers && metrics.top_referers.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>
+                引用来源
+                <span className="ml-2 text-sm font-normal text-muted-foreground">
+                  (近 24 小时, {metrics.top_referers.length} 条)
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b">
+                      <th className="p-2 text-left">来源</th>
+                      <th className="p-2 text-left">请求</th>
+                      <th className="p-2 text-left">错误</th>
+                      <th className="p-2 text-left">错误率</th>
+                      <th className="p-2 text-left">平均延迟</th>
+                      <th className="p-2 text-left">流量</th>
+                      <th className="p-2 text-left">最后访问</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {metrics.top_referers
+                      .slice()
+                      .sort((a, b) => b.request_count - a.request_count)
+                      .map((r, i) => {
+                        const errPct = ((r.error_count / r.request_count) * 100).toFixed(1)
+                        const last = new Date(r.last_access_time * 1000)
+                        return (
+                          <tr key={i} className="border-b hover:bg-accent/30">
+                            <td className="max-w-xs truncate p-2">
+                              <a
+                                href={r.path}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="hover:underline"
+                              >
+                                {r.path}
+                              </a>
+                            </td>
+                            <td className="p-2">{r.request_count}</td>
+                            <td className="p-2">{r.error_count}</td>
+                            <td className="p-2">
+                              <span
+                                className={
+                                  errPct === "0.0" ? "text-foreground" : "text-destructive"
+                                }
+                              >
+                                {errPct}%
+                              </span>
+                            </td>
+                            <td className="p-2">{r.avg_latency}</td>
+                            <td className="p-2">{formatBytes(r.bytes_transferred)}</td>
+                            <td className="p-2">
+                              <span title={last.toLocaleString()}>{getTimeAgo(last)}</span>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
-      {metrics.top_referers && metrics.top_referers.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle>
-              引用来源
+              最近请求
               <span className="ml-2 text-sm font-normal text-muted-foreground">
-                (近 24 小时, {metrics.top_referers.length} 条)
+                显示 {recentShown.length} / {recentTotal} 条
               </span>
             </CardTitle>
           </CardHeader>
@@ -184,120 +277,87 @@ export default function DashboardPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b">
+                    <th className="p-2 text-left">时间</th>
+                    <th className="p-2 text-left">路径</th>
                     <th className="p-2 text-left">来源</th>
-                    <th className="p-2 text-left">请求</th>
-                    <th className="p-2 text-left">错误</th>
-                    <th className="p-2 text-left">错误率</th>
-                    <th className="p-2 text-left">平均延迟</th>
-                    <th className="p-2 text-left">流量</th>
-                    <th className="p-2 text-left">最后访问</th>
+                    <th className="p-2 text-left">状态</th>
+                    <th className="p-2 text-left">延迟</th>
+                    <th className="p-2 text-left">大小</th>
+                    <th className="p-2 text-left">客户端</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {metrics.top_referers
-                    .slice()
-                    .sort((a, b) => b.request_count - a.request_count)
-                    .map((r, i) => {
-                      const errPct = ((r.error_count / r.request_count) * 100).toFixed(1)
-                      const last = new Date(r.last_access_time * 1000)
-                      return (
-                        <tr key={i} className="border-b hover:bg-accent/30">
-                          <td className="max-w-xs truncate p-2">
-                            <a
-                              href={r.path}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="hover:underline"
-                            >
-                              {r.path}
-                            </a>
-                          </td>
-                          <td className="p-2">{r.request_count}</td>
-                          <td className="p-2">{r.error_count}</td>
-                          <td className="p-2">
-                            <span
-                              className={
-                                errPct === "0.0" ? "text-foreground" : "text-destructive"
-                              }
-                            >
-                              {errPct}%
-                            </span>
-                          </td>
-                          <td className="p-2">{r.avg_latency}</td>
-                          <td className="p-2">{formatBytes(r.bytes_transferred)}</td>
-                          <td className="p-2">
-                            <span title={last.toLocaleString()}>{getTimeAgo(last)}</span>
-                          </td>
-                        </tr>
-                      )
-                    })}
+                  {recentShown.map((req, i) => (
+                    <tr key={i} className="border-b hover:bg-accent/30">
+                      <td className="p-2 whitespace-nowrap">{formatDate(req.Time)}</td>
+                      <td className="max-w-xs truncate p-2">
+                        <a
+                          href={req.Path}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="hover:underline"
+                        >
+                          {req.Path}
+                        </a>
+                      </td>
+                      <td className="max-w-[14rem] truncate p-2">
+                        {req.Referer ? (
+                          <a
+                            href={req.Referer}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="hover:underline"
+                            title={req.Referer}
+                          >
+                            {req.Referer}
+                          </a>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </td>
+                      <td className="p-2">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs ${getStatusBadge(
+                            req.Status
+                          )}`}
+                        >
+                          {req.Status}
+                        </span>
+                      </td>
+                      <td className="p-2 whitespace-nowrap">{formatLatency(req.Latency)}</td>
+                      <td className="p-2 whitespace-nowrap">{formatBytes(req.BytesSent)}</td>
+                      <td className="p-2 whitespace-nowrap">
+                        <Link
+                          href={`https://ip.czl.net/${req.ClientIP}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="hover:underline"
+                        >
+                          {req.ClientIP}
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
+            {canLoadMore && (
+              <div className="mt-4 flex justify-center">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    setRecentLimit((n) => Math.min(n + RECENT_PAGE_SIZE, RECENT_MAX))
+                  }
+                >
+                  加载更多 (+{Math.min(RECENT_PAGE_SIZE, recentTotal - recentLimit)})
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
-      )}
-
-      <Card>
-        <CardHeader>
-          <CardTitle>最近请求</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b">
-                  <th className="p-2 text-left">时间</th>
-                  <th className="p-2 text-left">路径</th>
-                  <th className="p-2 text-left">状态</th>
-                  <th className="p-2 text-left">延迟</th>
-                  <th className="p-2 text-left">大小</th>
-                  <th className="p-2 text-left">客户端</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(metrics.recent_requests || []).slice(0, 20).map((req, i) => (
-                  <tr key={i} className="border-b hover:bg-accent/30">
-                    <td className="p-2">{formatDate(req.Time)}</td>
-                    <td className="max-w-xs truncate p-2">
-                      <a
-                        href={req.Path}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="hover:underline"
-                      >
-                        {req.Path}
-                      </a>
-                    </td>
-                    <td className="p-2">
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs ${getStatusBadge(
-                          req.Status
-                        )}`}
-                      >
-                        {req.Status}
-                      </span>
-                    </td>
-                    <td className="p-2">{formatLatency(req.Latency)}</td>
-                    <td className="p-2">{formatBytes(req.BytesSent)}</td>
-                    <td className="p-2">
-                      <Link
-                        href={`https://ip.czl.net/${req.ClientIP}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="hover:underline"
-                      >
-                        {req.ClientIP}
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+      </TabsContent>
+    </Tabs>
   )
 }
 
