@@ -36,6 +36,7 @@ type AppComponents struct {
 	AuthHandler      *handler.AuthHandler
 	MetricsHandler   *handler.MetricsHandler
 	PathStatsHandler *handler.PathStatsHandler
+	CDNHandler       *handler.CDNHandler
 	// Routes
 	AdminHandler router.RouteHandler
 	MainRoutes   []router.RouteHandler
@@ -199,6 +200,9 @@ func createHandlers(components *AppComponents) error {
 	// 创建路径统计处理器
 	components.PathStatsHandler = handler.NewPathStatsHandler(metrics.GetCollector())
 
+	// 创建 CDN 缓存清理处理器
+	components.CDNHandler = handler.NewCDNHandler(components.ConfigManager)
+
 	log.Printf("[Init] 处理器创建完成")
 	return nil
 }
@@ -216,6 +220,7 @@ func setupRoutes(components *AppComponents) error {
 		components.ConfigHandler,
 		components.SecurityHandler,
 		components.PathStatsHandler,
+		components.CDNHandler,
 	)
 	components.MainRoutes = router.SetupMainRoutes(components.MirrorHandler, components.ProxyHandler, components.ConfigManager)
 

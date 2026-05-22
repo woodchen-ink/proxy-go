@@ -20,7 +20,7 @@ type Route struct {
 }
 
 // SetupAdminRoutes 设置管理员路由
-func SetupAdminRoutes(proxyHandler *handler.ProxyHandler, authHandler *handler.AuthHandler, metricsHandler *handler.MetricsHandler, mirrorHandler *handler.MirrorProxyHandler, configHandler *handler.ConfigHandler, securityHandler *handler.SecurityHandler, pathStatsHandler *handler.PathStatsHandler) ([]Route, RouteHandler) {
+func SetupAdminRoutes(proxyHandler *handler.ProxyHandler, authHandler *handler.AuthHandler, metricsHandler *handler.MetricsHandler, mirrorHandler *handler.MirrorProxyHandler, configHandler *handler.ConfigHandler, securityHandler *handler.SecurityHandler, pathStatsHandler *handler.PathStatsHandler, cdnHandler *handler.CDNHandler) ([]Route, RouteHandler) {
 	// 定义API路由
 	apiRoutes := []Route{
 		{http.MethodGet, "/admin/api/auth", authHandler.LoginHandler, false},
@@ -44,6 +44,9 @@ func SetupAdminRoutes(proxyHandler *handler.ProxyHandler, authHandler *handler.A
 		{http.MethodPost, "/admin/api/path-stats/reset", pathStatsHandler.ResetPathStats, true},
 		{http.MethodPost, "/admin/api/path-stats/reset-all", pathStatsHandler.ResetAllPathStats, true},
 		{http.MethodGet, "/admin/api/metrics/timeseries", handler.NewTimeseriesHandler().GetTimeseries, true},
+		{http.MethodGet, "/admin/api/cdn/providers", cdnHandler.ListProviders, true},
+		{http.MethodPost, "/admin/api/cdn/providers", cdnHandler.SaveProviders, true},
+		{http.MethodPost, "/admin/api/cdn/purge", cdnHandler.Purge, true},
 	}
 
 	// 添加安全API路由（如果启用了安全功能）

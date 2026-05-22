@@ -11,6 +11,24 @@ type Config struct {
 	Cache       CacheConfig           `json:"Cache"`       // 缓存配置
 	MirrorCache CacheConfig           `json:"MirrorCache"` // 镜像缓存配置
 	FaviconURL  string                `json:"FaviconURL"`  // Favicon URL (可选)，支持环境变量 FAVICON_URL 覆盖
+	CDN         CDNConfig             `json:"CDN"`         // 外部 CDN 缓存清理配置 (Cloudflare / EdgeOne 等)
+}
+
+// CDNConfig 外部 CDN 缓存清理配置
+// 允许配置多个 provider, 但同时只能启用一个 (Enabled=true 唯一)
+type CDNConfig struct {
+	Providers []CDNProvider `json:"Providers"`
+}
+
+// CDNProvider 单个 CDN 厂商配置
+// Type 取值: "cloudflare" / "edgeone"
+// Credentials 按 Type 解释 (cloudflare: apiToken/zoneId; edgeone: secretId/secretKey/zoneId)
+type CDNProvider struct {
+	ID          string            `json:"ID"`
+	Name        string            `json:"Name"`
+	Type        string            `json:"Type"`
+	Enabled     bool              `json:"Enabled"`
+	Credentials map[string]string `json:"Credentials"`
 }
 
 type PathConfig struct {

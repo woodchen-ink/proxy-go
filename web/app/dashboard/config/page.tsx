@@ -26,6 +26,7 @@ import PathCacheConfigDialog from "./components/PathCacheConfigDialog"
 import SecurityConfigPanel from "./components/SecurityConfigPanel"
 import ExtensionRuleDialog from "./components/ExtensionRuleDialog"
 import CacheManagement from "./components/CacheManagement"
+import CDNCacheManagement from "./components/CDNCacheManagement"
 import { convertToBytes, convertBytesToUnit } from "./utils"
 
 interface ExtRuleConfig {
@@ -567,6 +568,49 @@ export default function ConfigPage() {
     }
   }
 
+  // handleClearPathCDNCache 通过 CDN 厂商一键清理当前路径前缀的远端缓存
+  // 走 /admin/api/cdn/purge?type=prefixes, 自动用当前 origin 拼成完整 URL
+  const handleClearPathCDNCache = async (path: string) => {
+    try {
+      const origin = typeof window !== "undefined" ? window.location.origin : ""
+      const target = origin
+        ? origin.replace(/\/+$/, "") + (path.endsWith("/") ? path : path + "/")
+        : (path.endsWith("/") ? path : path + "/")
+
+      const response = await fetch("/admin/api/cdn/purge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "prefixes", targets: [target] }),
+      })
+
+      if (response.status === 401) {
+        localStorage.removeItem("token")
+        router.push("/login")
+        return
+      }
+
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || !data?.result?.success) {
+        const msg = data?.result?.message || data?.error || "CDN 清理失败"
+        if (response.status === 424) {
+          throw new Error("未启用 CDN provider, 请先到 CDN 缓存 tab 配置")
+        }
+        throw new Error(msg)
+      }
+
+      toast({
+        title: "CDN 已清理",
+        description: data.result.job_id ? `任务 ID: ${data.result.job_id}` : `目标: ${target}`,
+      })
+    } catch (error) {
+      toast({
+        title: "CDN 清理失败",
+        description: error instanceof Error ? error.message : "CDN 清理失败",
+        variant: "destructive",
+      })
+    }
+  }
+
   const handleResetPathStats = async (path: string) => {
     const token = localStorage.getItem("token")
     if (!token) {
@@ -878,6 +922,7 @@ export default function ConfigPage() {
             <TabsList>
               <TabsTrigger value="paths">路径映射</TabsTrigger>
               <TabsTrigger value="cache">缓存管理</TabsTrigger>
+              <TabsTrigger value="cdn">CDN 缓存</TabsTrigger>
               <TabsTrigger value="security">安全策略</TabsTrigger>
             </TabsList>
 
@@ -1091,7 +1136,7 @@ export default function ConfigPage() {
                       <Card>
                         <CardHeader className="flex flex-row items-center justify-between">
                           <CardTitle className="text-lg">缓存配置</CardTitle>
-                          <div className="flex gap-2">
+                          <div className="flex flex-wrap gap-2">
                             <Button variant="outline" size="sm" onClick={() => setCacheDialogOpen(true)}>
                               <Database className="w-4 h-4 mr-2" />
                               配置缓存
@@ -1103,7 +1148,16 @@ export default function ConfigPage() {
                               className="text-warning hover:text-warning hover:bg-warning/10"
                             >
                               <Eraser className="w-4 h-4 mr-2" />
-                              清理缓存
+                              清理本地缓存
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleClearPathCDNCache(selectedPath)}
+                              className="text-warning hover:text-warning hover:bg-warning/10"
+                            >
+                              <Eraser className="w-4 h-4 mr-2" />
+                              清理 CDN 缓存
                             </Button>
                           </div>
                         </CardHeader>
@@ -1217,6 +1271,10 @@ export default function ConfigPage() {
 
             <TabsContent value="cache" className="space-y-6">
               <CacheManagement />
+            </TabsContent>
+
+            <TabsContent value="cdn" className="space-y-6">
+              <CDNCacheManagement />
             </TabsContent>
 
             <TabsContent value="security" className="space-y-6">
