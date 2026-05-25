@@ -42,9 +42,10 @@ Actions → **Deploy Cloudflare Worker** → **Run workflow**。
 Workflow 会自动完成：
 - 创建（或复用）D1 数据库
 - 写入 `wrangler.toml`
-- 远程应用所有 SQL migrations
 - 把 API Token 注入 Worker secret
 - 部署 Worker 并打印访问 URL
+
+> Schema 建表由 proxy-go 启动时通过 worker 的通用 SQL endpoint 推送, 不需要在此步骤手动应用 migration。
 
 ### 5. 把结果写回 proxy-go
 
@@ -77,15 +78,15 @@ npm run d1:create
 cp sample.wrangler.toml wrangler.toml
 # 编辑 wrangler.toml，把 database_id 填进去
 
-# 3. 应用迁移（注意 --remote）
-npm run d1:remote
-
-# 4. 设置 API Token
+# 3. 设置 API Token
 wrangler secret put API_TOKEN
 # 提示输入 token 时粘贴
 
-# 5. 部署
+# 4. 部署
 npm run deploy
+
+# Schema 不需要手动建表 - proxy-go 启动会通过通用 SQL endpoint 推送
+# 应急路径 (proxy-go 暂时不可用 / D1 完全空): npm run d1:remote
 ```
 
 注意事项：

@@ -65,12 +65,12 @@ func InitSyncService() error {
 
 	log.Printf("[Sync] D1 sync service initialized (endpoint: %s)", d1Config.Endpoint)
 
-	// 启动期触发一次自动迁移, 让远端 worker 把缺失的表 / 索引补齐;
+	// 启动期由 Go 推 schema 到 worker, 已应用的自动跳过
 	// 失败不阻塞启动 (D1 临时不可达时主服务仍能跑, 下次重启再尝试)
-	migCtx, migCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	migCtx, migCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer migCancel()
-	if mr, err := d1Client.ApplyMigrations(migCtx); err != nil {
-		log.Printf("[Sync] Auto-migration skipped: %v", err)
+	if mr, err := runMigrations(migCtx, d1Client); err != nil {
+		log.Printf("[Sync] Auto-migration skipped (will retry on next restart): %v", err)
 	} else if len(mr.Applied) > 0 {
 		log.Printf("[Sync] Auto-migration applied %d new schema(s): %v (skipped %d already-applied)", len(mr.Applied), mr.Applied, len(mr.Skipped))
 	} else {

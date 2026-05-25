@@ -530,21 +530,42 @@ func (c *D1Client) GetLatencyDistribution(ctx context.Context) ([]LatencyMetric,
 	return result.Data, nil
 }
 
-// MigrationResult /migrations/apply 返回结构
-type MigrationResult struct {
-	Applied []string `json:"applied"`
-	Skipped []string `json:"skipped"`
+// SQLStatement 通用 SQL 执行单元
+//
+// SQL 走 worker 端 `prepare(...).bind(...params)` 路径; Params 为空时直接 prepare 后执行
+type SQLStatement struct {
+	SQL    string `json:"sql"`
+	Params []any  `json:"params,omitempty"`
 }
 
-// ApplyMigrations 触发 worker 端自动迁移, 已应用的 id 自动跳过
+// SQLBatchResult 单条 statement 的执行结果 (changes / last_row_id)
+type SQLBatchResult struct {
+	Changes   int64 `json:"changes"`
+	LastRowID int64 `json:"last_row_id"`
+}
+
+// ExecuteSQLBatch 把 statements 作为单次事务推到 worker 执行
 //
-// 设计为启动期一次性调用; 失败时返回 error, 调用方可记录日志后继续 (D1 不可用不应阻塞主服务启动)
-func (c *D1Client) ApplyMigrations(ctx context.Context) (*MigrationResult, error) {
-	url := fmt.Sprintf("%s/migrations/apply", c.endpoint)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
+// 用途: schema 演进 (CREATE / ALTER / INDEX 等), 由 pkg/sync/migrations.go 调用; D1 batch 是事务的,
+// 任一条失败整批回滚, 不会出现"半成品 schema"
+//
+// 业务数据写入仍走各自的批量 endpoint (/path-stats, /metrics/path-timeseries 等),
+// 它们有路径级缓存语义和参数校验, 比走通用 SQL 更安全也更可读
+func (c *D1Client) ExecuteSQLBatch(ctx context.Context, statements []SQLStatement) ([]SQLBatchResult, error) {
+	if len(statements) == 0 {
+		return nil, nil
+	}
+	reqData, err := json.Marshal(map[string]any{"statements": statements})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/admin/sql/batch", c.endpoint)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
+	req.Header.Set("Content-Type", "application/json")
 	if c.token != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.token))
 	}
@@ -561,14 +582,53 @@ func (c *D1Client) ApplyMigrations(ctx context.Context) (*MigrationResult, error
 	}
 
 	var result struct {
-		Success bool     `json:"success"`
-		Applied []string `json:"applied"`
-		Skipped []string `json:"skipped"`
+		Success bool             `json:"success"`
+		Results []SQLBatchResult `json:"results"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
-	return &MigrationResult{Applied: result.Applied, Skipped: result.Skipped}, nil
+	return result.Results, nil
+}
+
+// QuerySQL 通用查询, 返回 rows (每行是字段名 → 值的 map)
+//
+// 用途: 启动期查 app_migrations 等"无对应业务 endpoint"的轻量查询; 业务读路径走各自的 GET endpoint
+func (c *D1Client) QuerySQL(ctx context.Context, sql string, params []any) ([]map[string]any, error) {
+	reqData, err := json.Marshal(map[string]any{"sql": sql, "params": params})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/admin/sql/query", c.endpoint)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.token))
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("D1 API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Success bool             `json:"success"`
+		Rows    []map[string]any `json:"rows"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return result.Rows, nil
 }
 
 // PathTimeseriesPoint 单节点单小时的桶记录 (上报)

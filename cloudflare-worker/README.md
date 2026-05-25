@@ -1,6 +1,8 @@
 # Proxy-Go Sync Worker
 
-Cloudflare Worker，用 D1 数据库存放 proxy-go 的配置、路径统计、IP 封禁记录和指标。
+Cloudflare Worker, 用 D1 数据库存放 proxy-go 的配置、路径统计、IP 封禁记录和指标。
+
+**架构**: 自 v3 起, 所有 schema / migration 定义由 Go 端 (`pkg/sync/migrations.go`) 持有。worker 本身只是"D1 的薄壳代理 + 业务批量 endpoint", 一次部署后通常不再变动; 加表加索引只发版 Go, worker 不需要重新 deploy。
 
 ## 🚀 一键部署（推荐，无需下载代码）
 
@@ -38,9 +40,10 @@ Cloudflare Worker，用 D1 数据库存放 proxy-go 的配置、路径统计、I
 Workflow 会自动：
 - 创建 D1 数据库（已存在则复用）
 - 写好 `wrangler.toml`（本地不会留下任何文件）
-- 远程应用所有 SQL migrations
 - 把 API Token 注入 Worker secret
 - 部署 Worker 并打印访问 URL
+
+> Schema 不需要在这一步建表 — Go 服务首次启动时会通过通用 SQL endpoint 把所有表/索引推到 D1。workflow 仍会调用 `wrangler d1 migrations apply` 当作冗余兜底, 失败也不影响。
 
 ### 5. 把结果填回 proxy-go
 
@@ -71,21 +74,21 @@ npm run d1:create
 cp sample.wrangler.toml wrangler.toml
 # 编辑 wrangler.toml，填入 database_id
 
-# 3. 应用迁移到远程 D1（注意 --remote）
-npm run d1:remote
-
-# 4. 设置 API Token
+# 3. 设置 API Token
 wrangler secret put API_TOKEN
 
-# 5. 部署
+# 4. 部署
 npm run deploy
+
+# Schema 不需要手动建表 — Go 启动时会通过通用 SQL endpoint 推送全部 schema
+# 应急 (D1 完全空 + Go 暂时不可用 时手动建库): npm run d1:remote 用 migrations/*.sql
 ```
 
 ---
 
 ## API Endpoints
 
-所有接口支持 CORS，返回 JSON。需要在 `Authorization: Bearer <token>` 头里带 token。
+所有接口支持 CORS, 返回 JSON。需要在 `Authorization: Bearer <token>` 头里带 token。
 
 | 资源 | 方法 | 端点 |
 |------|------|------|
@@ -96,6 +99,12 @@ npm run deploy
 | 系统配置 | GET / POST | `/config-other` |
 | 状态码统计 | GET / POST | `/metrics/status-codes` |
 | 延迟分布 | GET / POST | `/metrics/latency` |
+| 路径时间序列 | GET / POST / DELETE | `/metrics/path-timeseries` |
+| Referer 天序列 | GET / POST / DELETE | `/metrics/referer-daily` |
+| 通用 SQL batch | POST | `/admin/sql/batch` — schema 演进入口, Go 端调用 |
+| 通用 SQL query | POST | `/admin/sql/query` — 读已应用的 migration id |
+
+> `/admin/sql/*` 能执行任意 SQL (含 DROP), 必须配 `API_TOKEN`; 任何对接方都不应该走这两个 endpoint 写业务数据, 业务写入走各自的批量 endpoint (有路径级缓存语义和参数校验)。
 
 详细参数和返回格式见 [src/index.ts](src/index.ts)。
 
@@ -103,26 +112,32 @@ npm run deploy
 
 ## Database Schema
 
-D1 数据库使用列式存储，5 张表：
+D1 数据库使用列式存储:
 
 | 表 | 用途 |
 |------|------|
-| `path_stats` | 每个路径的请求量/错误率/缓存命中率等 |
+| `path_stats` | 每个路径的请求量 / 错误率 / 缓存命中率等 |
+| `path_timeseries` | 路径维度的小时级桶, 跨节点 `(path, ts_hour, node_id)` 主键 |
+| `referer_daily` | Referer host 天级桶, 本地时区切日 |
 | `banned_ips` / `banned_ips_history` | 当前封禁与历史记录 |
-| `config_maps` | 路径级配置（target、扩展规则、缓存策略） |
-| `config_other` | 系统级配置（compression、security、cache、mirror_cache） |
+| `config_maps` | 路径级配置 (target、扩展规则、缓存策略) |
+| `config_other` | 系统级配置 (compression、security、cache、mirror_cache) |
 | `status_codes` / `latency_distribution` | HTTP 状态码和延迟分桶 |
+| `app_migrations` | Go 端推 schema 的去重跟踪表 |
 
-完整 schema 见 [migrations/](migrations/)。
+**Source of truth**: [`pkg/sync/migrations.go`](../pkg/sync/migrations.go) 中的 `migrations` 数组, 由 Go 启动时推到 D1。
+
+[`migrations/`](migrations/) 下的 `.sql` 文件是给 `wrangler d1 migrations apply` 准备的应急备份, 默认无需维护; 加新表只改 Go。
 
 ---
 
 ## 与 Proxy-Go 集成
 
-proxy-go 启动时：
-- 从 D1 拉取最新配置（本地 `data/config.json` 仅作 fallback）
-- 配置变更时即时同步到 D1（带 3s 防抖窗口合并连续修改）
-- 每 30 分钟批量上传 metrics 和 path stats
+proxy-go 启动时:
+- 通过 `/admin/sql/batch` + `/admin/sql/query` 推 schema (新表 / 新索引自动建出来, 已应用的跳过)
+- 从 D1 拉取最新配置 (本地 `data/config.json` 仅作 fallback)
+- 配置变更时即时同步到 D1 (带 3s 防抖窗口合并连续修改)
+- 每 30 分钟批量上传 metrics、path stats、path/referer 时间序列
 - 进程退出时执行最后一次 flush
 
 无需 S3、对象存储或本地共享卷。

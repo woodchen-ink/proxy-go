@@ -111,8 +111,11 @@ jobs:
           EOF
           cat wrangler.toml
 
-      - name: Apply D1 migrations (remote)
-        run: npx wrangler d1 migrations apply "$D1_DB_NAME" --remote
+      # Schema 由 Go 启动时通过通用 SQL endpoint 推送 (pkg/sync/migrations.go)
+      # 这一步是冗余兜底: 给"Worker 部署后 Go 还没跑起来"的间隙也能保证有表
+      # 失败不阻断 deploy, 与 Go 端 idempotent 应用语义兼容
+      - name: Apply D1 migrations (remote, redundant fallback)
+        run: npx wrangler d1 migrations apply "$D1_DB_NAME" --remote || true
 
       - name: Set API_TOKEN secret
         run: |

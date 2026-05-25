@@ -4,7 +4,6 @@
  */
 
 import * as db from './db';
-import { applyPendingMigrations } from './migrations';
 
 export interface Env {
 	DB: D1Database;
@@ -165,11 +164,61 @@ export default {
 			}
 
 			// ============================================
-			// Migrations API: Go 服务启动时调用, 自动补齐缺失的 schema
+			// 通用 SQL 执行 endpoint
+			//
+			// 由 Go 端持有所有 schema / migration 定义, worker 只做 D1 的薄壳代理:
+			//   POST /admin/sql/batch   { statements: [{sql, params?}] }  -> 事务批量执行 (D1 batch 是事务的)
+			//   POST /admin/sql/query   { sql, params? }                  -> 查询返回 rows
+			//
+			// 安全模型: 这两个 endpoint 能直接执行任意 SQL (含 DROP), 全部走 API_TOKEN 鉴权,
+			// 与其他写入 endpoint 同等保护; 没设 API_TOKEN 的部署等于裸奔, 与现状一致
 			// ============================================
-			if (path === '/migrations/apply' && request.method === 'POST') {
-				const result = await applyPendingMigrations(env.DB);
-				return jsonResponse({ success: true, ...result }, 200, corsHeaders);
+			if (path === '/admin/sql/batch' && request.method === 'POST') {
+				const body = await request.json<{
+					statements: Array<{ sql: string; params?: unknown[] }>;
+				}>();
+				if (!body.statements || !Array.isArray(body.statements) || body.statements.length === 0) {
+					return jsonResponse(
+						{ error: 'Invalid request: non-empty statements array required' },
+						400,
+						corsHeaders
+					);
+				}
+				const prepared = body.statements.map((s) => {
+					const stmt = env.DB.prepare(s.sql);
+					return s.params && s.params.length > 0 ? stmt.bind(...s.params) : stmt;
+				});
+				const results = await env.DB.batch(prepared);
+				return jsonResponse(
+					{
+						success: true,
+						results: results.map((r) => ({
+							changes: r.meta?.changes ?? 0,
+							last_row_id: r.meta?.last_row_id ?? 0,
+						})),
+					},
+					200,
+					corsHeaders
+				);
+			}
+
+			if (path === '/admin/sql/query' && request.method === 'POST') {
+				const body = await request.json<{ sql: string; params?: unknown[] }>();
+				if (!body.sql || typeof body.sql !== 'string') {
+					return jsonResponse(
+						{ error: 'Invalid request: sql string required' },
+						400,
+						corsHeaders
+					);
+				}
+				const stmt = env.DB.prepare(body.sql);
+				const bound = body.params && body.params.length > 0 ? stmt.bind(...body.params) : stmt;
+				const result = await bound.all();
+				return jsonResponse(
+					{ success: true, rows: result.results ?? [] },
+					200,
+					corsHeaders
+				);
 			}
 
 			// ============================================
@@ -289,7 +338,7 @@ export default {
 				return jsonResponse(
 					{
 						name: 'proxy-go-sync API v2',
-						version: '2.1.0',
+						version: '3.0.0',
 						endpoints: {
 							'Path Stats': {
 								'GET /path-stats': 'Get all path statistics',
@@ -315,8 +364,9 @@ export default {
 								'GET /config-other?key=xxx': 'Get specific config',
 								'POST /config-other': 'Batch update system configs',
 							},
-							'Migrations': {
-								'POST /migrations/apply': 'Apply pending schema migrations (idempotent)',
+							'Admin SQL (token-protected)': {
+								'POST /admin/sql/batch': 'Run a transactional batch of {sql, params?} statements',
+								'POST /admin/sql/query': 'Run a single read query and return rows',
 							},
 							'Metrics': {
 								'GET /metrics/status-codes': 'Get HTTP status code statistics',
