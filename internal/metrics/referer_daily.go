@@ -14,11 +14,20 @@ import (
 //   - 仅记录"当天累计 requests >= refererMinRequestsPerDay"的 host 上报到 D1, 控制 cardinality
 //   - 槽位旧值在落入新一天时自动清零, 不需要显式滚动
 //   - 跨节点聚合在 D1 worker 端通过 GROUP BY 完成
+//   - 天数按本地时区切分 (容器 TZ=Asia/Shanghai), 与查询端口径一致, 避免 UTC+8 下"今天上半天看不见数据"
 
 const (
 	refererDaySlotCount      = 40
 	refererMinRequestsPerDay = 10
 )
+
+// localDay 把 time.Time 切成本地时区下的"自纪元天数"
+// 该口径必须与查询端 (internal/handler/referer_daily.go) 一致, 否则上报存的 ts_date
+// 与查询的 minDate/maxDate 区间错位, 出现"今天数据不显示"或"30 天范围漏一天"
+func localDay(t time.Time) int64 {
+	_, offset := t.Zone()
+	return (t.Unix() + int64(offset)) / 86400
+}
 
 // refererDayBucket 单天桶
 type refererDayBucket struct {
@@ -67,7 +76,7 @@ func (r *RefererDailySeries) Record(host string, bytes int64, isError bool, now 
 	if host == "" {
 		return
 	}
-	day := now.Unix() / 86400
+	day := localDay(now)
 	idx := int(day % refererDaySlotCount)
 
 	s := r.getOrCreate(host)
@@ -104,7 +113,7 @@ func (r *RefererDailySeries) SnapshotForUpload(now time.Time, days int) []DailyP
 	if days <= 0 || days > refererDaySlotCount {
 		days = refererDaySlotCount
 	}
-	curDay := now.Unix() / 86400
+	curDay := localDay(now)
 	minDay := curDay - int64(days-1)
 
 	r.mu.RLock()

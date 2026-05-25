@@ -14,6 +14,13 @@ import (
 // 数据源为 D1 referer_daily 表 (跨节点聚合), 仪表盘用于排查异常引用
 type RefererDailyHandler struct{}
 
+// localDay 把 time.Time 切成本地时区下的"自纪元天数"
+// 该口径必须与上报端 (internal/metrics/referer_daily.go) 一致, 否则查询区间与存储的 ts_date 错位
+func localDay(t time.Time) int64 {
+	_, offset := t.Zone()
+	return (t.Unix() + int64(offset)) / 86400
+}
+
 // NewRefererDailyHandler 创建 referer 天级序列处理器
 func NewRefererDailyHandler() *RefererDailyHandler {
 	return &RefererDailyHandler{}
@@ -68,8 +75,8 @@ func (h *RefererDailyHandler) GetRefererDaily(w http.ResponseWriter, r *http.Req
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 	startDay := todayStart.Add(-time.Duration(days-1) * 24 * time.Hour)
 
-	minDate := startDay.Unix() / 86400
-	maxDate := todayStart.Unix() / 86400
+	maxDate := localDay(now)
+	minDate := maxDate - int64(days-1)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
@@ -99,6 +106,10 @@ func buildRefererDailyView(
 	loc := now.Location()
 	byHost := make(map[string]*refererHostView, 64)
 
+	// startDay 是本地时区 00:00, 其本地天数即 ts_date 序列的起点;
+	// p.TsDate 已经是本地时区天数 (由上报端 localDay 写入), 直接相减即可
+	startLocalDay := localDay(startDay)
+
 	for _, p := range points {
 		v, ok := byHost[p.Host]
 		if !ok {
@@ -113,9 +124,7 @@ func buildRefererDailyView(
 			byHost[p.Host] = v
 		}
 
-		bucketTime := time.Unix(p.TsDate*86400, 0).In(loc)
-		bucketDay := time.Date(bucketTime.Year(), bucketTime.Month(), bucketTime.Day(), 0, 0, 0, 0, loc)
-		idx := int(bucketDay.Sub(startDay).Hours() / 24)
+		idx := int(p.TsDate - startLocalDay)
 		if idx < 0 || idx >= days {
 			continue
 		}
