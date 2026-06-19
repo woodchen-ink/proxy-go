@@ -1,8 +1,6 @@
 module proxy-go
 
-go 1.23.0
-
-toolchain go1.23.1
+go 1.24.0
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.30.3
@@ -11,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.58.3
 	github.com/joho/godotenv v1.5.1
 	github.com/woodchen-ink/go-web-utils v1.0.0
-	golang.org/x/net v0.40.0
+	golang.org/x/net v0.44.0
 )
 
 require (
@@ -29,5 +27,5 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.26.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.30.3 // indirect
 	github.com/aws/smithy-go v1.20.3 // indirect
-	golang.org/x/text v0.25.0 // indirect
+	golang.org/x/text v0.29.0 // indirect
 )
