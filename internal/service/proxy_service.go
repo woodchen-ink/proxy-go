@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"proxy-go/internal/cache"
@@ -107,6 +108,25 @@ func (s *ProxyService) SelectTarget(req *ProxyRequest) (string, bool) {
 	return targetURL, isAltTarget
 }
 
+// SelectTargets 返回有序的回源列表与是否命中扩展名规则。
+//
+// 优先级与 SelectTarget 一致: 扩展名规则命中时返回该规则的单个目标 (本功能不对扩展名规则做多源);
+// 未命中扩展名规则时返回路径级多源列表 (PathConfig.GetTargets()), 供 ExecuteRequestWithFailover 按序回落。
+func (s *ProxyService) SelectTargets(req *ProxyRequest) ([]string, bool) {
+	targetURL, isAltTarget := s.ruleService.GetTargetURL(s.client, req.OriginalRequest, req.PathConfig, req.TargetPath)
+	if isAltTarget {
+		// 命中扩展名规则: 单源, 不参与多源回落
+		return []string{targetURL}, true
+	}
+	// 未命中规则: 使用路径级有序多源列表
+	targets := req.PathConfig.GetTargets()
+	if len(targets) == 0 {
+		// 兜底: GetTargets 为空时回落到 GetTargetURL 给的结果 (理论上不会发生)
+		return []string{targetURL}, false
+	}
+	return targets, false
+}
+
 // CreateProxyRequest 创建代理请求
 func (s *ProxyService) CreateProxyRequest(req *ProxyRequest, targetURL string) (*http.Request, error) {
 	// 构建完整的目标URL
@@ -205,6 +225,90 @@ func (s *ProxyService) ExecuteRequest(proxyReq *http.Request) (*http.Response, e
 		return nil, fmt.Errorf("proxy request failed after retries: %v", err)
 	}
 	return resp, nil
+}
+
+// canFailover 判断请求是否可以安全地跨多个回源重试。
+//
+// 两个条件同时满足才允许换源:
+//  1. 方法幂等 (GET/HEAD/OPTIONS): 非幂等方法 (POST/PUT/PATCH/DELETE) 换源会放大副作用 (重复下单 / 重复写入), 一律只打首源
+//  2. 无请求体 (ContentLength <= 0): CreateProxyRequest 直接复用 OriginalRequest.Body, 读一次即耗尽, 无法重放给下一个源
+//
+// 注: 服务端的 r.Body 永不为 nil (空体也是 http.NoBody), 故用 ContentLength 判断有无 body, 不靠 Body 身份。
+func canFailover(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return r.ContentLength <= 0
+	default:
+		return false
+	}
+}
+
+// ExecuteRequestWithFailover 按顺序对多个回源执行请求, 失败自动回落到下一个源。
+//
+// 触发回落: 连接级失败 (ExecuteWithRetry 同源重试耗尽后仍报错) 或 isFailoverStatusCode 命中的状态码。
+// 返回最终采用的响应、命中的目标 URL、是否实际发生过回落。
+//
+// 边界处理:
+//   - targets 为空: 返回 error
+//   - 单源 / 请求不可回落 (带 body 的非幂等请求): 只打首源, 等价于旧行为
+//   - 全部源都是可回落状态码: 返回最后一个响应 (让客户端拿到真实错误, 而不是吞掉)
+//   - 全部源都是连接错误: 返回最后一个 error
+func (s *ProxyService) ExecuteRequestWithFailover(req *ProxyRequest, targets []string) (*http.Response, string, bool, error) {
+	if len(targets) == 0 {
+		return nil, "", false, fmt.Errorf("no upstream target configured")
+	}
+
+	// 不可回落或单源: 只打首源, 走原有单源路径
+	if len(targets) == 1 || !canFailover(req.OriginalRequest) {
+		target := targets[0]
+		httpReq, err := s.CreateProxyRequest(req, target)
+		if err != nil {
+			return nil, target, false, err
+		}
+		resp, err := s.ExecuteRequest(httpReq)
+		return resp, target, false, err
+	}
+
+	// 最后一个源即使返回可回落状态码 (404/5xx) 也透传其真实响应, 不再换源 —— 见下方 i==末位 的判断。
+	// 因此循环只会经由"构建请求失败 / 连接错误"两种 continue 走到循环外, lastErr 记录最后一次失败原因。
+	var lastErr error
+	for i, target := range targets {
+		isLast := i == len(targets)-1
+
+		httpReq, err := s.CreateProxyRequest(req, target)
+		if err != nil {
+			lastErr = err
+			log.Printf("[Failover] 源 %d/%d (%s) 构建请求失败: %v", i+1, len(targets), target, err)
+			continue
+		}
+
+		resp, err := s.ExecuteRequest(httpReq)
+		if err != nil {
+			// 同源重试已耗尽仍失败 (连接级错误), 换下一个源
+			lastErr = err
+			log.Printf("[Failover] 源 %d/%d (%s) 连接失败, 尝试下一个源: %v", i+1, len(targets), target, err)
+			continue
+		}
+
+		// 非末位源命中可回落状态码: 关闭响应体, 尝试下一个源;
+		// 末位源直接透传 (让客户端拿到真实错误, 而不是吞掉)
+		if isFailoverStatusCode(resp.StatusCode) && !isLast {
+			log.Printf("[Failover] 源 %d/%d (%s) 返回 %d, 尝试下一个源", i+1, len(targets), target, resp.StatusCode)
+			resp.Body.Close()
+			lastErr = fmt.Errorf("failover status code: %d from %s", resp.StatusCode, target)
+			continue
+		}
+
+		// 命中可用响应 (或已是最后一个源, 透传其真实响应)
+		didFailover := i > 0
+		if didFailover {
+			log.Printf("[Failover] 回落成功: 第 %d 个源 (%s) 返回 %d", i+1, target, resp.StatusCode)
+		}
+		return resp, target, didFailover, nil
+	}
+
+	// 所有源都因构建请求失败 / 连接错误而无响应
+	return nil, targets[len(targets)-1], true, fmt.Errorf("all %d upstreams failed, last error: %v", len(targets), lastErr)
 }
 
 // ProcessResponse 处理代理响应

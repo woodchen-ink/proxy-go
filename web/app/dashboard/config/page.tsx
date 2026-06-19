@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Switch } from "@/components/ui/switch"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import PathStatsCard from "./components/PathStatsCard"
@@ -28,7 +29,7 @@ import ExtensionRuleDialog from "./components/ExtensionRuleDialog"
 import CacheManagement from "./components/CacheManagement"
 import CDNCacheManagement from "./components/CDNCacheManagement"
 import RefererBanEditor from "./components/RefererBanEditor"
-import { convertToBytes, convertBytesToUnit } from "./utils"
+import { convertToBytes, convertBytesToUnit, getMappingTargets, targetsToText, parseTargetsText, buildTargetFields } from "./utils"
 
 interface ExtRuleConfig {
   Extensions: string;
@@ -47,6 +48,7 @@ interface CacheConfig {
 
 interface PathMapping {
   DefaultTarget: string
+  DefaultTargets?: string[]   // 有序回源列表 (主源在前); 多源时失败自动按序回落
   ExtensionMap?: ExtRuleConfig[]
   SizeThreshold?: number
   MaxSize?: number
@@ -435,10 +437,11 @@ export default function ConfigPage() {
   }
 
   const handleAddPath = () => {
-    if (!config || !newPath || !newTarget) {
+    const targets = parseTargetsText(newTarget)
+    if (!config || !newPath || targets.length === 0) {
       toast({
         title: "错误",
-        description: "路径和目标不能为空",
+        description: "路径和至少一个回源目标不能为空",
         variant: "destructive",
       })
       return
@@ -455,7 +458,7 @@ export default function ConfigPage() {
 
     const newConfig = { ...config }
     newConfig.MAP[newPath] = {
-      DefaultTarget: newTarget,
+      ...buildTargetFields(targets),
       RedirectMode: newRedirectMode,
       Enabled: true,
       ExtensionMap: []
@@ -475,7 +478,8 @@ export default function ConfigPage() {
       setEditedTarget(mapping)
       setEditedRedirectMode(false)
     } else {
-      setEditedTarget(mapping.DefaultTarget)
+      // 多行编辑: 一行一个回源, 第一行为主源
+      setEditedTarget(targetsToText(getMappingTargets(mapping)))
       setEditedRedirectMode(mapping.RedirectMode || false)
     }
     setEditedPath(selectedPath)
@@ -483,10 +487,11 @@ export default function ConfigPage() {
   }
 
   const handleSaveEditPath = () => {
-    if (!selectedPath || !config || !editedTarget) {
+    const targets = parseTargetsText(editedTarget)
+    if (!selectedPath || !config || targets.length === 0) {
       toast({
         title: "错误",
-        description: "目标不能为空",
+        description: "至少需要一个回源目标",
         variant: "destructive",
       })
       return
@@ -506,8 +511,8 @@ export default function ConfigPage() {
     const mapping = newConfig.MAP[selectedPath]
 
     const newPathMapping = typeof mapping === 'string'
-      ? { DefaultTarget: editedTarget, RedirectMode: editedRedirectMode, Enabled: true }
-      : { ...mapping, DefaultTarget: editedTarget, RedirectMode: editedRedirectMode }
+      ? { ...buildTargetFields(targets), RedirectMode: editedRedirectMode, Enabled: true }
+      : { ...mapping, ...buildTargetFields(targets), RedirectMode: editedRedirectMode }
 
     // 路径重命名：删除旧键，设置新键
     if (trimmedPath !== selectedPath) {
@@ -1020,13 +1025,18 @@ export default function ConfigPage() {
                           />
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="new-target">默认目标</Label>
-                          <Input
+                          <Label htmlFor="new-target">回源目标</Label>
+                          <Textarea
                             id="new-target"
                             value={newTarget}
                             onChange={(e) => setNewTarget(e.target.value)}
-                            placeholder="https://example.com"
+                            placeholder={"https://primary.example.com\nhttps://backup1.example.com"}
+                            rows={3}
+                            className="font-mono text-sm"
                           />
+                          <p className="text-xs text-muted-foreground">
+                            一行一个回源地址，第一行为主源。多个源时，请求失败 (连接错误 / 404 / 5xx) 会自动按顺序回落到下一个源。
+                          </p>
                         </div>
                         <div className="flex items-center space-x-2">
                           <Switch
@@ -1140,12 +1150,17 @@ export default function ConfigPage() {
                           {isEditingPath ? (
                             <>
                               <div className="space-y-2">
-                                <Label htmlFor="edit-target">默认目标</Label>
-                                <Input
+                                <Label htmlFor="edit-target">回源目标</Label>
+                                <Textarea
                                   id="edit-target"
                                   value={editedTarget}
                                   onChange={(e) => setEditedTarget(e.target.value)}
+                                  rows={3}
+                                  className="font-mono text-sm"
                                 />
+                                <p className="text-xs text-muted-foreground">
+                                  一行一个回源地址，第一行为主源。多源时失败自动按顺序回落到下一个源。
+                                </p>
                               </div>
                               <div className="flex items-center space-x-2">
                                 <Switch
@@ -1162,12 +1177,37 @@ export default function ConfigPage() {
                             </>
                           ) : (
                             <>
-                              <div className="flex items-start justify-between">
-                                <Label>默认目标</Label>
-                                <span className="text-sm text-muted-foreground break-all max-w-md text-right">
-                                  {selectedMappingObj.DefaultTarget}
-                                </span>
-                              </div>
+                              {(() => {
+                                const targets = getMappingTargets(selectedMappingObj)
+                                if (targets.length <= 1) {
+                                  return (
+                                    <div className="flex items-start justify-between">
+                                      <Label>回源目标</Label>
+                                      <span className="text-sm text-muted-foreground break-all max-w-md text-right">
+                                        {targets[0] ?? selectedMappingObj.DefaultTarget}
+                                      </span>
+                                    </div>
+                                  )
+                                }
+                                return (
+                                  <div className="space-y-2">
+                                    <div className="flex items-center justify-between">
+                                      <Label>回源目标</Label>
+                                      <Badge variant="secondary">{targets.length} 个源 · 自动回落</Badge>
+                                    </div>
+                                    <ol className="space-y-1">
+                                      {targets.map((t, i) => (
+                                        <li key={i} className="flex items-center gap-2 text-sm">
+                                          <Badge variant={i === 0 ? "default" : "outline"} className="shrink-0 font-mono text-xs">
+                                            {i === 0 ? "主源" : `备源 ${i}`}
+                                          </Badge>
+                                          <span className="text-muted-foreground break-all">{t}</span>
+                                        </li>
+                                      ))}
+                                    </ol>
+                                  </div>
+                                )
+                              })()}
                               {selectedMappingObj.RedirectMode && (
                                 <div className="flex items-center gap-2">
                                   <Badge variant="outline">302重定向模式</Badge>

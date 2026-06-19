@@ -5,7 +5,7 @@ import (
 )
 
 type Config struct {
-	MAP         map[string]PathConfig `json:"MAP"`        // 路径映射配置
+	MAP         map[string]PathConfig `json:"MAP"` // 路径映射配置
 	Compression CompressionConfig     `json:"Compression"`
 	Security    SecurityConfig        `json:"Security"`    // 安全配置
 	Cache       CacheConfig           `json:"Cache"`       // 缓存配置
@@ -32,12 +32,16 @@ type CDNProvider struct {
 }
 
 type PathConfig struct {
-	DefaultTarget string          `json:"DefaultTarget"` // 默认目标URL
-	ExtensionMap  []ExtRuleConfig `json:"ExtensionMap"`  // 扩展名映射规则
-	ExtRules      []ExtensionRule `json:"-"`             // 内部使用，存储处理后的扩展名规则
-	RedirectMode  bool            `json:"RedirectMode"`  // 是否使用302跳转模式
-	Enabled       bool            `json:"Enabled"`       // 是否启用此路径映射，默认true
-	CacheConfig   *CacheConfig    `json:"CacheConfig"`   // 独立缓存配置，为nil则使用全局配置
+	DefaultTarget string `json:"DefaultTarget"` // 默认目标URL (单源; 多源时等于 DefaultTargets[0])
+	// DefaultTargets 有序回源列表, 第一个为主源, 后续为备源。
+	// 请求失败时按序回落 (failover): 连接级失败 / 5xx 网关错误 / 404 等触发切换到下一个源。
+	// 为空时退化为单源, 使用 DefaultTarget。取源统一走 GetTargets(), 不要直接读这两个字段。
+	DefaultTargets []string        `json:"DefaultTargets,omitempty"`
+	ExtensionMap   []ExtRuleConfig `json:"ExtensionMap"` // 扩展名映射规则
+	ExtRules       []ExtensionRule `json:"-"`            // 内部使用，存储处理后的扩展名规则
+	RedirectMode   bool            `json:"RedirectMode"` // 是否使用302跳转模式
+	Enabled        bool            `json:"Enabled"`      // 是否启用此路径映射，默认true
+	CacheConfig    *CacheConfig    `json:"CacheConfig"`  // 独立缓存配置，为nil则使用全局配置
 	// RefererBan 路径级引用来源黑名单, 与全局 SecurityConfig.RefererBan 叠加 (任一命中即拒)
 	RefererBan *RefererBanConfig `json:"RefererBan"`
 	// CFImageOpt 启用 Cloudflare Images 友好的缓存键策略:
@@ -103,6 +107,27 @@ type ExtRuleConfig struct {
 	MaxSize       int64  `json:"MaxSize"`       // 最大阈值
 	RedirectMode  bool   `json:"RedirectMode"`  // 是否使用302跳转模式
 	Domains       string `json:"Domains"`       // 逗号分隔的域名列表，为空表示匹配所有域名
+}
+
+// GetTargets 返回有序回源列表 (主源在前, 备源在后)。
+// 优先用 DefaultTargets (剔除空白/空项); 为空时退化为单源 DefaultTarget。
+// service 层统一通过本方法取源, 避免各处重复写 nil/空判断。
+func (p *PathConfig) GetTargets() []string {
+	if len(p.DefaultTargets) > 0 {
+		targets := make([]string, 0, len(p.DefaultTargets))
+		for _, t := range p.DefaultTargets {
+			if t = strings.TrimSpace(t); t != "" {
+				targets = append(targets, t)
+			}
+		}
+		if len(targets) > 0 {
+			return targets
+		}
+	}
+	if p.DefaultTarget != "" {
+		return []string{p.DefaultTarget}
+	}
+	return nil
 }
 
 // 处理扩展名映射的方法

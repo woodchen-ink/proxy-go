@@ -165,6 +165,16 @@ var migrations = []Migration{
 			`CREATE INDEX IF NOT EXISTS idx_referer_daily_updated_at ON referer_daily(updated_at)`,
 		},
 	},
+	{
+		// extra_config 承载 config_maps 中没有专属列的 PathConfig 字段 (JSON):
+		// DefaultTargets (多源回落列表) / RefererBan / CFImageOpt / RedirectMode。
+		// 修复这些字段过去经 D1 上下行被丢弃的问题。
+		// 注: SQLite ADD COLUMN 不支持 IF NOT EXISTS, 但 app_migrations 保证本 id 只执行一次, 安全。
+		ID: "0005_add_config_maps_extra_config",
+		Statements: []string{
+			`ALTER TABLE config_maps ADD COLUMN extra_config TEXT`,
+		},
+	},
 }
 
 // MigrationResult 启动期迁移汇总, 仅用于日志

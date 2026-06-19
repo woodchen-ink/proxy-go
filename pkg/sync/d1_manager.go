@@ -387,6 +387,18 @@ func (m *D1Manager) downloadConfigWithFallback(ctx context.Context) (map[string]
 				}
 			}
 
+			// 合并 extra_config: 无专属列的字段 (DefaultTargets / RefererBan / CFImageOpt / RedirectMode)
+			if cm.ExtraConfig != "" {
+				var extra map[string]any
+				if err := json.Unmarshal([]byte(cm.ExtraConfig), &extra); err == nil {
+					for k, v := range extra {
+						pathConfig[k] = v
+					}
+				} else {
+					log.Printf("[D1Sync] Warning: failed to parse extra_config for path %s: %v", cm.Path, err)
+				}
+			}
+
 			mapConfig[cm.Path] = pathConfig
 		}
 		config["MAP"] = mapConfig
@@ -421,4 +433,3 @@ func (m *D1Manager) sendEvent(event SyncEvent) {
 		m.eventChan <- event
 	}
 }
-

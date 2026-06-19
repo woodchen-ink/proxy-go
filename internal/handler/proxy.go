@@ -318,39 +318,39 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 缓存未命中: 走统一的单次代理流程 (重定向 / 多源回落 / 响应处理 / 统计)
+	h.runProxyOnce(w, r, proxyReq, matchResult.MatchedPrefix, start, collector)
+}
+
+// runProxyOnce 执行一次完整的代理流程: 检查重定向 -> 选择多源并按序回落执行 -> 处理响应 -> 记录统计。
+// 由 ServeHTTP (缓存未命中) 与 handleMissedCache (缓存文件丢失重试) 共用, 避免两处重复维护代理逻辑。
+func (h *ProxyHandler) runProxyOnce(w http.ResponseWriter, r *http.Request, proxyReq *service.ProxyRequest, matchedPrefix string, start time.Time, collector *metrics.Collector) {
 	// 检查重定向
 	if h.proxyService.CheckRedirect(proxyReq, w) {
-		collector.RecordRequest(r.URL.Path, matchResult.MatchedPrefix, http.StatusFound, time.Since(start), 0, iputil.GetClientIP(r), r)
+		collector.RecordRequest(r.URL.Path, matchedPrefix, http.StatusFound, time.Since(start), 0, iputil.GetClientIP(r), r)
 		return
 	}
 
-	// 选择目标服务器
-	targetURL, altTarget := h.proxyService.SelectTarget(proxyReq)
+	// 选择有序回源列表 (扩展名规则单源 / 路径级多源)
+	targets, altTarget := h.proxyService.SelectTargets(proxyReq)
 
-	// 创建代理请求
-	httpReq, err := h.proxyService.CreateProxyRequest(proxyReq, targetURL)
-	if err != nil {
-		h.errorHandler(w, r, err)
-		return
-	}
-
-	// 执行请求
-	resp, err := h.proxyService.ExecuteRequest(httpReq)
+	// 按序执行, 失败自动回落到下一个源
+	resp, _, didFailover, err := h.proxyService.ExecuteRequestWithFailover(proxyReq, targets)
 	if err != nil {
 		h.errorHandler(w, r, fmt.Errorf("error executing request: %v", err))
 		return
 	}
 
-	// 处理响应
+	// 处理响应; 命中扩展名规则或发生过回落都视为 AltTarget
 	defer resp.Body.Close()
-	written, err := h.proxyService.ProcessResponse(proxyReq, resp, w, altTarget)
+	written, err := h.proxyService.ProcessResponse(proxyReq, resp, w, altTarget || didFailover)
 	if err != nil {
 		h.errorHandler(w, r, err)
 		return
 	}
 
 	// 记录统计信息（缓存未命中）
-	collector.RecordRequestWithCache(r.URL.Path, matchResult.MatchedPrefix, resp.StatusCode, time.Since(start), written, iputil.GetClientIP(r), r, false, 0)
+	collector.RecordRequestWithCache(r.URL.Path, matchedPrefix, resp.StatusCode, time.Since(start), written, iputil.GetClientIP(r), r, false, 0)
 }
 
 // handleWelcome 处理根路径欢迎消息
@@ -412,37 +412,6 @@ func (h *ProxyHandler) handleMissedCache(w http.ResponseWriter, r *http.Request,
 		StartTime:       start,
 	}
 
-	// 检查重定向
-	if h.proxyService.CheckRedirect(proxyReq, w) {
-		collector.RecordRequest(r.URL.Path, matchResult.MatchedPrefix, http.StatusFound, time.Since(start), 0, iputil.GetClientIP(r), r)
-		return
-	}
-
-	// 选择目标服务器
-	targetURL, altTarget := h.proxyService.SelectTarget(proxyReq)
-
-	// 创建代理请求
-	httpReq, err := h.proxyService.CreateProxyRequest(proxyReq, targetURL)
-	if err != nil {
-		h.errorHandler(w, r, err)
-		return
-	}
-
-	// 执行请求
-	resp, err := h.proxyService.ExecuteRequest(httpReq)
-	if err != nil {
-		h.errorHandler(w, r, fmt.Errorf("error executing request: %v", err))
-		return
-	}
-
-	// 处理响应
-	defer resp.Body.Close()
-	written, err := h.proxyService.ProcessResponse(proxyReq, resp, w, altTarget)
-	if err != nil {
-		h.errorHandler(w, r, err)
-		return
-	}
-
-	// 记录统计信息（缓存未命中）
-	collector.RecordRequestWithCache(r.URL.Path, matchResult.MatchedPrefix, resp.StatusCode, time.Since(start), written, iputil.GetClientIP(r), r, false, 0)
+	// 复用统一的单次代理流程 (重定向 / 多源回落 / 响应处理 / 统计)
+	h.runProxyOnce(w, r, proxyReq, matchResult.MatchedPrefix, start, collector)
 }

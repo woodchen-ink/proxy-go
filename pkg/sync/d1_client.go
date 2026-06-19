@@ -33,21 +33,21 @@ func NewD1Client(endpoint, token string) *D1Client {
 // ============================================
 
 type PathStat struct {
-	Path              string  `json:"path"`
-	RequestCount      int64   `json:"request_count"`
-	ErrorCount        int64   `json:"error_count"`
-	BytesTransferred  int64   `json:"bytes_transferred"`
-	Status2xx         int64   `json:"status_2xx"`
-	Status3xx         int64   `json:"status_3xx"`
-	Status4xx         int64   `json:"status_4xx"`
-	Status5xx         int64   `json:"status_5xx"`
-	CacheHits         int64   `json:"cache_hits"`
-	CacheMisses       int64   `json:"cache_misses"`
-	CacheHitRate      float64 `json:"cache_hit_rate"`
-	BytesSaved        int64   `json:"bytes_saved"`
-	AvgLatency        string  `json:"avg_latency,omitempty"`
-	LastAccessTime    int64   `json:"last_access_time,omitempty"`
-	UpdatedAt         int64   `json:"updated_at"`
+	Path             string  `json:"path"`
+	RequestCount     int64   `json:"request_count"`
+	ErrorCount       int64   `json:"error_count"`
+	BytesTransferred int64   `json:"bytes_transferred"`
+	Status2xx        int64   `json:"status_2xx"`
+	Status3xx        int64   `json:"status_3xx"`
+	Status4xx        int64   `json:"status_4xx"`
+	Status5xx        int64   `json:"status_5xx"`
+	CacheHits        int64   `json:"cache_hits"`
+	CacheMisses      int64   `json:"cache_misses"`
+	CacheHitRate     float64 `json:"cache_hit_rate"`
+	BytesSaved       int64   `json:"bytes_saved"`
+	AvgLatency       string  `json:"avg_latency,omitempty"`
+	LastAccessTime   int64   `json:"last_access_time,omitempty"`
+	UpdatedAt        int64   `json:"updated_at"`
 }
 
 func (c *D1Client) GetPathStats(ctx context.Context, path string) ([]PathStat, error) {
@@ -124,15 +124,15 @@ func (c *D1Client) BatchUpsertPathStats(ctx context.Context, stats []PathStat) e
 // ============================================
 
 type BannedIP struct {
-	IP           string `json:"ip"`
-	BanTime      int64  `json:"ban_time"`
-	BanEndTime   int64  `json:"ban_end_time"`
-	Reason       string `json:"reason,omitempty"`
-	ErrorCount   int    `json:"error_count"`
-	IsActive     bool   `json:"is_active"`
-	UnbanTime    int64  `json:"unban_time,omitempty"`
-	UnbanReason  string `json:"unban_reason,omitempty"`
-	UpdatedAt    int64  `json:"updated_at"`
+	IP          string `json:"ip"`
+	BanTime     int64  `json:"ban_time"`
+	BanEndTime  int64  `json:"ban_end_time"`
+	Reason      string `json:"reason,omitempty"`
+	ErrorCount  int    `json:"error_count"`
+	IsActive    bool   `json:"is_active"`
+	UnbanTime   int64  `json:"unban_time,omitempty"`
+	UnbanReason string `json:"unban_reason,omitempty"`
+	UpdatedAt   int64  `json:"updated_at"`
 }
 
 type BannedIPHistory struct {
@@ -174,8 +174,8 @@ func (c *D1Client) GetBannedIPs(ctx context.Context, activeOnly bool) ([]BannedI
 	}
 
 	var result struct {
-		Success bool        `json:"success"`
-		Data    []BannedIP  `json:"data"`
+		Success bool       `json:"success"`
+		Data    []BannedIP `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
@@ -223,11 +223,14 @@ func (c *D1Client) BatchUpsertBannedIPs(ctx context.Context, bans []BannedIP) er
 type ConfigMap struct {
 	Path           string `json:"path"`
 	DefaultTarget  string `json:"default_target"`
-	Enabled        int    `json:"enabled"` // D1 返回整数 0/1
+	Enabled        int    `json:"enabled"`                   // D1 返回整数 0/1
 	ExtensionRules string `json:"extension_rules,omitempty"` // JSON
 	CacheConfig    string `json:"cache_config,omitempty"`    // JSON
-	CreatedAt      int64  `json:"created_at"`
-	UpdatedAt      int64  `json:"updated_at"`
+	// ExtraConfig 承载没有专属列的 PathConfig 字段 (JSON):
+	// DefaultTargets / RefererBan / CFImageOpt / RedirectMode
+	ExtraConfig string `json:"extra_config,omitempty"`
+	CreatedAt   int64  `json:"created_at"`
+	UpdatedAt   int64  `json:"updated_at"`
 }
 
 // IsEnabled 返回是否启用

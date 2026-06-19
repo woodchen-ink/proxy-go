@@ -78,6 +78,31 @@ func isRetriableStatusCode(code int) bool {
 	return ok
 }
 
+// failoverStatusCodes 是触发"切换到下一个回源"的状态码集合。
+//
+// 与 retriableStatusCodes (同源重试) 的区别: failover 是换源, 所以额外纳入 404 ——
+// 遗留 URL 可能只存在于某个备源, 主源 404 时应去下一个源找。
+//   - 404 Not Found: 主源没有该资源, 备源可能有 (本功能的核心场景)
+//   - 408/429: 主源超时/限流, 换源分摊
+//   - 500/502/503/504: 主源不可达或网关级错误, 换源
+//
+// 不纳入 401/403/410 等: 鉴权失败 / 资源已永久删除属于"语义明确"的响应, 换源既无意义也可能掩盖问题。
+var failoverStatusCodes = map[int]struct{}{
+	http.StatusNotFound:            {}, // 404
+	http.StatusRequestTimeout:      {}, // 408
+	http.StatusTooManyRequests:     {}, // 429
+	http.StatusInternalServerError: {}, // 500
+	http.StatusBadGateway:          {}, // 502
+	http.StatusServiceUnavailable:  {}, // 503
+	http.StatusGatewayTimeout:      {}, // 504
+}
+
+// isFailoverStatusCode 判断该状态码是否应触发切换到下一个回源
+func isFailoverStatusCode(code int) bool {
+	_, ok := failoverStatusCodes[code]
+	return ok
+}
+
 // ExecuteWithRetry 执行带重试的HTTP请求
 func ExecuteWithRetry(client *http.Client, req *http.Request, config RetryConfig) (*http.Response, error) {
 	var lastErr error
@@ -164,8 +189,8 @@ func cloneRequest(req *http.Request) *http.Request {
 
 // RetryStats 重试统计信息
 type RetryStats struct {
-	TotalRequests   int64 // 总请求数
-	RetriedRequests int64 // 重试的请求数
+	TotalRequests     int64 // 总请求数
+	RetriedRequests   int64 // 重试的请求数
 	SuccessAfterRetry int64 // 重试后成功的请求数
 	FailedAfterRetry  int64 // 重试后仍失败的请求数
 }

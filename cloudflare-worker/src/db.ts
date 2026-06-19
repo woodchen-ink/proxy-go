@@ -286,6 +286,7 @@ export interface ConfigMap {
 	enabled: boolean;
 	extension_rules?: string; // JSON
 	cache_config?: string; // JSON
+	extra_config?: string; // JSON: 无专属列的 PathConfig 字段 (DefaultTargets / RefererBan / CFImageOpt / RedirectMode)
 	created_at: number;
 	updated_at: number;
 }
@@ -313,14 +314,15 @@ export async function upsertConfigMap(db: D1Database, map: ConfigMap): Promise<v
 	await db
 		.prepare(
 			`INSERT INTO config_maps (
-        path, default_target, enabled, extension_rules, cache_config,
+        path, default_target, enabled, extension_rules, cache_config, extra_config,
         created_at, updated_at
-      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
       ON CONFLICT(path) DO UPDATE SET
         default_target = excluded.default_target,
         enabled = excluded.enabled,
         extension_rules = excluded.extension_rules,
         cache_config = excluded.cache_config,
+        extra_config = excluded.extra_config,
         updated_at = excluded.updated_at`
 		)
 		.bind(
@@ -329,6 +331,7 @@ export async function upsertConfigMap(db: D1Database, map: ConfigMap): Promise<v
 			map.enabled ? 1 : 0,
 			map.extension_rules || null,
 			map.cache_config || null,
+			map.extra_config || null,
 			map.created_at || now,
 			map.updated_at || now
 		)

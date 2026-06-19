@@ -185,18 +185,48 @@ func (cm *ConfigManager) normalizeConfig(config *Config) {
 		// 如果 Enabled 为 false 且 DefaultTarget 不为空
 		// 说明这是旧配置（JSON unmarshal 默认值为 false）
 		// 我们将其设置为 true（默认启用）
-		if !pathConfig.Enabled && pathConfig.DefaultTarget != "" {
+		if !pathConfig.Enabled && (pathConfig.DefaultTarget != "" || len(pathConfig.DefaultTargets) > 0) {
 			pathConfig.Enabled = true
 		}
 		if pathConfig.RefererBan != nil && pathConfig.RefererBan.Hosts == nil {
 			pathConfig.RefererBan.Hosts = []string{}
 		}
+		// 归一多源列表: 剔除空白/空项; 保证 DefaultTarget 与 DefaultTargets[0] 语义一致,
+		// 让依赖 DefaultTarget 的逻辑 (mirror 标记判断 / 展示) 在多源配置下不破。
+		normalizeTargets(&pathConfig)
 		config.MAP[path] = pathConfig
 	}
 
 	// 全局 RefererBan 也归一
 	if config.Security.RefererBan.Hosts == nil {
 		config.Security.RefererBan.Hosts = []string{}
+	}
+}
+
+// normalizeTargets 归一单路径的多源配置
+//  1. 剔除 DefaultTargets 中的空白/空项
+//  2. DefaultTargets 非空且 DefaultTarget 为空时, 用 DefaultTargets[0] 回填 DefaultTarget
+//     (mirror 标记判断、前端展示等仍按 DefaultTarget 读单值, 不能让它落空)
+//  3. 仅 1 个源时清空 DefaultTargets, 只保留 DefaultTarget, 让配置保持精简
+func normalizeTargets(pc *PathConfig) {
+	if len(pc.DefaultTargets) > 0 {
+		cleaned := make([]string, 0, len(pc.DefaultTargets))
+		for _, t := range pc.DefaultTargets {
+			if t = strings.TrimSpace(t); t != "" {
+				cleaned = append(cleaned, t)
+			}
+		}
+		pc.DefaultTargets = cleaned
+	}
+
+	if len(pc.DefaultTargets) > 0 {
+		if pc.DefaultTarget == "" {
+			pc.DefaultTarget = pc.DefaultTargets[0]
+		}
+		// 单源不必保留列表, 退化为 DefaultTarget 单字段
+		if len(pc.DefaultTargets) == 1 {
+			pc.DefaultTargets = nil
+		}
 	}
 }
 
