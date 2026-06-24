@@ -387,7 +387,7 @@ func (m *D1Manager) downloadConfigWithFallback(ctx context.Context) (map[string]
 				}
 			}
 
-			// 合并 extra_config: 无专属列的字段 (DefaultTargets / RefererBan / CFImageOpt / RedirectMode)
+			// 合并 extra_config: 无专属列的字段 (DefaultTargets / RefererBan / RefererRedirect / CFImageOpt / RedirectMode)
 			if cm.ExtraConfig != "" {
 				var extra map[string]any
 				if err := json.Unmarshal([]byte(cm.ExtraConfig), &extra); err == nil {

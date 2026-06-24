@@ -63,6 +63,16 @@ type ProxyHandler struct {
 	// pathRefererMatchers 按"路径前缀"持有路径级 Referer 黑名单 matcher;
 	// 配置热更新时整体替换 (build 出新的 map 再 Store), 读侧无锁。
 	pathRefererMatchers atomic.Pointer[map[string]*security.RefererMatcher]
+
+	// pathRefererRedirects 按"路径前缀"持有路径级 Referer 重定向规则 (有序);
+	// 与 pathRefererMatchers 同款生命周期, 配置热更新时整体替换, 读侧无锁。
+	pathRefererRedirects atomic.Pointer[map[string][]refererRedirectEntry]
+}
+
+// refererRedirectEntry 单条已编译的重定向规则: matcher 命中则 302 到 target 前缀
+type refererRedirectEntry struct {
+	matcher *security.RefererMatcher
+	target  string
 }
 
 // buildPathRefererMatchers 由 PathConfig 构建路径级 matcher; 只为配置了 RefererBan 的路径建立条目
@@ -76,6 +86,34 @@ func buildPathRefererMatchers(pathMap map[string]config.PathConfig) map[string]*
 		m := security.Compile(rb.Hosts, rb.BlockEmpty)
 		if m.HasRules() {
 			out[prefix] = m
+		}
+	}
+	return out
+}
+
+// buildPathRefererRedirects 由 PathConfig 构建路径级 Referer 重定向表; 只为启用且规则有效的路径建条目
+// 空 Referer 不参与分流: Compile 第二参 blockEmpty 固定 false。target 为空或 host 名单为空的规则跳过。
+func buildPathRefererRedirects(pathMap map[string]config.PathConfig) map[string][]refererRedirectEntry {
+	out := make(map[string][]refererRedirectEntry)
+	for prefix, cfg := range pathMap {
+		rr := cfg.RefererRedirect
+		if rr == nil || !rr.Enabled {
+			continue
+		}
+		entries := make([]refererRedirectEntry, 0, len(rr.Rules))
+		for _, rule := range rr.Rules {
+			target := strings.TrimSpace(rule.Target)
+			if target == "" {
+				continue
+			}
+			m := security.Compile(rule.Hosts, false)
+			if !m.HasRules() {
+				continue
+			}
+			entries = append(entries, refererRedirectEntry{matcher: m, target: target})
+		}
+		if len(entries) > 0 {
+			out[prefix] = entries
 		}
 	}
 	return out
@@ -231,9 +269,11 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 		},
 	}
 
-	// 初始化路径级 Referer 黑名单
+	// 初始化路径级 Referer 黑名单与 Referer 重定向
 	initMatchers := buildPathRefererMatchers(cfg.MAP)
 	handler.pathRefererMatchers.Store(&initMatchers)
+	initRedirects := buildPathRefererRedirects(cfg.MAP)
+	handler.pathRefererRedirects.Store(&initRedirects)
 
 	// 注册配置更新回调
 	config.RegisterUpdateCallback(func(newCfg *config.Config) {
@@ -244,6 +284,9 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 		// 重建路径级 Referer 黑名单 matcher 整张表
 		newMatchers := buildPathRefererMatchers(newCfg.MAP)
 		handler.pathRefererMatchers.Store(&newMatchers)
+		// 重建路径级 Referer 重定向规则整张表
+		newRedirects := buildPathRefererRedirects(newCfg.MAP)
+		handler.pathRefererRedirects.Store(&newRedirects)
 
 		// 清理ExtensionMatcher缓存，确保使用新配置
 		if handler.Cache != nil {
@@ -294,9 +337,28 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	referer := r.Header.Get("Referer")
+
+	// 路径级 Referer 重定向 (优先于黑名单): 命中即 302 分流到另一个目标前缀, 让该来源走另一个 CDN。
+	// 在缓存检查之前, 命中直接跳走, 不读不写本地缓存。
+	if redirects := h.pathRefererRedirects.Load(); redirects != nil {
+		if entries, ok := (*redirects)[matchResult.MatchedPrefix]; ok {
+			for _, entry := range entries {
+				if entry.matcher.IsBlocked(referer) {
+					targetURL := h.proxyService.BuildRefererRedirectURL(entry.target, matchResult.TargetPath, r.URL.RawQuery)
+					http.Redirect(w, r, targetURL, http.StatusFound)
+					log.Printf("[RefererRedirect] %s %s (referer=%q) -> 302 %s from %s",
+						r.Method, r.URL.Path, referer, targetURL, utils.GetRequestSource(r))
+					collector.RecordRequest(r.URL.Path, matchResult.MatchedPrefix, http.StatusFound, time.Since(start), 0, iputil.GetClientIP(r), r)
+					return
+				}
+			}
+		}
+	}
+
 	// 路径级 Referer 黑名单 (与全局规则叠加, 任一命中即拒); 在缓存检查之前, 防止已缓存内容被盗链方拿到
 	if matchers := h.pathRefererMatchers.Load(); matchers != nil {
-		if m, ok := (*matchers)[matchResult.MatchedPrefix]; ok && m.IsBlocked(r.Header.Get("Referer")) {
+		if m, ok := (*matchers)[matchResult.MatchedPrefix]; ok && m.IsBlocked(referer) {
 			http.Error(w, "Forbidden: referer not allowed", http.StatusForbidden)
 			collector.RecordRequest(r.URL.Path, matchResult.MatchedPrefix, http.StatusForbidden, time.Since(start), 0, iputil.GetClientIP(r), r)
 			return

@@ -44,6 +44,9 @@ type PathConfig struct {
 	CacheConfig    *CacheConfig    `json:"CacheConfig"`  // 独立缓存配置，为nil则使用全局配置
 	// RefererBan 路径级引用来源黑名单, 与全局 SecurityConfig.RefererBan 叠加 (任一命中即拒)
 	RefererBan *RefererBanConfig `json:"RefererBan"`
+	// RefererRedirect 路径级引用来源 302 重定向: 命中指定 host 名单时把请求 302 分流到另一个目标前缀,
+	// 用于"某引用站不走当前 CDN, 改走另一个 CDN"的场景。命中重定向优先于 RefererBan (跳走就不再判封禁)。
+	RefererRedirect *RefererRedirectConfig `json:"RefererRedirect"`
 	// CFImageOpt 启用 Cloudflare Images 友好的缓存键策略:
 	// 图片请求按 Accept 头中的图片格式 (avif/webp/jpeg/...) + 标准化后的浏览器类型分桶缓存,
 	// 避免不同设备拿到对方格式。源站不做格式协商时, 务必保持 false,
@@ -83,6 +86,22 @@ type RefererBanConfig struct {
 	Enabled    bool     `json:"Enabled"`
 	Hosts      []string `json:"Hosts"`
 	BlockEmpty bool     `json:"BlockEmpty"`
+}
+
+// RefererRedirectConfig 路径级引用来源 302 重定向配置
+// 多组规则按 Rules 顺序匹配, 第一个命中的规则决定目标 (先命中先跳)。
+// host 匹配与 RefererBanConfig.Hosts 一致, 走后缀语义 (含子域), 由 security.RefererMatcher 实现。
+// 空 Referer 不参与分流 (不命中任何规则), 避免误伤直接访问 / curl。
+type RefererRedirectConfig struct {
+	Enabled bool                  `json:"Enabled"`
+	Rules   []RefererRedirectRule `json:"Rules"`
+}
+
+// RefererRedirectRule 单条重定向规则: Referer host 命中 Hosts 时, 302 到 Target 拼出的目标
+// Target 为目标前缀 (如 "https://cdn2.com"), 最终 URL = Target + 剥掉路径前缀后的子路径 + 原 query
+type RefererRedirectRule struct {
+	Hosts  []string `json:"Hosts"`
+	Target string   `json:"Target"`
 }
 
 type IPBanConfig struct {

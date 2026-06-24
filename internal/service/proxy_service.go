@@ -101,6 +101,13 @@ func (s *ProxyService) CheckRedirect(req *ProxyRequest, w http.ResponseWriter) b
 	return false
 }
 
+// BuildRefererRedirectURL 为路径级 Referer 重定向拼出目标 URL
+// targetPrefix 为目标前缀 (如 https://cdn2.com), targetPath 为剥掉路径前缀后的子路径 (带前导 /),
+// 结果换 host 去前缀并保留原 query。URL 拼接复用 RedirectService.buildTargetURL, 与扩展名规则跳转一致。
+func (s *ProxyService) BuildRefererRedirectURL(targetPrefix, targetPath, rawQuery string) string {
+	return s.redirectService.buildTargetURL(targetPrefix, targetPath, rawQuery)
+}
+
 // SelectTarget 选择目标服务器
 func (s *ProxyService) SelectTarget(req *ProxyRequest) (string, bool) {
 	// 使用规则服务选择目标

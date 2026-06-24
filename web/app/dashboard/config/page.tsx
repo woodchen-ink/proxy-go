@@ -29,6 +29,7 @@ import ExtensionRuleDialog from "./components/ExtensionRuleDialog"
 import CacheManagement from "./components/CacheManagement"
 import CDNCacheManagement from "./components/CDNCacheManagement"
 import RefererBanEditor from "./components/RefererBanEditor"
+import RefererRedirectEditor, { RefererRedirectConfig } from "./components/RefererRedirectEditor"
 import { convertToBytes, convertBytesToUnit, getMappingTargets, targetsToText, parseTargetsText, buildTargetFields } from "./utils"
 
 interface ExtRuleConfig {
@@ -57,6 +58,7 @@ interface PathMapping {
   CacheConfig?: CacheConfig
   CFImageOpt?: boolean
   RefererBan?: RefererBanConfig
+  RefererRedirect?: RefererRedirectConfig
 }
 
 interface CompressionConfig {
@@ -419,6 +421,17 @@ export default function ConfigPage() {
     const base: PathMapping =
       typeof mapping === "string" ? { DefaultTarget: mapping, Enabled: true } : mapping
     newConfig.MAP[path] = { ...base, RefererBan: next }
+    updateConfig(newConfig)
+  }
+
+  // handlePathRefererRedirectUpdate 整段替换路径级 Referer 重定向; 命中即 302 分流, 优先于黑名单
+  const handlePathRefererRedirectUpdate = (path: string, next: RefererRedirectConfig) => {
+    if (!config) return
+    const newConfig = { ...config }
+    const mapping = newConfig.MAP[path]
+    const base: PathMapping =
+      typeof mapping === "string" ? { DefaultTarget: mapping, Enabled: true } : mapping
+    newConfig.MAP[path] = { ...base, RefererRedirect: next }
     updateConfig(newConfig)
   }
 
@@ -1288,6 +1301,27 @@ export default function ConfigPage() {
                             }
                             onUpdate={(next) => handlePathRefererBanUpdate(selectedPath, next)}
                             emptyHint="未添加 host, 即使开启黑名单也仅在拦截空 Referer 时生效"
+                          />
+                        </CardContent>
+                      </Card>
+
+                      {/* 引用来源重定向 (路径级, 命中 302 分流到另一个 CDN) */}
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="text-lg">引用来源 (Referer) 重定向</CardTitle>
+                          <p className="text-sm font-normal text-muted-foreground">
+                            命中的来源不走当前 CDN, 改 302 跳到另一个目标前缀; 优先于黑名单, 在缓存检查前生效
+                          </p>
+                        </CardHeader>
+                        <CardContent>
+                          <RefererRedirectEditor
+                            config={
+                              selectedMappingObj.RefererRedirect ?? {
+                                Enabled: false,
+                                Rules: [],
+                              }
+                            }
+                            onUpdate={(next) => handlePathRefererRedirectUpdate(selectedPath, next)}
                           />
                         </CardContent>
                       </Card>

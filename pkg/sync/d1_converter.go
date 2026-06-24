@@ -101,7 +101,7 @@ func ConvertConfigFromFile(filePath string) ([]ConfigMap, []ConfigOther, error) 
 
 // extraConfigKeys 是 config_maps 中没有专属列、需通过 extra_config 列持久化的 PathConfig 字段。
 // 加新的"无专属列字段"时在此追加, 上下行 (buildExtraConfig / mergeExtraConfig) 自动覆盖。
-var extraConfigKeys = []string{"DefaultTargets", "RedirectMode", "CFImageOpt", "RefererBan"}
+var extraConfigKeys = []string{"DefaultTargets", "RedirectMode", "CFImageOpt", "RefererBan", "RefererRedirect"}
 
 // buildExtraConfig 从单路径配置中提取无专属列字段, 序列化为 extra_config JSON。
 // 只收集存在且非"零值"的字段, 让历史 / 单源配置保持 extra_config 为空, 不污染存量数据。
