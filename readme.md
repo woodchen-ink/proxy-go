@@ -130,6 +130,7 @@ curl -X POST 'http://127.0.0.1:3336/api/cache/clear-url' \
 - `url` 支持完整 URL 或站内路径
 - 内部只按路径清理，自动忽略 query 和 fragment
 - `type` 可选，支持 `proxy`、`mirror`、`all`，默认 `all`
+- 本地缓存清理成功后，若已启用 CDN provider，会异步按 `urls` 类型清理对应完整 URL 的 CDN 缓存；输入为站内路径时使用请求 host 与代理协议头补全 URL，CDN 清理失败只记录日志，不影响本接口响应
 
 ### 成功响应
 

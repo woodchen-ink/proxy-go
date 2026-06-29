@@ -1,15 +1,20 @@
 package handler
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"proxy-go/internal/cache"
+	"proxy-go/internal/config"
 	"proxy-go/internal/service"
 
 	"github.com/woodchen-ink/go-web-utils/iputil"
@@ -17,7 +22,13 @@ import (
 
 type CacheRemoteHandler struct {
 	cacheService *service.CacheService
+	cdnPurger    remoteCacheCDNPurger
 	token        string
+}
+
+type remoteCacheCDNPurger interface {
+	ListProviders() []config.CDNProvider
+	Purge(context.Context, service.CDNPurgeRequest) (*service.CDNPurgeResult, error)
 }
 
 type remoteCacheClearRequest struct {
@@ -39,9 +50,15 @@ type remoteCacheClearResponseData struct {
 }
 
 // NewCacheRemoteHandler 创建远程单 URL 清理缓存处理器。
-func NewCacheRemoteHandler(proxyCache, mirrorCache *cache.CacheManager) *CacheRemoteHandler {
+func NewCacheRemoteHandler(proxyCache, mirrorCache *cache.CacheManager, configManagers ...*config.ConfigManager) *CacheRemoteHandler {
+	var cdnPurger remoteCacheCDNPurger
+	if len(configManagers) > 0 && configManagers[0] != nil {
+		cdnPurger = service.NewCDNService(configManagers[0])
+	}
+
 	return &CacheRemoteHandler{
 		cacheService: service.NewCacheService(proxyCache, mirrorCache),
+		cdnPurger:    cdnPurger,
 		token:        strings.TrimSpace(os.Getenv("CACHE_CLEAR_REMOTE_TOKEN")),
 	}
 }
@@ -94,6 +111,7 @@ func (h *CacheRemoteHandler) ClearCacheByURL(w http.ResponseWriter, r *http.Requ
 	}
 
 	log.Printf("[RemoteCacheClear] OK ip=%s type=%s input=%q normalized=%q cleared_items=%d", iputil.GetClientIP(r), cacheType, req.URL, normalizedURL, clearedItems)
+	h.purgeCDNByURLAsync(r, req.URL, normalizedURL)
 	h.writeJSON(w, http.StatusOK, remoteCacheClearResponse{
 		Code: http.StatusOK,
 		Data: remoteCacheClearResponseData{
@@ -104,6 +122,111 @@ func (h *CacheRemoteHandler) ClearCacheByURL(w http.ResponseWriter, r *http.Requ
 		},
 		Msg: "cache cleared",
 	})
+}
+
+// purgeCDNByURLAsync 在本地缓存清理成功后后台触发当前启用 CDN provider 的 URL purge。
+func (h *CacheRemoteHandler) purgeCDNByURLAsync(r *http.Request, inputURL, normalizedURL string) {
+	if h.cdnPurger == nil || !hasEnabledCDNProvider(h.cdnPurger.ListProviders()) {
+		return
+	}
+
+	target, err := buildRemoteCacheCDNTarget(r, inputURL, normalizedURL)
+	if err != nil {
+		log.Printf("[RemoteCacheClear] CDN_SKIP input=%q normalized=%q err=%v", inputURL, normalizedURL, err)
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+		defer cancel()
+
+		result, err := h.cdnPurger.Purge(ctx, service.CDNPurgeRequest{
+			Type:    service.CDNPurgeTypeURLs,
+			Targets: []string{target},
+		})
+		if err != nil {
+			log.Printf("[RemoteCacheClear] CDN_ERR target=%q err=%v", target, err)
+			return
+		}
+
+		jobID := ""
+		if result != nil {
+			jobID = result.JobID
+		}
+		log.Printf("[RemoteCacheClear] CDN_OK target=%q job_id=%q", target, jobID)
+	}()
+}
+
+// hasEnabledCDNProvider 判断是否存在启用中的 CDN provider, 未配置时远程清理保持本地 no-op。
+func hasEnabledCDNProvider(providers []config.CDNProvider) bool {
+	for _, provider := range providers {
+		if provider.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+// buildRemoteCacheCDNTarget 把远程清理输入转为 CDN purge 需要的完整 URL。
+func buildRemoteCacheCDNTarget(r *http.Request, inputURL, normalizedURL string) (string, error) {
+	trimmed := strings.TrimSpace(inputURL)
+	if parsed, err := url.Parse(trimmed); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return "", fmt.Errorf("unsupported url scheme %q", parsed.Scheme)
+		}
+		return parsed.Scheme + "://" + parsed.Host + normalizedURL, nil
+	}
+
+	if r == nil || strings.TrimSpace(r.Host) == "" {
+		return "", fmt.Errorf("request host is required for relative cache url")
+	}
+
+	scheme := requestScheme(r)
+	return scheme + "://" + r.Host + normalizedURL, nil
+}
+
+// requestScheme 从代理头和 TLS 状态推断外部请求协议。
+func requestScheme(r *http.Request) string {
+	if forwardedProto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwardedProto != "" {
+		if index := strings.Index(forwardedProto, ","); index >= 0 {
+			forwardedProto = forwardedProto[:index]
+		}
+		forwardedProto = strings.ToLower(strings.TrimSpace(forwardedProto))
+		if forwardedProto == "http" || forwardedProto == "https" {
+			return forwardedProto
+		}
+	}
+
+	if forwarded := strings.TrimSpace(r.Header.Get("Forwarded")); forwarded != "" {
+		if proto := forwardedProtoValue(forwarded); proto == "http" || proto == "https" {
+			return proto
+		}
+	}
+
+	if r.TLS != nil {
+		return "https"
+	}
+	return "http"
+}
+
+// forwardedProtoValue 解析 RFC 7239 Forwarded 头中的 proto 值。
+func forwardedProtoValue(header string) string {
+	if index := strings.Index(header, ","); index >= 0 {
+		header = header[:index]
+	}
+
+	for _, part := range strings.Split(header, ";") {
+		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok || !strings.EqualFold(key, "proto") {
+			continue
+		}
+		unquoted, err := strconv.Unquote(strings.TrimSpace(value))
+		if err == nil {
+			value = unquoted
+		}
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+	return ""
 }
 
 // isAuthorized 校验远程缓存清理接口的 Bearer Token。

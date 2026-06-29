@@ -56,7 +56,7 @@ type RouteHandler struct {
 
 // SetupMainRoutes 设置主要路由
 func SetupMainRoutes(mirrorHandler *handler.MirrorProxyHandler, proxyHandler *handler.ProxyHandler, configManager *config.ConfigManager) []RouteHandler {
-	remoteCacheHandler := handler.NewCacheRemoteHandler(proxyHandler.Cache, mirrorHandler.Cache)
+	remoteCacheHandler := handler.NewCacheRemoteHandler(proxyHandler.Cache, mirrorHandler.Cache, configManager)
 
 	return []RouteHandler{
 		// 远程缓存清理接口

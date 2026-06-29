@@ -1,15 +1,18 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"proxy-go/internal/cache"
 	"proxy-go/internal/config"
+	"proxy-go/internal/service"
 )
 
 func TestNormalizeRemoteCacheURL(t *testing.T) {
@@ -103,6 +106,71 @@ func TestCacheRemoteHandlerClearCacheByURL(t *testing.T) {
 	}
 }
 
+func TestCacheRemoteHandlerClearCacheByURLTriggersCDNPurge(t *testing.T) {
+	t.Setenv("CACHE_CLEAR_REMOTE_TOKEN", "secret-token")
+
+	proxyCache := newRemoteTestCacheManager(t, "proxy")
+	mirrorCache := newRemoteTestCacheManager(t, "mirror")
+	addRemoteTestCacheEntry(t, proxyCache, "/b2/img/a.jpg?v=1")
+
+	handler := NewCacheRemoteHandler(proxyCache, mirrorCache)
+	fakePurger := &remoteCacheTestCDNPurger{
+		providers: []config.CDNProvider{{ID: "edgeone", Type: service.CDNProviderEdgeOne, Enabled: true}},
+		calls:     make(chan service.CDNPurgeRequest, 1),
+	}
+	handler.cdnPurger = fakePurger
+
+	req := httptest.NewRequest(http.MethodPost, "/api/cache/clear-url", strings.NewReader(`{"url":"https://assets.example.com/b2/img/a.jpg?refresh=1"}`))
+	req.Header.Set("Authorization", "Bearer secret-token")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	handler.ClearCacheByURL(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	select {
+	case purgeReq := <-fakePurger.calls:
+		if purgeReq.Type != service.CDNPurgeTypeURLs {
+			t.Fatalf("purge type = %q, want %q", purgeReq.Type, service.CDNPurgeTypeURLs)
+		}
+		if len(purgeReq.Targets) != 1 || purgeReq.Targets[0] != "https://assets.example.com/b2/img/a.jpg" {
+			t.Fatalf("purge targets = %#v, want single normalized full URL", purgeReq.Targets)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected async CDN purge call")
+	}
+}
+
+func TestBuildRemoteCacheCDNTarget(t *testing.T) {
+	t.Run("full url keeps origin and normalized path", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/cache/clear-url", nil)
+
+		got, err := buildRemoteCacheCDNTarget(req, "https://assets.example.com/b2/img/a.jpg?v=1", "/b2/img/a.jpg")
+		if err != nil {
+			t.Fatalf("buildRemoteCacheCDNTarget() error = %v", err)
+		}
+		if got != "https://assets.example.com/b2/img/a.jpg" {
+			t.Fatalf("target = %q, want normalized full URL", got)
+		}
+	})
+
+	t.Run("relative path uses forwarded scheme and request host", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "http://proxy.example.com/api/cache/clear-url", nil)
+		req.Header.Set("X-Forwarded-Proto", "https")
+
+		got, err := buildRemoteCacheCDNTarget(req, "/b2/img/a.jpg?refresh=1", "/b2/img/a.jpg")
+		if err != nil {
+			t.Fatalf("buildRemoteCacheCDNTarget() error = %v", err)
+		}
+		if got != "https://proxy.example.com/b2/img/a.jpg" {
+			t.Fatalf("target = %q, want request host URL", got)
+		}
+	})
+}
+
 func TestCacheRemoteHandlerAuthAndConfigErrors(t *testing.T) {
 	t.Run("missing token config returns not found", func(t *testing.T) {
 		t.Setenv("CACHE_CLEAR_REMOTE_TOKEN", "")
@@ -147,6 +215,28 @@ func TestCacheRemoteHandlerAuthAndConfigErrors(t *testing.T) {
 			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
 		}
 	})
+}
+
+type remoteCacheTestCDNPurger struct {
+	providers []config.CDNProvider
+	calls     chan service.CDNPurgeRequest
+}
+
+func (p *remoteCacheTestCDNPurger) ListProviders() []config.CDNProvider {
+	return p.providers
+}
+
+func (p *remoteCacheTestCDNPurger) Purge(ctx context.Context, req service.CDNPurgeRequest) (*service.CDNPurgeResult, error) {
+	select {
+	case p.calls <- req:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	return &service.CDNPurgeResult{
+		Success: true,
+		JobID:   "job-test",
+	}, nil
 }
 
 func newRemoteTestCacheManager(t *testing.T, name string) *cache.CacheManager {
