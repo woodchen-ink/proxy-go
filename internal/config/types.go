@@ -42,7 +42,8 @@ type PathConfig struct {
 	RedirectMode   bool            `json:"RedirectMode"` // 是否使用302跳转模式
 	Enabled        bool            `json:"Enabled"`      // 是否启用此路径映射，默认true
 	CacheConfig    *CacheConfig    `json:"CacheConfig"`  // 独立缓存配置，为nil则使用全局配置
-	// RefererBan 路径级引用来源黑名单, 与全局 SecurityConfig.RefererBan 叠加 (任一命中即拒)
+	// RefererBan 路径级引用来源黑/白名单。黑名单模式与全局 SecurityConfig.RefererBan (始终黑名单) 叠加, 任一命中即拒;
+	// 白名单模式为路径独占语义, 只放行命中 Hosts 的 Referer, 不与全局黑名单做"任一命中"的宽松叠加, 全局命中依然照常拒绝
 	RefererBan *RefererBanConfig `json:"RefererBan"`
 	// RefererRedirect 路径级引用来源 302 重定向: 命中指定 host 名单时把请求 302 分流到另一个目标前缀,
 	// 用于"某引用站不走当前 CDN, 改走另一个 CDN"的场景。命中重定向优先于 RefererBan (跳走就不再判封禁)。
@@ -79,14 +80,28 @@ type SecurityConfig struct {
 	RefererBan RefererBanConfig `json:"RefererBan"` // 引用来源 (Referer host) 黑名单, 全局生效
 }
 
-// RefererBanConfig 引用来源 host 黑名单
-// Hosts 中的条目按 host 后缀语义匹配 (e.g. "bad.com" 同时拦截 "bad.com" / "foo.bad.com" / "a.b.bad.com")
-// BlockEmpty 控制空 Referer 是否一并拦截; 默认 false (放行), 避免误伤 curl / 直接访问 / Telegram 预览等场景
+// RefererBanConfig 引用来源 host 黑白名单
+// Hosts 中的条目按 host 后缀语义匹配 (e.g. "x.com" 同时命中 "x.com" / "foo.x.com" / "a.b.x.com")
+// BlockEmpty 控制空 Referer 是否一并拦截; 默认 false (放行), 避免误伤 curl / 直接访问 / Telegram 预览等场景;
+// 该开关在黑白两种模式下语义一致 (是否拒绝空 Referer), 不随 Mode 改变
+// Mode 取值 "blacklist" (默认, 命中 Hosts 即拒) / "whitelist" (只有命中 Hosts 才放行, 用于资源仅供自己站点引用的强隔离场景);
+// 空字符串按 "blacklist" 处理, 兼容历史配置
 type RefererBanConfig struct {
 	Enabled    bool     `json:"Enabled"`
+	Mode       string   `json:"Mode"`
 	Hosts      []string `json:"Hosts"`
 	BlockEmpty bool     `json:"BlockEmpty"`
 }
+
+// IsWhitelist 是否为白名单模式
+func (c *RefererBanConfig) IsWhitelist() bool {
+	return c != nil && c.Mode == RefererModeWhitelist
+}
+
+const (
+	RefererModeBlacklist = "blacklist"
+	RefererModeWhitelist = "whitelist"
+)
 
 // RefererRedirectConfig 路径级引用来源 302 重定向配置
 // 多组规则按 Rules 顺序匹配, 第一个命中的规则决定目标 (先命中先跳)。

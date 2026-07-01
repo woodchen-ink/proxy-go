@@ -76,6 +76,7 @@ type refererRedirectEntry struct {
 }
 
 // buildPathRefererMatchers 由 PathConfig 构建路径级 matcher; 只为配置了 RefererBan 的路径建立条目
+// Mode 为 "whitelist" 时走白名单语义 (只有命中 Hosts 才放行), 否则 (含空字符串, 兼容历史配置) 走黑名单语义
 func buildPathRefererMatchers(pathMap map[string]config.PathConfig) map[string]*security.RefererMatcher {
 	out := make(map[string]*security.RefererMatcher)
 	for prefix, cfg := range pathMap {
@@ -83,7 +84,12 @@ func buildPathRefererMatchers(pathMap map[string]config.PathConfig) map[string]*
 		if rb == nil || !rb.Enabled {
 			continue
 		}
-		m := security.Compile(rb.Hosts, rb.BlockEmpty)
+		var m *security.RefererMatcher
+		if rb.IsWhitelist() {
+			m = security.CompileWhitelist(rb.Hosts, rb.BlockEmpty)
+		} else {
+			m = security.Compile(rb.Hosts, rb.BlockEmpty)
+		}
 		if m.HasRules() {
 			out[prefix] = m
 		}

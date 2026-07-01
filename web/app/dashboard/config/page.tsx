@@ -68,6 +68,7 @@ interface CompressionConfig {
 
 interface RefererBanConfig {
   Enabled: boolean
+  Mode?: "blacklist" | "whitelist"
   Hosts: string[]
   BlockEmpty: boolean
 }
@@ -1282,12 +1283,13 @@ export default function ConfigPage() {
                         </CardContent>
                       </Card>
 
-                      {/* 引用来源黑名单 (路径级, 与全局叠加) */}
+                      {/* 引用来源黑/白名单 (路径级, 黑名单模式与全局叠加; 白名单模式为路径独占语义) */}
                       <Card>
                         <CardHeader>
-                          <CardTitle className="text-lg">引用来源 (Referer) 黑名单</CardTitle>
+                          <CardTitle className="text-lg">引用来源 (Referer) 黑/白名单</CardTitle>
                           <p className="text-sm font-normal text-muted-foreground">
-                            仅对当前路径生效, 与"安全策略"中的全局规则叠加, 任一命中即拒绝
+                            仅对当前路径生效。黑名单模式与"安全策略"中的全局规则叠加, 任一命中即拒绝;
+                            白名单模式仅放行命中名单的 Referer, 适合资源仅供自己站点引用的场景
                           </p>
                         </CardHeader>
                         <CardContent>
@@ -1295,12 +1297,14 @@ export default function ConfigPage() {
                             config={
                               selectedMappingObj.RefererBan ?? {
                                 Enabled: false,
+                                Mode: "blacklist",
                                 Hosts: [],
                                 BlockEmpty: false,
                               }
                             }
                             onUpdate={(next) => handlePathRefererBanUpdate(selectedPath, next)}
                             emptyHint="未添加 host, 即使开启黑名单也仅在拦截空 Referer 时生效"
+                            allowWhitelist
                           />
                         </CardContent>
                       </Card>

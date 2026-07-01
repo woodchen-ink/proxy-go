@@ -188,8 +188,13 @@ func (cm *ConfigManager) normalizeConfig(config *Config) {
 		if !pathConfig.Enabled && (pathConfig.DefaultTarget != "" || len(pathConfig.DefaultTargets) > 0) {
 			pathConfig.Enabled = true
 		}
-		if pathConfig.RefererBan != nil && pathConfig.RefererBan.Hosts == nil {
-			pathConfig.RefererBan.Hosts = []string{}
+		if pathConfig.RefererBan != nil {
+			if pathConfig.RefererBan.Hosts == nil {
+				pathConfig.RefererBan.Hosts = []string{}
+			}
+			if pathConfig.RefererBan.Mode == "" {
+				pathConfig.RefererBan.Mode = RefererModeBlacklist
+			}
 		}
 		// 归一多源列表: 剔除空白/空项; 保证 DefaultTarget 与 DefaultTargets[0] 语义一致,
 		// 让依赖 DefaultTarget 的逻辑 (mirror 标记判断 / 展示) 在多源配置下不破。
