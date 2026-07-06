@@ -27,12 +27,16 @@ import {
   Zap,
   Target,
   RotateCcw,
-  ListX
+  ListX,
+  Layers,
+  HardDriveDownload
 } from "lucide-react"
 
 interface CacheStats {
   total_items: number
   total_size: number
+  disk_file_count: number
+  disk_size: number
   hit_count: number
   miss_count: number
   hit_rate: number
@@ -145,8 +149,8 @@ export default function CacheManagement() {
     fetchStats()
     fetchConfigs()
 
-    // 设置定时刷新
-    const interval = setInterval(fetchStats, 1000)
+    // 定时刷新: 缓存统计非实时数据, 5s 一次足够, 避免高频轮询空转
+    const interval = setInterval(fetchStats, 5000)
     return () => clearInterval(interval)
   }, [fetchStats, fetchConfigs])
 
@@ -484,6 +488,44 @@ export default function CacheManagement() {
             </Button>
           </div>
         </div>
+
+        {/* 缓存规模概览: 全部缓存 (proxy + mirror) 的条数与占用 */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <HardDrive className="h-5 w-5 text-muted-foreground" />
+              缓存规模
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <SummaryTile
+                icon={<Layers className="h-5 w-5 text-muted-foreground" />}
+                value={((stats?.proxy.total_items ?? 0) + (stats?.mirror.total_items ?? 0)).toLocaleString()}
+                label="缓存条数"
+                tip="逻辑口径: 所有缓存键的总数 (同一文件被不同格式/浏览器分桶时算多条)"
+              />
+              <SummaryTile
+                icon={<Database className="h-5 w-5 text-muted-foreground" />}
+                value={formatBytes((stats?.proxy.total_size ?? 0) + (stats?.mirror.total_size ?? 0))}
+                label="逻辑总量"
+                tip="逻辑口径: 所有缓存项大小之和, 去重前的逻辑内容总量"
+              />
+              <SummaryTile
+                icon={<FileText className="h-5 w-5 text-muted-foreground" />}
+                value={((stats?.proxy.disk_file_count ?? 0) + (stats?.mirror.disk_file_count ?? 0)).toLocaleString()}
+                label="磁盘文件数"
+                tip="去重口径: 磁盘上的物理文件数 (相同内容的多个缓存键共享一个文件)"
+              />
+              <SummaryTile
+                icon={<HardDriveDownload className="h-5 w-5 text-muted-foreground" />}
+                value={formatBytes((stats?.proxy.disk_size ?? 0) + (stats?.mirror.disk_size ?? 0))}
+                label="磁盘占用"
+                tip="去重口径: 磁盘实际占用字节数, 反映真实存储压力"
+              />
+            </div>
+          </CardContent>
+        </Card>
 
         {/* 智能缓存汇总 */}
         <Card>

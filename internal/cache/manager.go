@@ -227,8 +227,10 @@ type CacheItem struct {
 
 // CacheStats 缓存统计信息
 type CacheStats struct {
-	TotalItems        int     `json:"total_items"`         // 缓存项数量
-	TotalSize         int64   `json:"total_size"`          // 总大小
+	TotalItems        int     `json:"total_items"`         // 缓存项数量 (逻辑口径, 含同内容多 key)
+	TotalSize         int64   `json:"total_size"`          // 缓存项总大小 (逻辑口径)
+	DiskFileCount     int     `json:"disk_file_count"`     // 物理文件数量 (去重口径, 同 hash 只算一份)
+	DiskSize          int64   `json:"disk_size"`           // 磁盘实际占用字节 (去重口径)
 	HitCount          int64   `json:"hit_count"`           // 命中次数
 	MissCount         int64   `json:"miss_count"`          // 未命中次数
 	HitRate           float64 `json:"hit_rate"`            // 命中率
@@ -262,8 +264,77 @@ type CacheManager struct {
 	imageCacheHit     atomic.Int64 // 图片缓存命中次数
 	regularCacheHit   atomic.Int64 // 常规缓存命中次数
 
+	// 缓存规模计数 (增量维护, 避免 GetStats 每次全量 Range items)
+	// - totalItems / totalSize: 逻辑口径, 按 items 里的 key 累计 (同内容不同 key 各算一份)
+	// - diskFileCount / diskSize: 去重口径, 按 hashIndex 里的物理文件累计 (同 hash 只算一份)
+	totalItems    atomic.Int64
+	totalSize     atomic.Int64
+	diskFileCount atomic.Int64
+	diskSize      atomic.Int64
+
 	// ExtensionMatcher缓存
 	extensionMatcherCache *ExtensionMatcherCache
+}
+
+// addItemAccounting / subItemAccounting 维护逻辑口径计数 (items 维度), 在每次
+// items.Store 新增 / items.Delete 删除一个 key 时成对调用。
+// 注意: items.Store 覆盖已存在的 key 不应重复 +1, 调用方需自行保证只在真正新增时调用。
+func (cm *CacheManager) addItemAccounting(size int64) {
+	cm.totalItems.Add(1)
+	cm.totalSize.Add(size)
+}
+
+func (cm *CacheManager) subItemAccounting(size int64) {
+	cm.totalItems.Add(-1)
+	cm.totalSize.Add(-size)
+}
+
+// addFileAccounting / subFileAccounting 维护去重口径计数 (hashIndex 维度, 即物理文件),
+// 在 hashIndex.Store 新建 / CompareAndDelete 删除一个物理文件时成对调用。
+func (cm *CacheManager) addFileAccounting(size int64) {
+	cm.diskFileCount.Add(1)
+	cm.diskSize.Add(size)
+}
+
+func (cm *CacheManager) subFileAccounting(size int64) {
+	cm.diskFileCount.Add(-1)
+	cm.diskSize.Add(-size)
+}
+
+// hashItem 承载"待删物理文件"的 hash 与其 item, 供批量清理复用。
+type hashItem struct {
+	hash string
+	item *CacheItem
+}
+
+// deleteKeysAndHashes 从 items 删除给定 key 集合、从 hashIndex 删除给定物理文件集合,
+// 并同步扣减逻辑口径 / 去重口径计数。ClearCacheByPrefix / ByURLs / ByURL 共用此逻辑,
+// 避免三处各写一遍删除 + 记账。
+func (cm *CacheManager) deleteKeysAndHashes(keys []CacheKey, hashes []hashItem) {
+	for _, key := range keys {
+		if v, loaded := cm.items.LoadAndDelete(key); loaded {
+			if item, ok := v.(*CacheItem); ok {
+				cm.subItemAccounting(item.Size)
+			}
+		}
+	}
+	for _, h := range hashes {
+		if cm.hashIndex.CompareAndDelete(h.hash, h.item) {
+			cm.subFileAccounting(h.item.Size)
+		}
+	}
+}
+
+// storeItem 把 key -> item 写入 items, 并按"是否真正新增 key"维护逻辑口径计数:
+// 覆盖同一 key 时先扣掉旧项再计新项 (幂等), 新增 key 时直接计一份, 避免重复 Put / 复用
+// 已缓存文件时把 totalItems 记多。物理文件维度 (diskXxx) 不在这里维护, 由 hashIndex 增删处负责。
+func (cm *CacheManager) storeItem(key CacheKey, item *CacheItem) {
+	if old, loaded := cm.items.Swap(key, item); loaded {
+		if oldItem, ok := old.(*CacheItem); ok {
+			cm.subItemAccounting(oldItem.Size)
+		}
+	}
+	cm.addItemAccounting(item.Size)
 }
 
 // NewCacheManager 创建新的缓存管理器
@@ -513,7 +584,10 @@ func (cm *CacheManager) getRegularItem(key CacheKey) (*CacheItem, bool, bool) {
 	// 验证文件是否存在
 	if _, err := os.Stat(item.FilePath); err != nil {
 		cm.items.Delete(key)
-		cm.hashIndex.CompareAndDelete(item.Hash, item)
+		cm.subItemAccounting(item.Size)
+		if cm.hashIndex.CompareAndDelete(item.Hash, item) {
+			cm.subFileAccounting(item.Size)
+		}
 		cm.missCount.Add(1)
 		return nil, false, false
 	}
@@ -521,7 +595,10 @@ func (cm *CacheManager) getRegularItem(key CacheKey) (*CacheItem, bool, bool) {
 	// 检查是否过期（使用LastAccess而不是CreatedAt）
 	if time.Since(item.LastAccess) > cm.maxAge {
 		cm.items.Delete(key)
-		cm.hashIndex.CompareAndDelete(item.Hash, item)
+		cm.subItemAccounting(item.Size)
+		if cm.hashIndex.CompareAndDelete(item.Hash, item) {
+			cm.subFileAccounting(item.Size)
+		}
 		os.Remove(item.FilePath)
 		cm.missCount.Add(1)
 		return nil, false, false
@@ -553,7 +630,7 @@ func (cm *CacheManager) Put(key CacheKey, resp *http.Response, body []byte) (*Ca
 
 	// 检查是否存在相同哈希的缓存项（O(1) 哈希索引查找）
 	if existing := cm.lookupByHash(hashStr); existing != nil {
-		cm.items.Store(key, existing)
+		cm.storeItem(key, existing)
 		log.Printf("[Cache] HIT %s %s (%s) from %s", resp.Request.Method, key.URL, formatBytes(existing.Size), utils.GetRequestSource(resp.Request))
 		return existing, nil
 	}
@@ -577,8 +654,10 @@ func (cm *CacheManager) Put(key CacheKey, resp *http.Response, body []byte) (*Ca
 		AccessCount:     1,
 	}
 
-	cm.items.Store(key, item)
-	cm.hashIndex.Store(hashStr, item)
+	cm.storeItem(key, item)
+	if _, loaded := cm.hashIndex.LoadOrStore(hashStr, item); !loaded {
+		cm.addFileAccounting(item.Size)
+	}
 	method := "GET"
 	if resp.Request != nil {
 		method = resp.Request.Method
@@ -588,11 +667,20 @@ func (cm *CacheManager) Put(key CacheKey, resp *http.Response, body []byte) (*Ca
 }
 
 // cleanup 定期清理过期的缓存项
+//
+// 单趟 Range 收集 (key, item) 快照, 过期项直接入删除队列, 未过期项留作容量淘汰候选。
+// 超出 maxCacheSize 时对候选按 LastAccess 升序补删最旧项, 全程只遍历一次 items,
+// 不再对每个待删项回头 Range 反查 key (原实现最坏 O(n²), 140 万条目触发容量淘汰会卡死)。
 func (cm *CacheManager) cleanup() {
+	type entry struct {
+		key  CacheKey
+		item *CacheItem
+	}
+
 	var totalSize int64
 	var keysToDelete []CacheKey
+	var survivors []entry // 未过期项, 作为容量淘汰候选
 
-	// 收集需要删除的键和计算总大小
 	cm.items.Range(func(k, v interface{}) bool {
 		key := k.(CacheKey)
 		item := v.(*CacheItem)
@@ -600,36 +688,24 @@ func (cm *CacheManager) cleanup() {
 
 		if time.Since(item.LastAccess) > cm.maxAge {
 			keysToDelete = append(keysToDelete, key)
+			totalSize -= item.Size // 过期项即将删除, 不计入容量
+		} else {
+			survivors = append(survivors, entry{key, item})
 		}
 		return true
 	})
 
-	// 如果总大小超过限制，按最后访问时间排序删除
+	// 如果剩余总大小仍超过限制，按最后访问时间升序补删最旧的存活项
 	if totalSize > cm.maxCacheSize {
-		var items []*CacheItem
-		cm.items.Range(func(k, v interface{}) bool {
-			items = append(items, v.(*CacheItem))
-			return true
+		sort.Slice(survivors, func(i, j int) bool {
+			return survivors[i].item.LastAccess.Before(survivors[j].item.LastAccess)
 		})
-
-		// 按最后访问时间排序
-		sort.Slice(items, func(i, j int) bool {
-			return items[i].LastAccess.Before(items[j].LastAccess)
-		})
-
-		// 删除最旧的项直到总大小小于限制
-		for _, item := range items {
+		for _, e := range survivors {
 			if totalSize <= cm.maxCacheSize {
 				break
 			}
-			cm.items.Range(func(k, v interface{}) bool {
-				if v.(*CacheItem) == item {
-					keysToDelete = append(keysToDelete, k.(CacheKey))
-					totalSize -= item.Size
-					return false
-				}
-				return true
-			})
+			keysToDelete = append(keysToDelete, e.key)
+			totalSize -= e.item.Size
 		}
 	}
 
@@ -639,7 +715,10 @@ func (cm *CacheManager) cleanup() {
 			cacheItem := item.(*CacheItem)
 			os.Remove(cacheItem.FilePath)
 			cm.items.Delete(key)
-			cm.hashIndex.CompareAndDelete(cacheItem.Hash, cacheItem)
+			cm.subItemAccounting(cacheItem.Size)
+			if cm.hashIndex.CompareAndDelete(cacheItem.Hash, cacheItem) {
+				cm.subFileAccounting(cacheItem.Size)
+			}
 			log.Printf("[Cache] DEL %s (expired)", key.URL)
 		}
 	}
@@ -666,17 +745,10 @@ func formatBytes(bytes int64) string {
 }
 
 // GetStats 获取缓存统计信息
+//
+// 规模字段 (TotalItems / TotalSize / DiskFileCount / DiskSize) 全部读增量维护的原子计数,
+// O(1) 返回, 不再对 items 做全量 Range; 仪表盘可高频轮询而不产生正比于缓存规模的 CPU 开销。
 func (cm *CacheManager) GetStats() CacheStats {
-	var totalItems int
-	var totalSize int64
-
-	cm.items.Range(func(_, value interface{}) bool {
-		item := value.(*CacheItem)
-		totalItems++
-		totalSize += item.Size
-		return true
-	})
-
 	hitCount := cm.hitCount.Load()
 	missCount := cm.missCount.Load()
 	totalRequests := hitCount + missCount
@@ -686,8 +758,10 @@ func (cm *CacheManager) GetStats() CacheStats {
 	}
 
 	return CacheStats{
-		TotalItems:        totalItems,
-		TotalSize:         totalSize,
+		TotalItems:        int(cm.totalItems.Load()),
+		TotalSize:         cm.totalSize.Load(),
+		DiskFileCount:     int(cm.diskFileCount.Load()),
+		DiskSize:          cm.diskSize.Load(),
 		HitCount:          hitCount,
 		MissCount:         missCount,
 		HitRate:           hitRate,
@@ -748,6 +822,12 @@ func (cm *CacheManager) ClearCache() error {
 	cm.imageCacheHit.Store(0)
 	cm.regularCacheHit.Store(0)
 
+	// 缓存已全部清空, 规模计数直接归零
+	cm.totalItems.Store(0)
+	cm.totalSize.Store(0)
+	cm.diskFileCount.Store(0)
+	cm.diskSize.Store(0)
+
 	return nil
 }
 
@@ -758,10 +838,7 @@ func (cm *CacheManager) ClearCacheByPrefix(pathPrefix string) (int, error) {
 
 	// 清除内存中匹配的缓存项，并收集需要删除的文件
 	var keysToDelete []CacheKey
-	var hashesToDelete []struct {
-		hash string
-		item *CacheItem
-	}
+	var hashesToDelete []hashItem
 	filesToDelete := make(map[string]bool)
 
 	cm.items.Range(func(key, value interface{}) bool {
@@ -776,24 +853,15 @@ func (cm *CacheManager) ClearCacheByPrefix(pathPrefix string) (int, error) {
 				filename := filepath.Base(item.FilePath)
 				filesToDelete[filename] = true
 				if item.Hash != "" {
-					hashesToDelete = append(hashesToDelete, struct {
-						hash string
-						item *CacheItem
-					}{item.Hash, item})
+					hashesToDelete = append(hashesToDelete, hashItem{item.Hash, item})
 				}
 			}
 		}
 		return true
 	})
 
-	// 从内存中删除缓存项
-	for _, key := range keysToDelete {
-		cm.items.Delete(key)
-	}
-	// 同步删除哈希索引（仅当索引指向的还是同一个 item 时）
-	for _, h := range hashesToDelete {
-		cm.hashIndex.CompareAndDelete(h.hash, h.item)
-	}
+	// 从内存删除缓存项与物理文件索引, 同步扣减两套计数
+	cm.deleteKeysAndHashes(keysToDelete, hashesToDelete)
 
 	// 清理缓存目录中匹配的文件
 	deletedFiles := 0
@@ -839,10 +907,7 @@ func (cm *CacheManager) ClearCacheByURLs(urls []string) (int, error) {
 
 	// 清除内存中匹配的缓存项，并收集需要删除的文件
 	var keysToDelete []CacheKey
-	var hashesToDelete []struct {
-		hash string
-		item *CacheItem
-	}
+	var hashesToDelete []hashItem
 	filesToDelete := make(map[string]bool)
 
 	cm.items.Range(func(key, value interface{}) bool {
@@ -858,23 +923,15 @@ func (cm *CacheManager) ClearCacheByURLs(urls []string) (int, error) {
 				filename := filepath.Base(item.FilePath)
 				filesToDelete[filename] = true
 				if item.Hash != "" {
-					hashesToDelete = append(hashesToDelete, struct {
-						hash string
-						item *CacheItem
-					}{item.Hash, item})
+					hashesToDelete = append(hashesToDelete, hashItem{item.Hash, item})
 				}
 			}
 		}
 		return true
 	})
 
-	// 从内存中删除缓存项
-	for _, key := range keysToDelete {
-		cm.items.Delete(key)
-	}
-	for _, h := range hashesToDelete {
-		cm.hashIndex.CompareAndDelete(h.hash, h.item)
-	}
+	// 从内存删除缓存项与物理文件索引, 同步扣减两套计数
+	cm.deleteKeysAndHashes(keysToDelete, hashesToDelete)
 
 	// 清理缓存目录中匹配的文件
 	deletedFiles := 0
@@ -915,10 +972,7 @@ func (cm *CacheManager) ClearCacheByURL(rawURL string) (int, error) {
 	var keysToDelete []CacheKey
 	filesToDelete := make(map[string]bool)
 
-	var hashesToDelete []struct {
-		hash string
-		item *CacheItem
-	}
+	var hashesToDelete []hashItem
 	cm.items.Range(func(key, value interface{}) bool {
 		cacheKey := key.(CacheKey)
 		if normalizeCacheMatchURL(cacheKey.URL) == targetURL {
@@ -928,22 +982,15 @@ func (cm *CacheManager) ClearCacheByURL(rawURL string) (int, error) {
 				filename := filepath.Base(item.FilePath)
 				filesToDelete[filename] = true
 				if item.Hash != "" {
-					hashesToDelete = append(hashesToDelete, struct {
-						hash string
-						item *CacheItem
-					}{item.Hash, item})
+					hashesToDelete = append(hashesToDelete, hashItem{item.Hash, item})
 				}
 			}
 		}
 		return true
 	})
 
-	for _, key := range keysToDelete {
-		cm.items.Delete(key)
-	}
-	for _, h := range hashesToDelete {
-		cm.hashIndex.CompareAndDelete(h.hash, h.item)
-	}
+	// 从内存删除缓存项与物理文件索引, 同步扣减两套计数
+	cm.deleteKeysAndHashes(keysToDelete, hashesToDelete)
 
 	deletedFiles := 0
 	entries, err := os.ReadDir(cm.cacheDir)
@@ -1085,7 +1132,7 @@ func (cm *CacheManager) Commit(key CacheKey, tempPath string, resp *http.Respons
 	if existing := cm.lookupByHash(hashStr); existing != nil {
 		// 删除临时文件，使用现有缓存
 		os.Remove(tempPath)
-		cm.items.Store(key, existing)
+		cm.storeItem(key, existing)
 		log.Printf("[Cache] HIT %s %s (%s) from %s", resp.Request.Method, key.URL, formatBytes(existing.Size), utils.GetRequestSource(resp.Request))
 		return nil
 	}
@@ -1112,8 +1159,10 @@ func (cm *CacheManager) Commit(key CacheKey, tempPath string, resp *http.Respons
 		AccessCount:     1,
 	}
 
-	cm.items.Store(key, item)
-	cm.hashIndex.Store(hashStr, item)
+	cm.storeItem(key, item)
+	if _, loaded := cm.hashIndex.LoadOrStore(hashStr, item); !loaded {
+		cm.addFileAccounting(item.Size)
+	}
 	cm.bytesSaved.Add(size)
 	log.Printf("[Cache] NEW %s %s (%s)", resp.Request.Method, key.URL, formatBytes(size))
 	return nil
@@ -1242,9 +1291,12 @@ func (cm *CacheManager) InvalidateCacheItem(key CacheKey) {
 		if err := os.Remove(item.FilePath); err != nil {
 			log.Printf("[Cache] Failed to remove cache file %s: %v", item.FilePath, err)
 		}
-		// 删除内存记录及哈希索引
+		// 删除内存记录及哈希索引, 同步扣减两套计数
 		cm.items.Delete(key)
-		cm.hashIndex.CompareAndDelete(item.Hash, item)
+		cm.subItemAccounting(item.Size)
+		if cm.hashIndex.CompareAndDelete(item.Hash, item) {
+			cm.subFileAccounting(item.Size)
+		}
 		log.Printf("[Cache] Invalidated cache item for key: %s", key.URL)
 	}
 
