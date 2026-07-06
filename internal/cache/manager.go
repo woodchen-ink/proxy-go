@@ -971,6 +971,21 @@ func (cm *CacheManager) ClearCacheByURL(rawURL string) (int, error) {
 	return len(keysToDelete), nil
 }
 
+// HasURLCached 以 O(1) 判断给定 URL 的默认缓存键是否存在条目 (仅内存查找, 不触发全量遍历)。
+//
+// 用途: 回源返回 404 时先廉价探测本地是否缓存过该 URL, 命中才调用 ClearCacheByURL (全量遍历 + ReadDir)。
+// 机器人海量探测不存在路径时, 此处 items.Load 立即 miss, 不会引发昂贵清理。
+//
+// 局限: 只查默认键 CacheKey{URL}, 不覆盖图片 Accept/UA 变体键 (变体残留靠上游关 Vary 收敛 + 源站侧延迟补刀兜底)。
+func (cm *CacheManager) HasURLCached(rawURL string) bool {
+	if !cm.enabled.Load() {
+		return false
+	}
+
+	_, ok := cm.items.Load(CacheKey{URL: strings.TrimSpace(rawURL)})
+	return ok
+}
+
 // normalizeCacheMatchURL 用于缓存清理匹配，忽略 query 和 fragment，并统一尾斜杠。
 func normalizeCacheMatchURL(rawURL string) string {
 	normalized := strings.TrimSpace(rawURL)

@@ -363,7 +363,37 @@ func (s *ProxyService) ProcessResponse(req *ProxyRequest, resp *http.Response, w
 		return written, fmt.Errorf("error writing response: %v", err)
 	}
 
+	// 源站 404 自愈: 清掉本地对该 URL 的残留缓存, 避免"源图已删但本地仍缓存旧 200"长期可访问。
+	s.selfHealOn404(req, resp)
+
 	return written, nil
+}
+
+// selfHealOn404 在回源返回 404 且本地缓存过该 URL 时, 清除本地缓存条目 (不触碰上游 CDN)。
+//
+// 触发条件收敛以避免机器人海量探测无效 404 引发昂贵清理:
+//   - 仅 GET (非 GET 本就不写缓存)
+//   - 仅 404 (源资源确已不存在)
+//   - 先以 O(1) HasURLCached 探测, 命中才调 ClearCacheByURL (后者全量遍历 + ReadDir)
+//
+// 不触发 CDN purge: 边缘缓存的清理由源站侧删除流程负责, 此处只做本地自愈, 防止清理放大到 CDN 配额。
+func (s *ProxyService) selfHealOn404(req *ProxyRequest, resp *http.Response) {
+	if s.cache == nil ||
+		req.OriginalRequest.Method != http.MethodGet ||
+		resp.StatusCode != http.StatusNotFound {
+		return
+	}
+
+	rawURL := req.OriginalRequest.URL.String()
+	if !s.cache.HasURLCached(rawURL) {
+		return
+	}
+
+	if cleared, err := s.cache.ClearCacheByURL(rawURL); err != nil {
+		log.Printf("[Cache] 404 自愈清理失败 url=%s err=%v", rawURL, err)
+	} else if cleared > 0 {
+		log.Printf("[Cache] 404 自愈: 已清除本地残留缓存 url=%s items=%d", rawURL, cleared)
+	}
 }
 
 // shouldCache 判断是否应该缓存
