@@ -14,6 +14,7 @@ import BandwidthChart from "./components/BandwidthChart"
 import PathTrendChart from "./components/PathTrendChart"
 import PathTotalsChart from "./components/PathTotalsChart"
 import RefererDailyChart from "./components/RefererDailyChart"
+import CacheStatsTiles from "./components/CacheStatsTiles"
 
 interface Metrics {
   uptime: string
@@ -172,6 +173,7 @@ export default function DashboardPage() {
         <TabsTrigger value="traffic">流量</TabsTrigger>
         <TabsTrigger value="quality">质量</TabsTrigger>
         <TabsTrigger value="requests">请求</TabsTrigger>
+        <TabsTrigger value="cache">缓存</TabsTrigger>
       </TabsList>
 
       <TabsContent value="overview" className="space-y-6">
@@ -359,6 +361,10 @@ export default function DashboardPage() {
             )}
           </CardContent>
         </Card>
+      </TabsContent>
+
+      <TabsContent value="cache" className="space-y-6">
+        <CacheStatsTiles />
       </TabsContent>
     </Tabs>
   )
