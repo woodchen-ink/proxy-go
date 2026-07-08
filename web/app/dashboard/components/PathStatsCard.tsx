@@ -23,7 +23,7 @@ interface PathStats {
 
 interface PathStatsCardProps {
   stats: PathStats | undefined
-  onReset?: () => void
+  onReset?: () => Promise<void> | void
 }
 
 // formatBytes 字节数 → 友好单位
@@ -68,6 +68,8 @@ function statusBadgeClass(group: "2xx" | "3xx" | "4xx" | "5xx") {
   }
 }
 
+// PathStatsCard 单个路径的累计统计明细 (缓存命中率 / 错误率 / 状态码分布 / 节省流量),
+// 供首页 PathStatsList 逐路径渲染; 纯展示组件, 数据与重置回调由父级注入。
 export default function PathStatsCard({ stats, onReset }: PathStatsCardProps) {
   const [isResetting, setIsResetting] = useState(false)
 
@@ -194,3 +196,5 @@ export default function PathStatsCard({ stats, onReset }: PathStatsCardProps) {
     </div>
   )
 }
+
+export type { PathStats }

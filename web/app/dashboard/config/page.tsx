@@ -22,7 +22,6 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import PathStatsCard from "./components/PathStatsCard"
 import PathCacheConfigDialog from "./components/PathCacheConfigDialog"
 import SecurityConfigPanel from "./components/SecurityConfigPanel"
 import ExtensionRuleDialog from "./components/ExtensionRuleDialog"
@@ -84,23 +83,6 @@ interface SecurityConfig {
   RefererBan?: RefererBanConfig
 }
 
-interface PathStats {
-  path: string;
-  request_count: number;
-  error_count: number;
-  bytes_transferred: number;
-  avg_latency: string;
-  last_access_time: number;
-  status_2xx: number;
-  status_3xx: number;
-  status_4xx: number;
-  status_5xx: number;
-  cache_hits: number;
-  cache_misses: number;
-  cache_hit_rate: number;
-  bytes_saved: number;
-}
-
 interface Config {
   MAP: Record<string, PathMapping | string>
   Compression: {
@@ -112,7 +94,6 @@ interface Config {
 
 export default function ConfigPage() {
   const [config, setConfig] = useState<Config | null>(null)
-  const [pathStats, setPathStats] = useState<PathStats[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const { toast } = useToast()
@@ -222,22 +203,6 @@ export default function ConfigPage() {
       if (data.MAP && Object.keys(data.MAP).length > 0) {
         const firstPath = Object.keys(data.MAP)[0]
         setSelectedPath((currentSelectedPath) => currentSelectedPath ?? firstPath)
-      }
-
-      // 获取路径统计
-      try {
-        const statsResponse = await fetch("/admin/api/path-stats", {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        })
-        if (statsResponse.ok) {
-          const statsData = await statsResponse.json()
-          setPathStats(statsData.path_stats || [])
-        }
-      } catch (error) {
-        console.error("获取路径统计失败:", error)
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "获取配置失败"
@@ -674,48 +639,6 @@ export default function ConfigPage() {
     }
   }
 
-  const handleResetPathStats = async (path: string) => {
-    const token = localStorage.getItem("token")
-    if (!token) {
-      router.push("/login")
-      return
-    }
-
-    const response = await fetch("/admin/api/path-stats/reset", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({ path }),
-    })
-
-    if (response.status === 401) {
-      localStorage.removeItem("token")
-      router.push("/login")
-      throw new Error("未授权")
-    }
-
-    if (!response.ok) {
-      throw new Error("重置统计失败")
-    }
-
-    try {
-      const statsResponse = await fetch("/admin/api/path-stats", {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      })
-      if (statsResponse.ok) {
-        const statsData = await statsResponse.json()
-        setPathStats(statsData.path_stats || [])
-      }
-    } catch (error) {
-      console.error("刷新路径统计失败:", error)
-    }
-  }
-
   // updateSecurity 整段替换 Security 子树, Panel 内部负责保持其它字段不变
   const updateSecurity = (newSecurity: SecurityConfig) => {
     if (!config) return
@@ -925,7 +848,6 @@ export default function ConfigPage() {
         ? { DefaultTarget: selectedMapping, Enabled: true }
         : selectedMapping)
     : null
-  const selectedStats = selectedPath ? pathStats.find(s => s.path === selectedPath) : undefined
   const isSystemPath = selectedMappingObj?.DefaultTarget === 'mirror'
 
   // 编辑路径时的实时校验（仅在 isEditingPath 时使用）
@@ -1068,19 +990,6 @@ export default function ConfigPage() {
                     </Card>
                   ) : selectedPath && selectedMappingObj ? (
                     <div className="space-y-4">
-                      {/* 统计信息 */}
-                      <Card>
-                        <CardHeader>
-                          <CardTitle className="text-lg">统计信息</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <PathStatsCard
-                            stats={selectedStats}
-                            onReset={() => handleResetPathStats(selectedPath)}
-                          />
-                        </CardContent>
-                      </Card>
-
                       {/* 基本设置 */}
                       <Card>
                         <CardHeader className="flex flex-row items-center justify-between">

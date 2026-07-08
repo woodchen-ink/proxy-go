@@ -13,6 +13,7 @@ import LatencyChart from "./components/LatencyChart"
 import BandwidthChart from "./components/BandwidthChart"
 import PathTrendChart from "./components/PathTrendChart"
 import PathTotalsChart from "./components/PathTotalsChart"
+import PathStatsList from "./components/PathStatsList"
 import RefererDailyChart from "./components/RefererDailyChart"
 import CacheStatsTiles from "./components/CacheStatsTiles"
 
@@ -178,6 +179,7 @@ export default function DashboardPage() {
 
       <TabsContent value="overview" className="space-y-6">
         <MetricTiles m={metrics} />
+        <PathStatsList />
       </TabsContent>
 
       <TabsContent value="traffic" className="space-y-6">
