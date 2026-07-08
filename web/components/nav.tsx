@@ -4,26 +4,22 @@ import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/ui/use-toast"
+import { logout } from "@/lib/api-client"
 
 export function Nav() {
   const pathname = usePathname()
   const router = useRouter()
   const { toast } = useToast()
 
+  // handleLogout 吊销服务端会话 (清 HttpOnly cookie) 后回到登录分流页
   const handleLogout = async () => {
-    try {
-      const response = await fetch("/admin/api/logout", {
-        method: "POST",
+    const ok = await logout()
+    if (ok) {
+      toast({
+        title: "已退出登录",
       })
-
-      if (response.ok) {
-        localStorage.removeItem("token")
-        toast({
-          title: "已退出登录",
-        })
-        router.push("/")
-      }
-    } catch {
+      router.push("/")
+    } else {
       toast({
         title: "退出失败",
         description: "请稍后重试",

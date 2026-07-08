@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { fetchApi } from "@/lib/api-client"
 import {
   ResponsiveContainer,
   LineChart,
@@ -61,10 +62,7 @@ export default function RefererDailyChart() {
     let cancelled = false
     const load = async () => {
       try {
-        const token = localStorage.getItem("token")
-        const resp = await fetch("/admin/api/metrics/referer-daily?days=30&top=50", {
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        })
+        const resp = await fetchApi("/admin/api/metrics/referer-daily?days=30&top=50")
         if (!resp.ok) throw new Error("加载 Referer 天序列失败")
         const json = (await resp.json()) as ApiResponse
         if (cancelled) return

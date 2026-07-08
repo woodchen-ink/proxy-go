@@ -5,8 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/ui/use-toast"
-import { useRouter } from "next/navigation"
 import Link from "next/link"
+import { fetchApi } from "@/lib/api-client"
 import MetricTiles from "./components/MetricTiles"
 import StatusCodeChart from "./components/StatusCodeChart"
 import LatencyChart from "./components/LatencyChart"
@@ -67,25 +67,12 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null)
   const [recentLimit, setRecentLimit] = useState(RECENT_PAGE_SIZE)
   const { toast } = useToast()
-  const router = useRouter()
   const failureCountRef = useRef(0)
   const lastErrorToastAtRef = useRef(0)
 
   const fetchMetrics = useCallback(async (): Promise<boolean> => {
     try {
-      const token = localStorage.getItem("token")
-      if (!token) {
-        router.push("/login")
-        return false
-      }
-      const response = await fetch("/admin/api/metrics", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (response.status === 401) {
-        localStorage.removeItem("token")
-        router.push("/login")
-        return false
-      }
+      const response = await fetchApi("/admin/api/metrics")
       if (!response.ok) throw new Error("加载监控数据失败")
       const data = await response.json()
       setMetrics(data)
@@ -103,7 +90,7 @@ export default function DashboardPage() {
     } finally {
       setLoading(false)
     }
-  }, [router, toast])
+  }, [toast])
 
   useEffect(() => {
     let cancelled = false

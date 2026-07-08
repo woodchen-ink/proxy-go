@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { RotateCcw } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
-import { useRouter } from "next/navigation"
+import { fetchApi } from "@/lib/api-client"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,23 +29,10 @@ export default function PathStatsList() {
   const failureCount = useRef(0)
   const lastErrorAt = useRef(0)
   const { toast } = useToast()
-  const router = useRouter()
 
   const fetchStats = useCallback(async (): Promise<boolean> => {
     try {
-      const token = localStorage.getItem("token")
-      if (!token) {
-        router.push("/login")
-        return false
-      }
-      const resp = await fetch("/admin/api/path-stats", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (resp.status === 401) {
-        localStorage.removeItem("token")
-        router.push("/login")
-        return false
-      }
+      const resp = await fetchApi("/admin/api/path-stats")
       if (!resp.ok) throw new Error("加载路径统计失败")
       const json = (await resp.json()) as { path_stats: PathStats[] }
       setStats(json.path_stats || [])
@@ -63,7 +50,7 @@ export default function PathStatsList() {
     } finally {
       setLoading(false)
     }
-  }, [router, toast])
+  }, [toast])
 
   useEffect(() => {
     let cancelled = false
@@ -87,47 +74,23 @@ export default function PathStatsList() {
   // resetPath 重置单个路径统计, 成功后立即刷新列表 (throw 让 PathStatsCard 捕获并 toast 失败)
   const resetPath = useCallback(
     async (path: string) => {
-      const token = localStorage.getItem("token")
-      if (!token) {
-        router.push("/login")
-        return
-      }
-      const resp = await fetch("/admin/api/path-stats/reset", {
+      const resp = await fetchApi("/admin/api/path-stats/reset", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path }),
       })
-      if (resp.status === 401) {
-        localStorage.removeItem("token")
-        router.push("/login")
-        throw new Error("未授权")
-      }
       if (!resp.ok) throw new Error("重置统计失败")
       await fetchStats()
     },
-    [router, fetchStats]
+    [fetchStats]
   )
 
   // resetAll 一键重置全部路径统计
   const resetAll = useCallback(async () => {
-    const token = localStorage.getItem("token")
-    if (!token) {
-      router.push("/login")
-      return
-    }
     try {
-      const resp = await fetch("/admin/api/path-stats/reset-all", {
+      const resp = await fetchApi("/admin/api/path-stats/reset-all", {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
       })
-      if (resp.status === 401) {
-        localStorage.removeItem("token")
-        router.push("/login")
-        return
-      }
       if (!resp.ok) throw new Error("重置失败")
       toast({ title: "成功", description: "所有路径统计已重置" })
       await fetchStats()
@@ -138,7 +101,7 @@ export default function PathStatsList() {
         variant: "destructive",
       })
     }
-  }, [router, toast, fetchStats])
+  }, [toast, fetchStats])
 
   // 只展示有请求量的路径, 按请求数降序
   const visible = [...stats]

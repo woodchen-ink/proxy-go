@@ -3,7 +3,10 @@
 import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Nav } from "@/components/nav"
+import { checkAuth } from "@/lib/api-client"
 
+// DashboardLayout 仪表盘外壳: 挂载时校验会话, 无效跳登录;
+// 鉴权凭据在 HttpOnly cookie 中由浏览器自动携带, 不再拦截 window.fetch 注头
 export default function DashboardLayout({
   children,
 }: {
@@ -12,48 +15,11 @@ export default function DashboardLayout({
   const router = useRouter()
 
   useEffect(() => {
-    const token = localStorage.getItem("token")
-    if (!token) {
-      router.push("/login")
-      return
-    }
-
-    // 设置全局请求拦截器
-    const originalFetch = window.fetch
-    window.fetch = async (...args) => {
-      const [resource, config = {}] = args
-      
-      const newConfig = {
-        ...config,
-        headers: {
-          ...(config.headers || {}),
-          'Authorization': `Bearer ${token}`,
-        },
+    checkAuth().then((authenticated) => {
+      if (!authenticated) {
+        router.push("/login")
       }
-      
-      try {
-        const response = await originalFetch(resource, newConfig)
-        if (response.status === 401) {
-          localStorage.removeItem("token")
-          router.push("/login")
-          return response
-        }
-        return response
-      } catch (error) {
-        console.error('请求失败:', error)
-        return Promise.reject(error)
-      }
-    }
-
-    // 验证 token 有效性
-    fetch("/admin/api/check-auth").catch(() => {
-      localStorage.removeItem("token")
-      router.push("/login")
     })
-
-    return () => {
-      window.fetch = originalFetch
-    }
   }, [router])
 
   return (
@@ -64,4 +30,4 @@ export default function DashboardLayout({
       </main>
     </div>
   )
-} 
+}

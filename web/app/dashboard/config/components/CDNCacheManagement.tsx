@@ -8,7 +8,7 @@
 // 拆碎后调用方反而要在多个文件间跳读, 故保留单文件; 新增功能时如新增的状态不依赖现有状态, 必须拆走
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { useRouter } from "next/navigation"
+import { fetchApi } from "@/lib/api-client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { useToast } from "@/components/ui/use-toast"
@@ -107,7 +107,6 @@ function normalizePrefix(raw: string): string {
 // 编辑表单本身拆到 [[CDNProviderEditor]] 以保持本文件单一职责
 export default function CDNCacheManagement() {
   const { toast } = useToast()
-  const router = useRouter()
 
   const [providers, setProviders] = useState<CDNProvider[]>([])
   const [loading, setLoading] = useState(true)
@@ -130,18 +129,9 @@ export default function CDNCacheManagement() {
 
   const activeProvider = useMemo(() => providers.find((p) => p.Enabled) || null, [providers])
 
-  const handleUnauthorized = useCallback(() => {
-    localStorage.removeItem("token")
-    router.push("/login")
-  }, [router])
-
   const fetchProviders = useCallback(async () => {
     try {
-      const res = await fetch("/admin/api/cdn/providers")
-      if (res.status === 401) {
-        handleUnauthorized()
-        return
-      }
+      const res = await fetchApi("/admin/api/cdn/providers")
       if (!res.ok) throw new Error("获取 CDN 配置失败")
       const data = await res.json()
       setProviders(Array.isArray(data.providers) ? data.providers : [])
@@ -154,7 +144,7 @@ export default function CDNCacheManagement() {
     } finally {
       setLoading(false)
     }
-  }, [handleUnauthorized, toast])
+  }, [toast])
 
   useEffect(() => {
     fetchProviders()
@@ -165,15 +155,11 @@ export default function CDNCacheManagement() {
     async (next: CDNProvider[]) => {
       setSaving(true)
       try {
-        const res = await fetch("/admin/api/cdn/providers", {
+        const res = await fetchApi("/admin/api/cdn/providers", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ providers: next }),
         })
-        if (res.status === 401) {
-          handleUnauthorized()
-          return false
-        }
         if (!res.ok) {
           const text = await res.text()
           throw new Error(text || "保存 CDN 配置失败")
@@ -192,7 +178,7 @@ export default function CDNCacheManagement() {
         setSaving(false)
       }
     },
-    [handleUnauthorized, toast],
+    [toast],
   )
 
   const openCreate = () => {
@@ -265,15 +251,11 @@ export default function CDNCacheManagement() {
     }
     setPurging(type)
     try {
-      const res = await fetch("/admin/api/cdn/purge", {
+      const res = await fetchApi("/admin/api/cdn/purge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type, targets }),
       })
-      if (res.status === 401) {
-        handleUnauthorized()
-        return
-      }
       const data: PurgeResponse = await res.json()
       const result: PurgeResult = data.result ?? {
         success: false,

@@ -17,7 +17,7 @@ import {
   CartesianGrid,
 } from "recharts"
 import { useToast } from "@/components/ui/use-toast"
-import { useRouter } from "next/navigation"
+import { fetchApi } from "@/lib/api-client"
 
 interface PathStat {
   path: string
@@ -67,23 +67,10 @@ export default function PathTotalsChart() {
   const failureCount = useRef(0)
   const lastErrorAt = useRef(0)
   const { toast } = useToast()
-  const router = useRouter()
 
   const fetchStats = useCallback(async (): Promise<boolean> => {
     try {
-      const token = localStorage.getItem("token")
-      if (!token) {
-        router.push("/login")
-        return false
-      }
-      const resp = await fetch("/admin/api/path-stats", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (resp.status === 401) {
-        localStorage.removeItem("token")
-        router.push("/login")
-        return false
-      }
+      const resp = await fetchApi("/admin/api/path-stats")
       if (!resp.ok) throw new Error("加载路径统计失败")
       const json = (await resp.json()) as { path_stats: PathStat[] }
       setStats(json.path_stats || [])
@@ -101,7 +88,7 @@ export default function PathTotalsChart() {
     } finally {
       setLoading(false)
     }
-  }, [router, toast])
+  }, [toast])
 
   useEffect(() => {
     let cancelled = false

@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useToast } from "@/components/ui/use-toast"
-import { useRouter } from "next/navigation"
+import { fetchApi } from "@/lib/api-client"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -73,36 +73,14 @@ export default function SecurityPage() {
   const [unbanning, setUnbanning] = useState<string | null>(null)
   const [historyLimit, setHistoryLimit] = useState(50)
   const { toast } = useToast()
-  const router = useRouter()
 
   const fetchData = useCallback(async (signal?: AbortSignal) => {
     try {
-      const token = localStorage.getItem("token")
-      if (!token) {
-        router.push("/login")
-        return
-      }
-
       const [bannedResponse, statsResponse, historyResponse] = await Promise.all([
-        fetch("/admin/api/security/banned-ips", {
-          headers: { 'Authorization': `Bearer ${token}` },
-          signal,
-        }),
-        fetch("/admin/api/security/stats", {
-          headers: { 'Authorization': `Bearer ${token}` },
-          signal,
-        }),
-        fetch(`/admin/api/security/ban-history?limit=${historyLimit}`, {
-          headers: { 'Authorization': `Bearer ${token}` },
-          signal,
-        })
+        fetchApi("/admin/api/security/banned-ips", { signal }),
+        fetchApi("/admin/api/security/stats", { signal }),
+        fetchApi(`/admin/api/security/ban-history?limit=${historyLimit}`, { signal }),
       ])
-
-      if (bannedResponse.status === 401 || statsResponse.status === 401 || historyResponse.status === 401) {
-        localStorage.removeItem("token")
-        router.push("/login")
-        return
-      }
 
       if (bannedResponse.ok) {
         const bannedData = await bannedResponse.json()
@@ -133,7 +111,7 @@ export default function SecurityPage() {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [router, toast, historyLimit])
+  }, [toast, historyLimit])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -155,21 +133,7 @@ export default function SecurityPage() {
     if (!checkingIP.trim()) return
 
     try {
-      const token = localStorage.getItem("token")
-      if (!token) {
-        router.push("/login")
-        return
-      }
-
-      const response = await fetch(`/admin/api/security/check-ip?ip=${encodeURIComponent(checkingIP)}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-
-      if (response.status === 401) {
-        localStorage.removeItem("token")
-        router.push("/login")
-        return
-      }
+      const response = await fetchApi(`/admin/api/security/check-ip?ip=${encodeURIComponent(checkingIP)}`)
 
       if (response.ok) {
         const data = await response.json()
@@ -188,26 +152,11 @@ export default function SecurityPage() {
 
   const unbanIP = async (ip: string) => {
     try {
-      const token = localStorage.getItem("token")
-      if (!token) {
-        router.push("/login")
-        return
-      }
-
-      const response = await fetch("/admin/api/security/unban", {
+      const response = await fetchApi("/admin/api/security/unban", {
         method: "POST",
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ip })
       })
-
-      if (response.status === 401) {
-        localStorage.removeItem("token")
-        router.push("/login")
-        return
-      }
 
       if (response.ok) {
         const data = await response.json()

@@ -2,12 +2,10 @@ package handler
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"proxy-go/internal/service"
 	"proxy-go/internal/utils"
-	"strings"
 
 	"github.com/woodchen-ink/go-web-utils/iputil"
 )
@@ -24,22 +22,12 @@ func NewAuthHandler(authService *service.AuthService) *AuthHandler {
 	}
 }
 
-// CheckAuth 检查认证令牌是否有效
-func (h *AuthHandler) CheckAuth(token string) bool {
-	return h.authService.ValidateToken(token)
-}
-
-// LogoutHandler 处理退出登录请求
+// LogoutHandler 处理退出登录请求: 吊销会话 token 并清除 cookie, 幂等 (无会话也返回 200)
 func (h *AuthHandler) LogoutHandler(w http.ResponseWriter, r *http.Request) {
-	auth := r.Header.Get("Authorization")
-	if auth == "" || !strings.HasPrefix(auth, "Bearer ") {
-		log.Printf("[Auth] ERR %s %s -> 401 (%s) no token from %s", r.Method, r.URL.Path, iputil.GetClientIP(r), utils.GetRequestSource(r))
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
+	if token := h.authService.TokenFromRequest(r); token != "" {
+		h.authService.RemoveToken(token)
 	}
-
-	token := strings.TrimPrefix(auth, "Bearer ")
-	h.authService.RemoveToken(token)
+	h.authService.ClearAuthCookie(w, r)
 
 	log.Printf("[Auth] %s %s -> 200 (%s) logout success from %s", r.Method, r.URL.Path, iputil.GetClientIP(r), utils.GetRequestSource(r))
 
@@ -92,22 +80,8 @@ func (h *AuthHandler) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// 返回登录成功页面
-	// token / username 通过 json.Marshal 转成安全的 JS 字符串字面量再嵌入内联脚本:
-	// Go 的 json 编码默认把 < > & 转义为 < 等, 可防止 username 里的 </script> 或引号逃逸出脚本上下文 (XSS)。
-	tokenJS, _ := json.Marshal(result.Token)
-	userJS, _ := json.Marshal(result.Username)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `
-		<html>
-		<head><title>登录成功</title></head>
-		<body>
-			<script>
-				localStorage.setItem('token', %s);
-				localStorage.setItem('user', %s);
-				window.location.href = '/admin/dashboard';
-			</script>
-		</body>
-		</html>
-	`, tokenJS, userJS)
+	// 会话 token 走 HttpOnly cookie 下发, 不再经内联脚本落 localStorage
+	// (token 不暴露给页面 JS, XSS 拿不到凭据)
+	h.authService.SetAuthCookie(w, r, result.Token)
+	http.Redirect(w, r, result.RedirectURL, http.StatusSeeOther)
 }

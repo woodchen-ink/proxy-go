@@ -21,6 +21,10 @@ import (
 const (
 	tokenExpiry = 30 * 24 * time.Hour // Token 过期时间为 30 天
 	stateExpiry = 10 * time.Minute    // State 过期时间为 10 分钟
+
+	// AuthCookieName 管理端会话 cookie 名。值为内存 token 表中的随机 token,
+	// HttpOnly 存储, 前端 JS 不可读; Path 限定 /admin, 普通代理流量不会携带。
+	AuthCookieName = "proxy_go_token"
 )
 
 // AuthResult 认证结果
@@ -155,16 +159,83 @@ func (s *AuthService) ValidateToken(token string) bool {
 
 // IsAuthenticated 检查用户是否已认证
 //
-// 只认 Authorization: Bearer <token>, token 必须存在于内存 token 表 (ValidateToken)。
-// 不再接受任何 cookie 旁路: 历史实现曾接受 "authenticated=true" 这一写死的 cookie 值,
-// 等于任何人带该 cookie 即可绕过鉴权, 已移除。
+// 只认 HttpOnly 会话 cookie, 值必须存在于内存 token 表 (ValidateToken)。
+// cookie 里放的是登录时签发的随机 token, 不是任何写死的标志值
+// (历史上曾接受 "authenticated=true" 这一写死 cookie, 属鉴权绕过, 不可回退)。
+// 写类请求的 CSRF 防护由 RequireAuth 中的同源校验承担。
 func (s *AuthService) IsAuthenticated(r *http.Request) bool {
-	auth := r.Header.Get("Authorization")
-	if auth != "" && strings.HasPrefix(auth, "Bearer ") {
-		token := strings.TrimPrefix(auth, "Bearer ")
-		return s.ValidateToken(token)
+	c, err := r.Cookie(AuthCookieName)
+	if err != nil || c.Value == "" {
+		return false
 	}
-	return false
+	return s.ValidateToken(c.Value)
+}
+
+// TokenFromRequest 从请求中提取会话 token (仅用于 logout 等需要拿到原始 token 的场景)
+func (s *AuthService) TokenFromRequest(r *http.Request) string {
+	if c, err := r.Cookie(AuthCookieName); err == nil {
+		return c.Value
+	}
+	return ""
+}
+
+// isRequestSecure 判断请求是否经 HTTPS 到达 (直连 TLS 或反代注入的 X-Forwarded-Proto)
+func isRequestSecure(r *http.Request) bool {
+	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+}
+
+// SetAuthCookie 签发会话 cookie: HttpOnly + SameSite=Lax, HTTPS 下加 Secure,
+// Path 限定 /admin 使普通代理路径不携带管理会话
+func (s *AuthService) SetAuthCookie(w http.ResponseWriter, r *http.Request, token string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     AuthCookieName,
+		Value:    token,
+		Path:     "/admin",
+		MaxAge:   int(tokenExpiry / time.Second),
+		HttpOnly: true,
+		Secure:   isRequestSecure(r),
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// ClearAuthCookie 使会话 cookie 立即失效 (logout)
+func (s *AuthService) ClearAuthCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     AuthCookieName,
+		Value:    "",
+		Path:     "/admin",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   isRequestSecure(r),
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// isSameOriginRequest 同源校验 (CSRF 防护, 与 Go 1.25 http.CrossOriginProtection 同策略):
+// 优先看 Sec-Fetch-Site (现代浏览器必带), 缺失时回退 Origin 与 Host 比对;
+// 两者都没有视为非浏览器客户端 (curl 等), 不构成 CSRF 面, 放行。
+// 注意 "same-site" (子域) 也拒绝, 管理端没有跨子域调用场景。
+func isSameOriginRequest(r *http.Request) bool {
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "same-origin", "none":
+		return true
+	case "":
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true
+		}
+		u, err := url.Parse(origin)
+		if err != nil {
+			return false
+		}
+		// 反代场景下浏览器 Origin 是对外域名, 与 X-Forwarded-Host 比对
+		if fh := r.Header.Get("X-Forwarded-Host"); fh != "" && u.Host == fh {
+			return true
+		}
+		return u.Host == r.Host
+	default:
+		return false
+	}
 }
 
 // generateToken 生成随机令牌
@@ -478,7 +549,7 @@ func (s *AuthService) getUserInfo(accessToken string) (*OAuthUserInfo, error) {
 	return userInfo, nil
 }
 
-// RequireAuth 中间件：要求认证
+// RequireAuth 中间件: 要求认证; cookie 会话下对写类请求追加同源校验 (CSRF 防护)
 func (s *AuthService) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.IsAuthenticated(r) {
@@ -494,6 +565,22 @@ func (s *AuthService) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 			// 重定向到登录页面
 			http.Redirect(w, r, "/admin/auth", http.StatusSeeOther)
 			return
+		}
+
+		// GET/HEAD/OPTIONS 之外的请求会改状态, cookie 会被浏览器自动携带,
+		// 必须确认请求来自本站页面而非第三方站点发起的跨站提交
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+		default:
+			if !isSameOriginRequest(r) {
+				log.Printf("[Auth] ERR %s %s -> 403 (%s) cross-origin request rejected",
+					r.Method, r.URL.Path, iputil.GetClientIP(r))
+				w.WriteHeader(http.StatusForbidden)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": "Cross-origin request rejected",
+				})
+				return
+			}
 		}
 
 		next(w, r)

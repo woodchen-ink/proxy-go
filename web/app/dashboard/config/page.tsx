@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useToast } from "@/components/ui/use-toast"
-import { useRouter } from "next/navigation"
+import { fetchApi } from "@/lib/api-client"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Download, RefreshCw, Plus, Circle, CheckCircle2, Edit, Trash2, Database, FileText, Eraser } from "lucide-react"
 import {
@@ -97,7 +97,6 @@ export default function ConfigPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const { toast } = useToast()
-  const router = useRouter()
 
   // 选中的路径
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
@@ -159,24 +158,7 @@ export default function ConfigPage() {
 
   const fetchConfig = useCallback(async () => {
     try {
-      const token = localStorage.getItem("token")
-      if (!token) {
-        router.push("/login")
-        return
-      }
-
-      const response = await fetch("/admin/api/config/get", {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      })
-
-      if (response.status === 401) {
-        localStorage.removeItem("token")
-        router.push("/login")
-        return
-      }
+      const response = await fetchApi("/admin/api/config/get")
 
       if (!response.ok) {
         throw new Error("获取配置失败")
@@ -214,7 +196,7 @@ export default function ConfigPage() {
     } finally {
       setLoading(false)
     }
-  }, [router, toast])
+  }, [toast])
 
   const updateConfig = useCallback((newConfig: Config) => {
     isConfigFromApiRef.current = false
@@ -230,26 +212,11 @@ export default function ConfigPage() {
 
     setSaving(true)
     try {
-      const token = localStorage.getItem("token")
-      if (!token) {
-        router.push("/login")
-        return
-      }
-
-      const response = await fetch("/admin/api/config/save", {
+      const response = await fetchApi("/admin/api/config/save", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          'Authorization': `Bearer ${token}`
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(config),
       })
-
-      if (response.status === 401) {
-        localStorage.removeItem("token")
-        router.push("/login")
-        return
-      }
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}))
@@ -269,7 +236,7 @@ export default function ConfigPage() {
     } finally {
       setSaving(false)
     }
-  }, [config, router, toast])
+  }, [config, toast])
 
   useEffect(() => {
     if (isInitialLoadRef.current || !config || isConfigFromApiRef.current) {
@@ -310,7 +277,7 @@ export default function ConfigPage() {
 
   const pullConfigFromD1 = async () => {
     try {
-      const response = await fetch('/admin/api/config/pull', {
+      const response = await fetchApi('/admin/api/config/pull', {
         method: 'POST',
       })
 
@@ -553,29 +520,14 @@ export default function ConfigPage() {
 
   const handleClearPathCache = async (path: string) => {
     try {
-      const token = localStorage.getItem("token")
-      if (!token) {
-        router.push("/login")
-        return
-      }
-
-      const response = await fetch("/admin/api/cache/clear-by-path", {
+      const response = await fetchApi("/admin/api/cache/clear-by-path", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          'Authorization': `Bearer ${token}`
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "all",
           path_prefix: path
         }),
       })
-
-      if (response.status === 401) {
-        localStorage.removeItem("token")
-        router.push("/login")
-        return
-      }
 
       if (!response.ok) {
         throw new Error("清理缓存失败")
@@ -605,17 +557,11 @@ export default function ConfigPage() {
         ? origin.replace(/\/+$/, "") + (path.endsWith("/") ? path : path + "/")
         : (path.endsWith("/") ? path : path + "/")
 
-      const response = await fetch("/admin/api/cdn/purge", {
+      const response = await fetchApi("/admin/api/cdn/purge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type: "prefixes", targets: [target] }),
       })
-
-      if (response.status === 401) {
-        localStorage.removeItem("token")
-        router.push("/login")
-        return
-      }
 
       const data = await response.json().catch(() => ({}))
       if (!response.ok || !data?.result?.success) {

@@ -25,7 +25,7 @@ import {
   Legend,
 } from "recharts"
 import { useToast } from "@/components/ui/use-toast"
-import { useRouter } from "next/navigation"
+import { fetchApi } from "@/lib/api-client"
 
 interface HourPoint {
   hour: number
@@ -136,24 +136,11 @@ export default function PathTrendChart() {
   const [selectedPaths, setSelectedPaths] = useState<string[]>([])
   const failureCount = useRef(0)
   const { toast } = useToast()
-  const router = useRouter()
   const lastErrorAt = useRef(0)
 
   const fetchData = useCallback(async (): Promise<boolean> => {
     try {
-      const token = localStorage.getItem("token")
-      if (!token) {
-        router.push("/login")
-        return false
-      }
-      const resp = await fetch("/admin/api/metrics/timeseries?days=30", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (resp.status === 401) {
-        localStorage.removeItem("token")
-        router.push("/login")
-        return false
-      }
+      const resp = await fetchApi("/admin/api/metrics/timeseries?days=30")
       if (!resp.ok) throw new Error("加载趋势数据失败")
       const json = (await resp.json()) as TimeseriesResponse
       setData(json)
@@ -176,7 +163,7 @@ export default function PathTrendChart() {
     } finally {
       setLoading(false)
     }
-  }, [router, toast])
+  }, [toast])
 
   useEffect(() => {
     let cancelled = false

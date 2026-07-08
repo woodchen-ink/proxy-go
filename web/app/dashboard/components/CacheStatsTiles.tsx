@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { useRouter } from "next/navigation"
+import { fetchApi } from "@/lib/api-client"
 import {
   HardDrive,
   Database,
@@ -61,29 +61,16 @@ function sum(stats: CacheData | null, key: keyof CacheStats): number {
 // 自带 5s 轮询拉取 /admin/api/cache/stats, 与首页 metrics 数据流互相独立。
 export default function CacheStatsTiles() {
   const [stats, setStats] = useState<CacheData | null>(null)
-  const router = useRouter()
 
   const fetchStats = useCallback(async () => {
     try {
-      const token = localStorage.getItem("token")
-      if (!token) {
-        router.push("/login")
-        return
-      }
-      const response = await fetch("/admin/api/cache/stats", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (response.status === 401) {
-        localStorage.removeItem("token")
-        router.push("/login")
-        return
-      }
+      const response = await fetchApi("/admin/api/cache/stats")
       if (!response.ok) throw new Error("获取缓存统计失败")
       setStats(await response.json())
     } catch (error) {
       console.error("获取缓存统计失败:", error)
     }
-  }, [router])
+  }, [])
 
   useEffect(() => {
     fetchStats()
