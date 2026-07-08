@@ -120,8 +120,16 @@ func (s *ConfigService) validateConfig(cfg *config.Config) error {
 		if pathConfig.DefaultTarget == "" {
 			return fmt.Errorf("路径 %s 的默认目标不能为空", path)
 		}
-		if _, err := url.Parse(pathConfig.DefaultTarget); err != nil {
+		// url.Parse 对相对串几乎不报错, 必须显式校验 scheme 与 host, 否则形同虚设
+		parsed, err := url.Parse(pathConfig.DefaultTarget)
+		if err != nil {
 			return fmt.Errorf("路径 %s 的默认目标URL无效: %v", path, err)
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return fmt.Errorf("路径 %s 的默认目标URL必须以 http/https 开头: %s", path, pathConfig.DefaultTarget)
+		}
+		if parsed.Host == "" {
+			return fmt.Errorf("路径 %s 的默认目标URL缺少主机名: %s", path, pathConfig.DefaultTarget)
 		}
 	}
 

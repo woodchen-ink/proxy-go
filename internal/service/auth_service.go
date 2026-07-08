@@ -83,7 +83,6 @@ type OAuthConfig struct {
 // AuthService 认证服务
 type AuthService struct {
 	oauthConfig *OAuthConfig
-	sessionKey  string
 	tokens      sync.Map
 	states      sync.Map
 }
@@ -91,7 +90,6 @@ type AuthService struct {
 func NewAuthService(oauthConfig *OAuthConfig) *AuthService {
 	service := &AuthService{
 		oauthConfig: oauthConfig,
-		sessionKey:  "authenticated",
 	}
 	go service.cleanExpiredTokens()
 	go service.cleanExpiredStates()
@@ -137,7 +135,6 @@ func NewAuthServiceFromEnv() *AuthService {
 
 	service := &AuthService{
 		oauthConfig: oauthConfig,
-		sessionKey:  "authenticated",
 	}
 	go service.cleanExpiredTokens()
 	go service.cleanExpiredStates()
@@ -157,28 +154,26 @@ func (s *AuthService) ValidateToken(token string) bool {
 }
 
 // IsAuthenticated 检查用户是否已认证
+//
+// 只认 Authorization: Bearer <token>, token 必须存在于内存 token 表 (ValidateToken)。
+// 不再接受任何 cookie 旁路: 历史实现曾接受 "authenticated=true" 这一写死的 cookie 值,
+// 等于任何人带该 cookie 即可绕过鉴权, 已移除。
 func (s *AuthService) IsAuthenticated(r *http.Request) bool {
-	// 检查Authorization头
 	auth := r.Header.Get("Authorization")
 	if auth != "" && strings.HasPrefix(auth, "Bearer ") {
 		token := strings.TrimPrefix(auth, "Bearer ")
 		return s.ValidateToken(token)
 	}
-
-	// 检查 session cookie
-	cookie, err := r.Cookie(s.sessionKey)
-	if err != nil {
-		return false
-	}
-
-	// 简单验证 - 实际应用中应该验证JWT或session store
-	return cookie.Value == "true"
+	return false
 }
 
 // generateToken 生成随机令牌
+// crypto/rand.Read 正常不会失败; 一旦失败必须 panic 而非返回低熵/空 token, 否则会签发可预测的凭据。
 func (s *AuthService) generateToken() string {
 	b := make([]byte, 32)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("failed to generate secure token: %v", err))
+	}
 	return base64.URLEncoding.EncodeToString(b)
 }
 
@@ -384,32 +379,6 @@ func (s *AuthService) HandleOAuthCallback(r *http.Request, code, state string) (
 		Token:       internalToken,
 		Username:    userInfo.Username,
 	}, nil
-}
-
-// SetAuthCookie 设置认证cookie
-func (s *AuthService) SetAuthCookie(w http.ResponseWriter) {
-	cookie := &http.Cookie{
-		Name:     s.sessionKey,
-		Value:    "true",
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   true, // 生产环境应该为true
-		SameSite: http.SameSiteStrictMode,
-		Expires:  time.Now().Add(24 * time.Hour),
-	}
-	http.SetCookie(w, cookie)
-}
-
-// ClearAuthCookie 清除认证cookie
-func (s *AuthService) ClearAuthCookie(w http.ResponseWriter) {
-	cookie := &http.Cookie{
-		Name:     s.sessionKey,
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		Expires:  time.Unix(0, 0),
-	}
-	http.SetCookie(w, cookie)
 }
 
 // exchangeCodeForToken 交换授权码为访问令牌

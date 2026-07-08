@@ -281,25 +281,7 @@ func InitCollector(cfg *config.Config) error {
 		instance.requestsWindow.buckets = make([]int64, bucketCount)
 		instance.requestsWindow.lastUpdate = time.Now()
 
-		// 初始化延迟分布桶
-		buckets := []string{"lt10ms", "10-50ms", "50-200ms", "200-1000ms", "gt1s"}
-		for _, bucket := range buckets {
-			counter := new(int64)
-			*counter = 0
-			// 根据 bucket 名称设置对应的桶计数器
-			switch bucket {
-			case "lt10ms":
-				instance.latencyBuckets.lt10ms = atomic.LoadInt64(counter)
-			case "10-50ms":
-				instance.latencyBuckets.ms10_50 = atomic.LoadInt64(counter)
-			case "50-200ms":
-				instance.latencyBuckets.ms50_200 = atomic.LoadInt64(counter)
-			case "200-1000ms":
-				instance.latencyBuckets.ms200_1000 = atomic.LoadInt64(counter)
-			case "gt1s":
-				instance.latencyBuckets.gt1s = atomic.LoadInt64(counter)
-			}
-		}
+		// latencyBuckets 各字段零值即初始状态, 无需额外初始化
 
 		// 加载持久化的路径统计数据
 		if err := instance.loadPathStats(); err != nil {

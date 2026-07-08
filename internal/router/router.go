@@ -34,10 +34,10 @@ func validateFaviconURL(raw string) error {
 	}
 	// 拒绝纯 IP 形式的私有/回环/链路本地/多播地址
 	if ip := net.ParseIP(host); ip != nil {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
-			ip.IsMulticast() || ip.IsUnspecified() {
+		if isBlockedFaviconIP(ip) {
 			return fmt.Errorf("private/loopback ip not allowed: %s", host)
 		}
+		return nil
 	}
 	// 拒绝常见内网主机名
 	lower := strings.ToLower(host)
@@ -45,7 +45,23 @@ func validateFaviconURL(raw string) error {
 		strings.HasSuffix(lower, ".internal") {
 		return fmt.Errorf("private hostname not allowed: %s", host)
 	}
+	// 解析域名, 任一解析结果落在内网即拒绝 (防止主机名指向内网 IP 绕过上面的字面 IP 判定)
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("failed to resolve host %s: %w", host, err)
+	}
+	for _, ip := range ips {
+		if isBlockedFaviconIP(ip) {
+			return fmt.Errorf("host resolves to blocked ip: %s -> %s", host, ip)
+		}
+	}
 	return nil
+}
+
+// isBlockedFaviconIP 判断远程 favicon 目标 IP 是否落在不允许访问的内网 / 特殊网段
+func isBlockedFaviconIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified()
 }
 
 // RouteHandler 定义路由处理器结构

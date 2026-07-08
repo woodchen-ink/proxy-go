@@ -30,7 +30,9 @@ func serveAdminStatic(w http.ResponseWriter, r *http.Request) {
 	target := filepath.Join(adminStaticRoot, rel)
 	absRoot, _ := filepath.Abs(adminStaticRoot)
 	absTarget, _ := filepath.Abs(target)
-	if absRoot == "" || absTarget == "" || !strings.HasPrefix(absTarget, absRoot) {
+	// 前缀比较必须带分隔符, 否则 web/out 会误放行同级的 web/out-xxx; absTarget == absRoot 时是根目录本身, 放行
+	if absRoot == "" || absTarget == "" ||
+		(absTarget != absRoot && !strings.HasPrefix(absTarget, absRoot+string(filepath.Separator))) {
 		http.NotFound(w, r)
 		return
 	}

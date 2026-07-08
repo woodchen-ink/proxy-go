@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"proxy-go/internal/cache"
@@ -12,6 +13,52 @@ import (
 
 	"github.com/woodchen-ink/go-web-utils/iputil"
 )
+
+// validateMirrorTarget 阻断 mirror 模式被当作 SSRF 跳板:
+// 只允许 http/https, 且拒绝目标 host 解析到的任何内网 / 回环 / 链路本地 / 多播地址。
+// mirror 是未鉴权的开放转发, 不加这层校验时外部可用 /mirror/http://127.0.0.1:xx 探测内网。
+// 注意: 这里做的是"解析即校验", 与真正发起请求之间仍有 DNS 重绑定的时间窗, 但已能挡住绝大多数直接探测。
+func validateMirrorTarget(u *url.URL) error {
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("unsupported scheme %q", u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("missing host")
+	}
+
+	// host 本身是字面 IP: 直接判定
+	if ip := net.ParseIP(host); ip != nil {
+		if isBlockedIP(ip) {
+			return fmt.Errorf("target ip not allowed: %s", host)
+		}
+		return nil
+	}
+
+	// 常见内网主机名
+	lower := strings.ToLower(host)
+	if lower == "localhost" || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal") {
+		return fmt.Errorf("target host not allowed: %s", host)
+	}
+
+	// 解析域名, 任一解析结果落在内网即拒绝
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("failed to resolve host %s: %w", host, err)
+	}
+	for _, ip := range ips {
+		if isBlockedIP(ip) {
+			return fmt.Errorf("target host resolves to blocked ip: %s -> %s", host, ip)
+		}
+	}
+	return nil
+}
+
+// isBlockedIP 判断 IP 是否属于不允许被 mirror 转发的内网 / 特殊网段
+func isBlockedIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified()
+}
 
 // MirrorProxyRequest 镜像代理请求
 type MirrorProxyRequest struct {
@@ -86,6 +133,11 @@ func (s *MirrorProxyService) ExtractTargetURL(r *http.Request) (*MirrorProxyRequ
 	if parsedURL.Scheme == "" {
 		actualURL = "https://" + actualURL
 		parsedURL, _ = url.Parse(actualURL)
+	}
+
+	// SSRF 防护: 拒绝把 mirror 当作探测内网的跳板
+	if err := validateMirrorTarget(parsedURL); err != nil {
+		return nil, err
 	}
 
 	return &MirrorProxyRequest{

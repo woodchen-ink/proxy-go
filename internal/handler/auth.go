@@ -93,17 +93,21 @@ func (h *AuthHandler) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	// 返回登录成功页面
-	w.Header().Set("Content-Type", "text/html")
+	// token / username 通过 json.Marshal 转成安全的 JS 字符串字面量再嵌入内联脚本:
+	// Go 的 json 编码默认把 < > & 转义为 < 等, 可防止 username 里的 </script> 或引号逃逸出脚本上下文 (XSS)。
+	tokenJS, _ := json.Marshal(result.Token)
+	userJS, _ := json.Marshal(result.Username)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `
 		<html>
 		<head><title>登录成功</title></head>
 		<body>
 			<script>
-				localStorage.setItem('token', '%s');
-				localStorage.setItem('user', '%s');
+				localStorage.setItem('token', %s);
+				localStorage.setItem('user', %s);
 				window.location.href = '/admin/dashboard';
 			</script>
 		</body>
 		</html>
-	`, result.Token, result.Username)
+	`, tokenJS, userJS)
 }
