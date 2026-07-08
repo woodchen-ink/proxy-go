@@ -144,7 +144,7 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 记录访问日志
-	log.Printf(h.mirrorService.CreateLogEntry(mirrorReq, resp.StatusCode, time.Since(startTime), written))
+	log.Print(h.mirrorService.CreateLogEntry(mirrorReq, resp.StatusCode, time.Since(startTime), written))
 
 	// 记录统计信息（缓存未命中）
 	collector.RecordRequestWithCache(r.URL.Path, "/mirror", resp.StatusCode, time.Since(startTime), written, iputil.GetClientIP(r), r, false, 0)
