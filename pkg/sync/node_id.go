@@ -2,8 +2,6 @@ package sync
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -99,10 +97,13 @@ type egressIPResponse struct {
 	} `json:"data"`
 }
 
-// lookupNodeIDByEgressIP 查本机出口 IP 归属, 生成形如 "de-7f3a91" 的节点 ID
+// lookupNodeIDByEgressIP 查本机出口 IP 归属, 生成形如 "de-192.0.2.10" 的节点 ID
 //
-// 国家码给人看 (仪表盘上一眼认出是哪个节点), IP 摘要保证同国家多节点不撞车。
-// 不直接用 IP 明文: ID 会随统计一起进 D1 并展示在前端, 摘要足够区分且不外泄服务器地址。
+// 国家码 + 出口 IP 明文: 仪表盘上一眼就能认出是哪台机器, 排查时不用再反查摘要。
+// ID 会随统计进 D1 并展示在前端, 等于把出口 IP 暴露给已登录的管理员 —— 自有基础设施,
+// 且后台本身就有鉴权, 可读性优先。
+//
+// IPv6 里的冒号会被归一化成连字符 (见 sanitizeNodeID), 点号保留以维持 IPv4 的可读性。
 // 失败返回空串由调用方走兜底, 不阻断启动
 func lookupNodeIDByEgressIP() string {
 	ctx, cancel := context.WithTimeout(context.Background(), nodeIDLookupTimeout)
@@ -138,16 +139,16 @@ func lookupNodeIDByEgressIP() string {
 		return ""
 	}
 
-	sum := sha256.Sum256([]byte(result.Data.IP))
-	suffix := hex.EncodeToString(sum[:])[:6]
-
-	// 国家码缺失时退化为纯摘要, 仍然唯一, 只是可读性差一点
+	// 国家码缺失时退化为纯 IP, 仍然唯一, 只是少了地区可读性
 	prefix := sanitizeNodeID(result.Data.CountryCode)
 	if prefix == "" {
 		prefix = "node"
 	}
 
-	id := fmt.Sprintf("%s-%s", prefix, suffix)
+	id := sanitizeNodeID(fmt.Sprintf("%s-%s", prefix, result.Data.IP))
+	if id == "" {
+		return ""
+	}
 	log.Printf("[NodeID] 由出口 IP 归属解析出节点 ID: %s (%s)", id, result.Data.CountryCode)
 	return id
 }
@@ -177,7 +178,11 @@ func persistNodeID(id string) {
 	log.Printf("[NodeID] 已固化节点 ID 到 %s", nodeIDFile)
 }
 
-// sanitizeNodeID 归一化为小写 [a-z0-9-], 其余字符转连字符
+// sanitizeNodeID 归一化为小写 [a-z0-9.-], 其余字符转连字符或丢弃
+//
+// 点号保留: 节点 ID 里嵌的是出口 IP 明文, "de-192.0.2.10" 比
+// "de-192-0-2-10" 可读得多。IPv6 的冒号转连字符 (连续冒号会被下面的
+// 去重逻辑收敛), 因为冒号在 URL 与日志里都容易引起歧义。
 //
 // node_id 会进 SQL 参数与 URL query (两处都已转义), 这里收敛字符集是为了
 // 让 ID 在日志 / 前端 / 主键里保持可读一致, 顺便挡住空白与控制字符
@@ -190,16 +195,16 @@ func sanitizeNodeID(raw string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(trimmed) {
 		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '.':
 			b.WriteRune(r)
-		case r == '-' || r == '_' || r == '.':
+		case r == '-' || r == '_' || r == ':':
 			b.WriteRune('-')
 		default:
 			// 丢弃其余字符 (含空白 / 控制字符 / 非 ASCII)
 		}
 	}
 
-	// 收敛连续与首尾连字符, 避免出现 "--" 或 "-de-" 这类脏值
+	// 收敛连续与首尾连字符, 避免出现 "--" (IPv6 的 "::") 或 "-de-" 这类脏值
 	id := strings.Trim(b.String(), "-")
 	for strings.Contains(id, "--") {
 		id = strings.ReplaceAll(id, "--", "-")

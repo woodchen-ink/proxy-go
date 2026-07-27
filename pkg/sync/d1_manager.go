@@ -104,7 +104,7 @@ func (m *D1Manager) SyncNow(ctx context.Context) error {
 	}
 
 	// 注意: Path Stats 和 Banned IPs 已通过各自的服务直接同步到 D1
-	// - Path Stats: 由 MetricsStorage 每 30 分钟自动保存
+	// - Path Stats: 由 MetricsStorage 按 saveInterval 定期合并上报
 	// - Banned IPs: 在封禁发生时立即同步
 	// 这里不再从本地文件读取同步（D1-only 模式）
 
@@ -213,111 +213,6 @@ func (m *D1Manager) syncConfigToD1(ctx context.Context) error {
 	}
 
 	return m.UploadConfig(ctx, config)
-}
-
-// SaveStatusCodes 保存状态码统计到 D1
-func (m *D1Manager) SaveStatusCodes(ctx context.Context, statusCodes map[string]int64) error {
-	if len(statusCodes) == 0 {
-		return nil
-	}
-
-	now := time.Now().UnixMilli()
-	nodeID := NodeID()
-	metrics := make([]StatusCodeMetric, 0, len(statusCodes))
-	for code, count := range statusCodes {
-		metrics = append(metrics, StatusCodeMetric{
-			StatusCode: code,
-			NodeID:     nodeID,
-			Count:      count,
-			UpdatedAt:  now,
-		})
-	}
-
-	if err := m.storage.BatchUpsertStatusCodes(ctx, metrics); err != nil {
-		return fmt.Errorf("failed to save status codes: %w", err)
-	}
-
-	log.Printf("[D1Sync] Saved %d status codes (node=%s)", len(metrics), nodeID)
-	return nil
-}
-
-// LoadStatusCodes 从 D1 加载状态码统计, 聚合范围由 q 决定
-func (m *D1Manager) LoadStatusCodes(ctx context.Context, q MetricsQuery) (map[string]int64, error) {
-	metrics, err := m.storage.GetStatusCodes(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load status codes: %w", err)
-	}
-
-	result := make(map[string]int64, len(metrics))
-	for _, m := range metrics {
-		result[m.StatusCode] += m.Count
-	}
-
-	log.Printf("[D1Sync] Loaded %d status codes", len(result))
-	return result, nil
-}
-
-// SaveLatencyDistribution 保存延迟分布到 D1
-func (m *D1Manager) SaveLatencyDistribution(ctx context.Context, distribution map[string]int64) error {
-	if len(distribution) == 0 {
-		return nil
-	}
-
-	now := time.Now().UnixMilli()
-	nodeID := NodeID()
-	metrics := make([]LatencyMetric, 0, len(distribution))
-	for bucket, count := range distribution {
-		metrics = append(metrics, LatencyMetric{
-			Bucket:    bucket,
-			NodeID:    nodeID,
-			Count:     count,
-			UpdatedAt: now,
-		})
-	}
-
-	if err := m.storage.BatchUpsertLatencyDistribution(ctx, metrics); err != nil {
-		return fmt.Errorf("failed to save latency distribution: %w", err)
-	}
-
-	log.Printf("[D1Sync] Saved %d latency buckets (node=%s)", len(metrics), nodeID)
-	return nil
-}
-
-// LoadLatencyDistribution 从 D1 加载延迟分布, 聚合范围由 q 决定
-func (m *D1Manager) LoadLatencyDistribution(ctx context.Context, q MetricsQuery) (map[string]int64, error) {
-	metrics, err := m.storage.GetLatencyDistribution(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load latency distribution: %w", err)
-	}
-
-	result := make(map[string]int64, len(metrics))
-	for _, m := range metrics {
-		result[m.Bucket] += m.Count
-	}
-
-	log.Printf("[D1Sync] Loaded %d latency buckets", len(result))
-	return result, nil
-}
-
-// SavePathStats 保存路径统计到 D1, 统一在此打上本节点 node_id
-//
-// 在 manager 层盖章而不是让各调用方自己填, 避免漏填导致写进 'default' 行与其他节点互相覆盖
-func (m *D1Manager) SavePathStats(ctx context.Context, stats []PathStat) error {
-	if len(stats) == 0 {
-		return nil
-	}
-
-	nodeID := NodeID()
-	for i := range stats {
-		stats[i].NodeID = nodeID
-	}
-
-	if err := m.storage.BatchUpsertPathStats(ctx, stats); err != nil {
-		return fmt.Errorf("failed to save path stats: %w", err)
-	}
-
-	log.Printf("[D1Sync] Saved %d path stats (node=%s)", len(stats), nodeID)
-	return nil
 }
 
 // downloadConfigWithFallback 下载配置，如果远程不存在则上传本地配置

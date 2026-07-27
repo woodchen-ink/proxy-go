@@ -12,6 +12,19 @@ import (
 	"time"
 )
 
+// 上报窗口: 每次同步重传最近这么多的桶
+//
+// 只有"当前"那个桶会变 (过去的小时 / 天已经冻结), 窗口存在的意义只是给
+// **连续同步失败**留补传余量 —— 节点重启后内存缓冲本来就是空的, 不存在补传需求。
+// 所以窗口不必覆盖整个保留期: 48 小时 / 40 天的旧值让每次上报都重传上千行,
+// 写入行数才是 D1 上最先触顶的配额, 而不是请求数。
+const (
+	// timeseriesUploadHours 小时桶上报窗口, 容忍约 6 小时的连续同步失败
+	timeseriesUploadHours = 6
+	// refererUploadDays 天桶上报窗口, 覆盖跨日边界并留一天余量
+	refererUploadDays = 2
+)
+
 // MetricsStorage 指标存储结构（D1 模式）
 type MetricsStorage struct {
 	collector    *Collector
@@ -94,44 +107,30 @@ func (ms *MetricsStorage) SaveMetrics() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// 获取状态码统计
-	statusCodes := ms.getStatusCodesMap()
-	if len(statusCodes) > 0 {
-		if err := sync.SaveStatusCodes(ctx, statusCodes); err != nil {
-			log.Printf("[MetricsStorage] 保存状态码统计失败: %v", err)
-		}
+	// 五张表合成一个请求上报; node_id 由 BulkSave 统一盖章
+	//
+	// 时间序列只传近 timeseriesUploadHours 小时、referer 只传近 refererUploadDays 天:
+	// 过去的桶已冻结不会再变, 窗口只为容忍连续同步失败留补传余量
+	payload := &sync.BulkPayload{
+		PathStats:    ms.getPathStatsArray(),
+		Timeseries:   ms.getTimeseriesPoints(),
+		RefererDaily: ms.getRefererDailyPoints(),
 	}
 
-	// 获取延迟分布
-	latencyDist := ms.getLatencyDistributionMap()
-	if len(latencyDist) > 0 {
-		if err := sync.SaveLatencyDistribution(ctx, latencyDist); err != nil {
-			log.Printf("[MetricsStorage] 保存延迟分布失败: %v", err)
-		}
+	now := time.Now().UnixMilli()
+	for code, count := range ms.getStatusCodesMap() {
+		payload.StatusCodes = append(payload.StatusCodes, sync.StatusCodeMetric{
+			StatusCode: code, Count: count, UpdatedAt: now,
+		})
+	}
+	for bucket, count := range ms.getLatencyDistributionMap() {
+		payload.Latency = append(payload.Latency, sync.LatencyMetric{
+			Bucket: bucket, Count: count, UpdatedAt: now,
+		})
 	}
 
-	// 获取路径统计
-	pathStats := ms.getPathStatsArray()
-	if len(pathStats) > 0 {
-		if err := sync.SavePathStats(ctx, pathStats); err != nil {
-			log.Printf("[MetricsStorage] 保存路径统计失败: %v", err)
-		}
-	}
-
-	// 上报路径时间序列 (近 48 小时, 跨节点聚合由 D1 完成)
-	tsPoints := ms.getTimeseriesPoints()
-	if len(tsPoints) > 0 {
-		if err := sync.SavePathTimeseries(ctx, tsPoints); err != nil {
-			log.Printf("[MetricsStorage] 保存路径时间序列失败: %v", err)
-		}
-	}
-
-	// 上报 referer host 天级序列 (近 40 天, 已在 snapshot 端按 min-requests 过滤)
-	rdPoints := ms.getRefererDailyPoints()
-	if len(rdPoints) > 0 {
-		if err := sync.SaveRefererDaily(ctx, rdPoints); err != nil {
-			log.Printf("[MetricsStorage] 保存 referer 天序列失败: %v", err)
-		}
+	if err := sync.BulkSave(ctx, payload); err != nil {
+		log.Printf("[MetricsStorage] 上报指标失败: %v", err)
 	}
 
 	// 清理 31 天之前的旧时间序列 (低频, 每 24 次保存触发一次)
@@ -166,46 +165,46 @@ func (ms *MetricsStorage) LoadMetrics() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// 加载状态码统计 (只取本节点上报的行, 见 LoadOwnStatusCodes 的说明)
-	statusCodes, err := sync.LoadOwnStatusCodes(ctx)
+	// 单请求读回本节点自己的累计统计
+	//
+	// 必须按 node_id 过滤: 拿全节点合计恢复会让本节点把其他节点的量当成自己的起点,
+	// 下个周期又写回 D1, 每次重启放大一轮
+	bulk, err := sync.BulkLoadOwn(ctx)
 	if err != nil {
-		log.Printf("[MetricsStorage] 加载状态码统计失败: %v", err)
-	} else if len(statusCodes) > 0 {
+		log.Printf("[MetricsStorage] 加载本节点指标失败: %v", err)
+	} else if bulk != nil {
 		loadedCount := 0
-		for codeStr, count := range statusCodes {
-			if code, err := strconv.Atoi(codeStr); err == nil {
-				ms.collector.statusCodeStats.mu.Lock()
-				if _, exists := ms.collector.statusCodeStats.stats[code]; !exists {
-					ms.collector.statusCodeStats.stats[code] = new(int64)
-				}
-				atomic.StoreInt64(ms.collector.statusCodeStats.stats[code], count)
-				ms.collector.statusCodeStats.mu.Unlock()
-				loadedCount++
+		for _, m := range bulk.StatusCodes {
+			code, convErr := strconv.Atoi(m.StatusCode)
+			if convErr != nil {
+				continue
 			}
+			ms.collector.statusCodeStats.mu.Lock()
+			if _, exists := ms.collector.statusCodeStats.stats[code]; !exists {
+				ms.collector.statusCodeStats.stats[code] = new(int64)
+			}
+			atomic.StoreInt64(ms.collector.statusCodeStats.stats[code], m.Count)
+			ms.collector.statusCodeStats.mu.Unlock()
+			loadedCount++
 		}
-		log.Printf("[MetricsStorage] 成功加载了 %d 条状态码统计", loadedCount)
-	}
 
-	// 加载延迟分布 (同样只取本节点)
-	latencyDist, err := sync.LoadOwnLatencyDistribution(ctx)
-	if err != nil {
-		log.Printf("[MetricsStorage] 加载延迟分布失败: %v", err)
-	} else if len(latencyDist) > 0 {
-		for bucket, count := range latencyDist {
-			switch bucket {
+		for _, m := range bulk.Latency {
+			switch m.Bucket {
 			case "lt10ms":
-				atomic.StoreInt64(&ms.collector.latencyBuckets.lt10ms, count)
+				atomic.StoreInt64(&ms.collector.latencyBuckets.lt10ms, m.Count)
 			case "10-50ms":
-				atomic.StoreInt64(&ms.collector.latencyBuckets.ms10_50, count)
+				atomic.StoreInt64(&ms.collector.latencyBuckets.ms10_50, m.Count)
 			case "50-200ms":
-				atomic.StoreInt64(&ms.collector.latencyBuckets.ms50_200, count)
+				atomic.StoreInt64(&ms.collector.latencyBuckets.ms50_200, m.Count)
 			case "200-1000ms":
-				atomic.StoreInt64(&ms.collector.latencyBuckets.ms200_1000, count)
+				atomic.StoreInt64(&ms.collector.latencyBuckets.ms200_1000, m.Count)
 			case "gt1s":
-				atomic.StoreInt64(&ms.collector.latencyBuckets.gt1s, count)
+				atomic.StoreInt64(&ms.collector.latencyBuckets.gt1s, m.Count)
 			}
 		}
-		log.Printf("[MetricsStorage] 加载了延迟分布数据")
+
+		log.Printf("[MetricsStorage] 已加载本节点 %d 条状态码 / %d 个延迟桶",
+			loadedCount, len(bulk.Latency))
 	}
 
 	// 强制进行一次GC
@@ -259,14 +258,14 @@ func (ms *MetricsStorage) getLatencyDistributionMap() map[string]int64 {
 
 // getTimeseriesPoints 把 PathTimeSeries 当前快照转换为 sync.PathTimeseriesPoint
 //
-// 每次同步上报近 48 小时的全部桶, D1 端按 (path, ts_hour, node_id) UPSERT,
+// 每次同步上报近 timeseriesUploadHours 小时的桶, D1 端按 (path, ts_hour, node_id) UPSERT,
 // 等价于本节点对自身贡献的 idempotent 覆盖, 不会双计
 func (ms *MetricsStorage) getTimeseriesPoints() []sync.PathTimeseriesPoint {
 	ts := ms.collector.PathTimeSeries()
 	if ts == nil {
 		return nil
 	}
-	buckets := ts.SnapshotForUpload(time.Now(), 48)
+	buckets := ts.SnapshotForUpload(time.Now(), timeseriesUploadHours)
 	if len(buckets) == 0 {
 		return nil
 	}
@@ -287,11 +286,19 @@ func (ms *MetricsStorage) getTimeseriesPoints() []sync.PathTimeseriesPoint {
 	return out
 }
 
-// maybePruneTimeseries 每 N 次保存触发一次旧数据清理 (默认每 24 次, 即每 12 小时左右)
+// maybePruneTimeseries 低频触发旧数据清理
 // 同时清理 path_timeseries (31 天前) 与 referer_daily (35 天前, 留余量)
+//
+// 按"多久清理一次"换算成保存次数, 而不是写死次数: 上报间隔调整时 (30 分钟 → 10 分钟)
+// 若仍固定每 24 次, 清理频率会跟着变成 4 小时一次, 白白多打 D1
 func (ms *MetricsStorage) maybePruneTimeseries(ctx context.Context) {
+	pruneEvery := int64(12 * time.Hour / ms.saveInterval)
+	if pruneEvery < 1 {
+		pruneEvery = 1
+	}
+
 	ms.saveCount++
-	if ms.saveCount%24 != 0 {
+	if ms.saveCount%pruneEvery != 0 {
 		return
 	}
 	cutoff := time.Now().Unix()/3600 - 31*24
@@ -310,13 +317,13 @@ func (ms *MetricsStorage) maybePruneTimeseries(ctx context.Context) {
 }
 
 // getRefererDailyPoints 把 RefererDailySeries 当前快照转换为 sync.RefererDailyPoint
-// 每次同步上报近 40 天的桶, D1 端按 (host, ts_date, node_id) UPSERT MAX
+// 每次同步上报近 refererUploadDays 天的桶, D1 端按 (host, ts_date, node_id) UPSERT MAX
 func (ms *MetricsStorage) getRefererDailyPoints() []sync.RefererDailyPoint {
 	rd := ms.collector.RefererDaily()
 	if rd == nil {
 		return nil
 	}
-	buckets := rd.SnapshotForUpload(time.Now(), 40)
+	buckets := rd.SnapshotForUpload(time.Now(), refererUploadDays)
 	if len(buckets) == 0 {
 		return nil
 	}

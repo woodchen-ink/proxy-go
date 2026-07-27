@@ -164,6 +164,63 @@ export default {
 			}
 
 			// ============================================
+			// 合并读写 endpoint
+			//
+			// 一次同步原本要打 5 个 POST, 一次仪表盘刷新要打 3 个 GET。
+			// 每个请求都单独计费, 且各自一次网络往返 —— 合并成单请求后, 上报 5→1、
+			// 读取 3→1, 请求数降到约五分之一, 也让上报间隔有余量往下调。
+			// 各表的批量写仍走原来的 db.batchUpsert*, 语义完全不变。
+			// ============================================
+			if (path === '/metrics/bulk' && request.method === 'POST') {
+				const body = await request.json<{
+					path_stats?: db.PathStat[];
+					status_codes?: db.StatusCodeMetric[];
+					latency?: db.LatencyMetric[];
+					timeseries?: db.PathTimeseriesPoint[];
+					referer_daily?: db.RefererDailyPoint[];
+				}>();
+
+				const written: Record<string, number> = {};
+				// 逐段独立执行: 某一段为空就跳过, 不因为一段缺失而整体失败
+				if (body.path_stats?.length) {
+					await db.batchUpsertPathStats(env.DB, body.path_stats);
+					written.path_stats = body.path_stats.length;
+				}
+				if (body.status_codes?.length) {
+					await db.batchUpsertStatusCodes(env.DB, body.status_codes);
+					written.status_codes = body.status_codes.length;
+				}
+				if (body.latency?.length) {
+					await db.batchUpsertLatencyDistribution(env.DB, body.latency);
+					written.latency = body.latency.length;
+				}
+				if (body.timeseries?.length) {
+					await db.batchUpsertPathTimeseries(env.DB, body.timeseries);
+					written.timeseries = body.timeseries.length;
+				}
+				if (body.referer_daily?.length) {
+					await db.batchUpsertRefererDaily(env.DB, body.referer_daily);
+					written.referer_daily = body.referer_daily.length;
+				}
+
+				return jsonResponse({ success: true, written }, 200, corsHeaders);
+			}
+
+			if (path === '/metrics/bulk' && request.method === 'GET') {
+				const scope = readScope(url);
+				const [pathStats, statusCodes, latency] = await Promise.all([
+					db.getPathStats(env.DB, undefined, scope),
+					db.getStatusCodes(env.DB, scope),
+					db.getLatencyDistribution(env.DB, scope),
+				]);
+				return jsonResponse(
+					{ success: true, data: { path_stats: pathStats, status_codes: statusCodes, latency } },
+					200,
+					corsHeaders
+				);
+			}
+
+			// ============================================
 			// 通用 SQL 执行 endpoint
 			//
 			// 由 Go 端持有所有 schema / migration 定义, worker 只做 D1 的薄壳代理:

@@ -162,6 +162,106 @@ func (c *D1Client) BatchUpsertPathStats(ctx context.Context, stats []PathStat) e
 }
 
 // ============================================
+// 合并读写
+// ============================================
+
+// BulkPayload 一次同步要写入的全部指标
+//
+// 五张表原本各打一个 POST, 合并成单请求: 请求数按量计费, 且每个请求都是一次
+// 独立的网络往返。各段允许为空, worker 会跳过空段
+type BulkPayload struct {
+	PathStats    []PathStat            `json:"path_stats,omitempty"`
+	StatusCodes  []StatusCodeMetric    `json:"status_codes,omitempty"`
+	Latency      []LatencyMetric       `json:"latency,omitempty"`
+	Timeseries   []PathTimeseriesPoint `json:"timeseries,omitempty"`
+	RefererDaily []RefererDailyPoint   `json:"referer_daily,omitempty"`
+}
+
+// IsEmpty 五段全空时无需发请求
+func (p *BulkPayload) IsEmpty() bool {
+	return len(p.PathStats) == 0 && len(p.StatusCodes) == 0 && len(p.Latency) == 0 &&
+		len(p.Timeseries) == 0 && len(p.RefererDaily) == 0
+}
+
+// BulkMetrics 一次读取拿回的三类累计统计, 过滤范围由 MetricsQuery 决定
+type BulkMetrics struct {
+	PathStats   []PathStat         `json:"path_stats"`
+	StatusCodes []StatusCodeMetric `json:"status_codes"`
+	Latency     []LatencyMetric    `json:"latency"`
+}
+
+// BulkUpload 单请求写入全部指标
+func (c *D1Client) BulkUpload(ctx context.Context, payload *BulkPayload) error {
+	if payload == nil || payload.IsEmpty() {
+		return nil
+	}
+
+	reqData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal bulk payload: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/metrics/bulk", c.endpoint)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.token))
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("D1 API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// BulkFetch 单请求读回三类累计统计
+func (c *D1Client) BulkFetch(ctx context.Context, q MetricsQuery) (*BulkMetrics, error) {
+	url := q.applyTo(fmt.Sprintf("%s/metrics/bulk", c.endpoint))
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if c.token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.token))
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("D1 API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Success bool        `json:"success"`
+		Data    BulkMetrics `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result.Data, nil
+}
+
+// ============================================
 // Banned IPs
 // ============================================
 

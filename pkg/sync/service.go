@@ -272,78 +272,6 @@ func FlushConfigSync() {
 // Metrics 同步接口（供 metrics 包调用）
 // ============================================
 
-// SaveStatusCodes 保存状态码统计到 D1
-func SaveStatusCodes(ctx context.Context, statusCodes map[string]int64) error {
-	globalSyncMutex.RLock()
-	defer globalSyncMutex.RUnlock()
-
-	if globalSyncService == nil || !globalSyncService.isEnabled {
-		return nil
-	}
-
-	return globalSyncService.manager.SaveStatusCodes(ctx, statusCodes)
-}
-
-// LoadOwnStatusCodes 只加载本节点上报的状态码统计, 用于启动恢复内存计数
-func LoadOwnStatusCodes(ctx context.Context) (map[string]int64, error) {
-	globalSyncMutex.RLock()
-	defer globalSyncMutex.RUnlock()
-
-	if globalSyncService == nil || !globalSyncService.isEnabled {
-		return nil, nil
-	}
-
-	return globalSyncService.manager.LoadStatusCodes(ctx, MetricsQuery{NodeID: NodeID()})
-}
-
-// LoadPeerStatusCodes 加载除本节点外所有节点的状态码合计, 由调用方叠加本地实时值
-func LoadPeerStatusCodes(ctx context.Context) (map[string]int64, error) {
-	globalSyncMutex.RLock()
-	defer globalSyncMutex.RUnlock()
-
-	if globalSyncService == nil || !globalSyncService.isEnabled {
-		return nil, nil
-	}
-
-	return globalSyncService.manager.LoadStatusCodes(ctx, MetricsQuery{ExcludeNode: NodeID()})
-}
-
-// SaveLatencyDistribution 保存延迟分布到 D1
-func SaveLatencyDistribution(ctx context.Context, distribution map[string]int64) error {
-	globalSyncMutex.RLock()
-	defer globalSyncMutex.RUnlock()
-
-	if globalSyncService == nil || !globalSyncService.isEnabled {
-		return nil
-	}
-
-	return globalSyncService.manager.SaveLatencyDistribution(ctx, distribution)
-}
-
-// LoadOwnLatencyDistribution 只加载本节点上报的延迟分布, 用于启动恢复内存计数
-func LoadOwnLatencyDistribution(ctx context.Context) (map[string]int64, error) {
-	globalSyncMutex.RLock()
-	defer globalSyncMutex.RUnlock()
-
-	if globalSyncService == nil || !globalSyncService.isEnabled {
-		return nil, nil
-	}
-
-	return globalSyncService.manager.LoadLatencyDistribution(ctx, MetricsQuery{NodeID: NodeID()})
-}
-
-// LoadPeerLatencyDistribution 加载除本节点外所有节点的延迟分布合计
-func LoadPeerLatencyDistribution(ctx context.Context) (map[string]int64, error) {
-	globalSyncMutex.RLock()
-	defer globalSyncMutex.RUnlock()
-
-	if globalSyncService == nil || !globalSyncService.isEnabled {
-		return nil, nil
-	}
-
-	return globalSyncService.manager.LoadLatencyDistribution(ctx, MetricsQuery{ExcludeNode: NodeID()})
-}
-
 // LoadOwnPathStats 只加载本节点上报的路径统计, 用于启动恢复内存计数
 //
 // 必须按节点过滤: 拿全节点合计恢复会让本节点把其他节点的量当成自己的起点继续累加,
@@ -357,22 +285,6 @@ func LoadOwnPathStats(ctx context.Context) ([]PathStat, error) {
 	}
 
 	return globalSyncService.manager.storage.GetPathStats(ctx, MetricsQuery{NodeID: NodeID()})
-}
-
-// LoadPathStatsByNode 加载全部节点的路径统计原始行 (不聚合, 每行带 node_id)
-//
-// 仪表盘只拉这一份, 在 Go 侧派生出"其他节点合计"/"各节点明细"/"节点列表"三种视图。
-// 相比为每种视图各查一次 D1, 请求数与计费行数都更低 —— worker 与 D1 都按量计费,
-// 而仪表盘是会被反复轮询的
-func LoadPathStatsByNode(ctx context.Context) ([]PathStat, error) {
-	globalSyncMutex.RLock()
-	defer globalSyncMutex.RUnlock()
-
-	if globalSyncService == nil || !globalSyncService.isEnabled {
-		return nil, nil
-	}
-
-	return globalSyncService.manager.storage.GetPathStats(ctx, MetricsQuery{ByNode: true})
 }
 
 // DeleteOwnPathStats 删除本节点在 D1 中的路径统计行, prefix 为空时删除本节点全部行
@@ -402,29 +314,75 @@ func DeleteOwnPathStats(ctx context.Context, prefix string) error {
 	return err
 }
 
-// 节点列表不再单独查询, 由 LoadPathStatsByNode 的结果直接派生, 见 internal/metrics/cluster.go
+// 节点列表不再单独查询, 由 BulkFetch 的结果直接派生, 见 internal/metrics/cluster.go
 
-// SavePathStats 保存路径统计到 D1
-func SavePathStats(ctx context.Context, stats []PathStat) error {
+// BulkSave 单请求上报本节点全部指标, 统一在此打上 node_id
+//
+// 合并前五张表各打一个 POST; 合并后一次往返, 请求数降到五分之一,
+// 也让上报间隔有余量往下调 (间隔越短, 其他节点在仪表盘上越新)
+func BulkSave(ctx context.Context, payload *BulkPayload) error {
 	globalSyncMutex.RLock()
 	defer globalSyncMutex.RUnlock()
 
-	if globalSyncService == nil || !globalSyncService.isEnabled {
+	if globalSyncService == nil || !globalSyncService.isEnabled || payload == nil {
 		return nil
 	}
 
-	return globalSyncService.manager.SavePathStats(ctx, stats)
+	nodeID := NodeID()
+	for i := range payload.PathStats {
+		payload.PathStats[i].NodeID = nodeID
+	}
+	for i := range payload.StatusCodes {
+		payload.StatusCodes[i].NodeID = nodeID
+	}
+	for i := range payload.Latency {
+		payload.Latency[i].NodeID = nodeID
+	}
+	for i := range payload.Timeseries {
+		payload.Timeseries[i].NodeID = nodeID
+	}
+	for i := range payload.RefererDaily {
+		payload.RefererDaily[i].NodeID = nodeID
+	}
+
+	if err := globalSyncService.manager.storage.BulkUpload(ctx, payload); err != nil {
+		return err
+	}
+
+	log.Printf("[D1Sync] Bulk saved (node=%s): %d path stats, %d status codes, %d latency, %d ts, %d referer",
+		nodeID, len(payload.PathStats), len(payload.StatusCodes), len(payload.Latency),
+		len(payload.Timeseries), len(payload.RefererDaily))
+	return nil
 }
 
-// SavePathTimeseries 上报本节点的路径小时桶到 D1
-func SavePathTimeseries(ctx context.Context, points []PathTimeseriesPoint) error {
+// BulkLoadOwn 单请求读回本节点自己的累计统计, 用于启动恢复内存计数
+func BulkLoadOwn(ctx context.Context) (*BulkMetrics, error) {
 	globalSyncMutex.RLock()
 	defer globalSyncMutex.RUnlock()
 
 	if globalSyncService == nil || !globalSyncService.isEnabled {
-		return nil
+		return nil, nil
 	}
-	return globalSyncService.manager.storage.BatchUpsertPathTimeseries(ctx, points)
+
+	return globalSyncService.manager.storage.BulkFetch(ctx, MetricsQuery{NodeID: NodeID()})
+}
+
+// BulkLoadByNode 单请求读回全部节点的原始行 + 其他节点的状态码/延迟合计
+//
+// path_stats 用 by_node 拿原始行 (仪表盘要各节点明细), 而 status_codes / latency
+// 没有分节点展示需求, worker 端对同一 scope 已按 exclude_node 语义聚合
+func BulkLoadByNode(ctx context.Context) (*BulkMetrics, error) {
+	globalSyncMutex.RLock()
+	defer globalSyncMutex.RUnlock()
+
+	if globalSyncService == nil || !globalSyncService.isEnabled {
+		return nil, nil
+	}
+
+	return globalSyncService.manager.storage.BulkFetch(ctx, MetricsQuery{
+		ByNode:      true,
+		ExcludeNode: NodeID(),
+	})
 }
 
 // LoadPathTimeseries 拉取 [minHour, maxHour] 范围的跨节点聚合数据
@@ -447,17 +405,6 @@ func PruneTimeseries(ctx context.Context, cutoffHour int64) (int, error) {
 		return 0, nil
 	}
 	return globalSyncService.manager.storage.PruneTimeseries(ctx, cutoffHour)
-}
-
-// SaveRefererDaily 上报本节点的 referer host 天级桶到 D1
-func SaveRefererDaily(ctx context.Context, points []RefererDailyPoint) error {
-	globalSyncMutex.RLock()
-	defer globalSyncMutex.RUnlock()
-
-	if globalSyncService == nil || !globalSyncService.isEnabled {
-		return nil
-	}
-	return globalSyncService.manager.storage.BatchUpsertRefererDaily(ctx, points)
 }
 
 // LoadRefererDaily 拉取 [minDate, maxDate] 范围的跨节点聚合数据

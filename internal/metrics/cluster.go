@@ -155,28 +155,25 @@ func fetchPeerStats() *PeerStats {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// 一次拉全部节点的原始行, 其他节点合计 / 各节点明细 / 节点列表都由它派生,
-	// 不再为每种视图各打一次 D1 (worker 与 D1 都按请求和行数计费)
-	nodeRows, err := sync.LoadPathStatsByNode(ctx)
+	// 一次请求拿回三类数据: 路径统计取各节点原始行 (仪表盘要明细),
+	// 状态码与延迟分布取其他节点合计 (没有分节点展示需求)。
+	// 其他节点合计 / 各节点明细 / 节点列表都从这一份派生, 不再各打一次
+	bulk, err := sync.BulkLoadByNode(ctx)
 	if err != nil {
-		log.Printf("[Cluster] 拉取各节点路径统计失败, 降级为仅本节点: %v", err)
+		log.Printf("[Cluster] 拉取集群指标失败, 降级为仅本节点: %v", err)
 		result.degraded = true
 		return result
 	}
-	result.nodeRows = nodeRows
-
-	if statusCodes, err := sync.LoadPeerStatusCodes(ctx); err != nil {
-		log.Printf("[Cluster] 拉取其他节点状态码失败: %v", err)
-		result.degraded = true
-	} else if statusCodes != nil {
-		result.statusCodes = statusCodes
+	if bulk == nil {
+		return result
 	}
 
-	if latency, err := sync.LoadPeerLatencyDistribution(ctx); err != nil {
-		log.Printf("[Cluster] 拉取其他节点延迟分布失败: %v", err)
-		result.degraded = true
-	} else if latency != nil {
-		result.latency = latency
+	result.nodeRows = bulk.PathStats
+	for _, m := range bulk.StatusCodes {
+		result.statusCodes[m.StatusCode] += m.Count
+	}
+	for _, m := range bulk.Latency {
+		result.latency[m.Bucket] += m.Count
 	}
 
 	return result
