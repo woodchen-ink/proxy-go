@@ -40,6 +40,9 @@ type PathMetricsJSON struct {
 	ErrorCount       int64   `json:"error_count"`
 	BytesTransferred int64   `json:"bytes_transferred"`
 	AvgLatency       string  `json:"avg_latency"`
+	// TotalLatency 纳秒累计, 不出现在接口里, 仅用于跨节点合并时按请求数重算加权平均延迟
+	// (平均值本身既不能相加也不能简单取平均)
+	TotalLatency     int64   `json:"-"`
 	LastAccessTime   int64   `json:"last_access_time"` // 最后访问时间戳
 
 	// 状态码统计
@@ -111,6 +114,7 @@ func (p *PathMetrics) ToJSON() PathMetricsJSON {
 		ErrorCount:       p.ErrorCount.Load(),
 		BytesTransferred: p.BytesTransferred.Load(),
 		AvgLatency:       p.AvgLatency,
+		TotalLatency:     p.TotalLatency.Load(),
 		LastAccessTime:   p.LastAccessTime.Load(),
 		Status2xx:        p.Status2xx.Load(),
 		Status3xx:        p.Status3xx.Load(),

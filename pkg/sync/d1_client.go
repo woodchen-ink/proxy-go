@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"time"
 )
 
@@ -32,29 +33,64 @@ func NewD1Client(endpoint, token string) *D1Client {
 // Path Stats
 // ============================================
 
+// PathStat 单个 (path, node_id) 的累计统计
+//
+// 派生值 (缓存命中率 / 平均延迟) 不落库: 跨节点既不能 SUM 也不能 AVG。
+// 改存 TotalLatencyNs, 读侧用 SUM(total_latency_ns)/SUM(request_count) 还原加权平均。
 type PathStat struct {
-	Path             string  `json:"path"`
-	RequestCount     int64   `json:"request_count"`
-	ErrorCount       int64   `json:"error_count"`
-	BytesTransferred int64   `json:"bytes_transferred"`
-	Status2xx        int64   `json:"status_2xx"`
-	Status3xx        int64   `json:"status_3xx"`
-	Status4xx        int64   `json:"status_4xx"`
-	Status5xx        int64   `json:"status_5xx"`
-	CacheHits        int64   `json:"cache_hits"`
-	CacheMisses      int64   `json:"cache_misses"`
-	CacheHitRate     float64 `json:"cache_hit_rate"`
-	BytesSaved       int64   `json:"bytes_saved"`
-	AvgLatency       string  `json:"avg_latency,omitempty"`
-	LastAccessTime   int64   `json:"last_access_time,omitempty"`
-	UpdatedAt        int64   `json:"updated_at"`
+	Path             string `json:"path"`
+	NodeID           string `json:"node_id"`
+	RequestCount     int64  `json:"request_count"`
+	ErrorCount       int64  `json:"error_count"`
+	BytesTransferred int64  `json:"bytes_transferred"`
+	Status2xx        int64  `json:"status_2xx"`
+	Status3xx        int64  `json:"status_3xx"`
+	Status4xx        int64  `json:"status_4xx"`
+	Status5xx        int64  `json:"status_5xx"`
+	CacheHits        int64  `json:"cache_hits"`
+	CacheMisses      int64  `json:"cache_misses"`
+	BytesSaved       int64  `json:"bytes_saved"`
+	TotalLatencyNs   int64  `json:"total_latency_ns"`
+	LastAccessTime   int64  `json:"last_access_time,omitempty"`
+	UpdatedAt        int64  `json:"updated_at"`
 }
 
-func (c *D1Client) GetPathStats(ctx context.Context, path string) ([]PathStat, error) {
-	url := fmt.Sprintf("%s/path-stats", c.endpoint)
-	if path != "" {
-		url += fmt.Sprintf("?path=%s", path)
+// MetricsQuery 控制累计统计的读取范围
+//
+// 三种互斥语义, 对应三个使用场景:
+//   - 都为空: 全节点聚合, 纯 D1 视图
+//   - NodeID:  只取该节点的原始行, 用于本节点启动时恢复自己的内存计数
+//     (绝不能拿全节点合计来恢复, 否则本节点会把别人的量当成自己的起点继续累加)
+//   - ExcludeNode: 聚合除该节点外的所有节点, 由调用方叠加本地实时内存值,
+//     得到"其他节点(最多 30 分钟前) + 本节点实时"的全局合计
+//
+// 节点集合完全由 D1 中出现过的 node_id 决定, 新增节点上报后自动进入聚合, 无需注册或改配置。
+type MetricsQuery struct {
+	Path        string
+	NodeID      string
+	ExcludeNode string
+}
+
+// applyTo 把过滤条件写进 query string
+func (q MetricsQuery) applyTo(base string) string {
+	params := neturl.Values{}
+	if q.Path != "" {
+		params.Set("path", q.Path)
 	}
+	if q.NodeID != "" {
+		params.Set("node_id", q.NodeID)
+	}
+	if q.ExcludeNode != "" {
+		params.Set("exclude_node", q.ExcludeNode)
+	}
+	if len(params) == 0 {
+		return base
+	}
+	return base + "?" + params.Encode()
+}
+
+func (c *D1Client) GetPathStats(ctx context.Context, q MetricsQuery) ([]PathStat, error) {
+	url := q.applyTo(fmt.Sprintf("%s/path-stats", c.endpoint))
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -419,18 +455,20 @@ func (c *D1Client) BatchUpsertConfigOther(ctx context.Context, configs []ConfigO
 
 type StatusCodeMetric struct {
 	StatusCode string `json:"status_code"`
+	NodeID     string `json:"node_id"`
 	Count      int64  `json:"count"`
 	UpdatedAt  int64  `json:"updated_at"`
 }
 
 type LatencyMetric struct {
 	Bucket    string `json:"bucket"`
+	NodeID    string `json:"node_id"`
 	Count     int64  `json:"count"`
 	UpdatedAt int64  `json:"updated_at"`
 }
 
-func (c *D1Client) GetStatusCodes(ctx context.Context) ([]StatusCodeMetric, error) {
-	url := fmt.Sprintf("%s/metrics/status-codes", c.endpoint)
+func (c *D1Client) GetStatusCodes(ctx context.Context, q MetricsQuery) ([]StatusCodeMetric, error) {
+	url := q.applyTo(fmt.Sprintf("%s/metrics/status-codes", c.endpoint))
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -499,8 +537,8 @@ func (c *D1Client) BatchUpsertStatusCodes(ctx context.Context, metrics []StatusC
 	return nil
 }
 
-func (c *D1Client) GetLatencyDistribution(ctx context.Context) ([]LatencyMetric, error) {
-	url := fmt.Sprintf("%s/metrics/latency", c.endpoint)
+func (c *D1Client) GetLatencyDistribution(ctx context.Context, q MetricsQuery) ([]LatencyMetric, error) {
+	url := q.applyTo(fmt.Sprintf("%s/metrics/latency", c.endpoint))
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {

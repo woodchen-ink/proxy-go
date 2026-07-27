@@ -13,6 +13,7 @@ export interface Env {
 
 export interface PathStat {
 	path: string;
+	node_id: string;
 	request_count: number;
 	error_count: number;
 	bytes_transferred: number;
@@ -22,83 +23,96 @@ export interface PathStat {
 	status_5xx: number;
 	cache_hits: number;
 	cache_misses: number;
-	cache_hit_rate: number;
 	bytes_saved: number;
-	avg_latency?: string;
+	total_latency_ns: number;
 	last_access_time?: number;
 	updated_at: number;
 }
 
-export async function getPathStats(db: D1Database, path?: string): Promise<PathStat[]> {
-	let query = 'SELECT * FROM path_stats';
+/**
+ * 累计统计表的读取范围
+ *
+ * nodeId 与 excludeNode 互斥:
+ *   - nodeId: 返回该节点的原始行, 不聚合 (节点启动时恢复自己的内存计数)
+ *   - excludeNode: 聚合除该节点外的所有节点 (调用方再叠加自己的实时值)
+ *   - 都不给: 聚合全部节点
+ *
+ * 节点集合由表里实际出现的 node_id 决定, 新节点上报后自动进入聚合, 无需注册。
+ */
+export interface MetricsScope {
+	nodeId?: string;
+	excludeNode?: string;
+}
+
+export async function getPathStats(
+	db: D1Database,
+	path?: string,
+	scope: MetricsScope = {}
+): Promise<PathStat[]> {
+	const where: string[] = [];
 	const params: any[] = [];
 
 	if (path) {
-		query += ' WHERE path = ?';
+		where.push('path = ?');
 		params.push(path);
 	}
+	if (scope.nodeId) {
+		where.push('node_id = ?');
+		params.push(scope.nodeId);
+	}
+	if (scope.excludeNode) {
+		where.push('node_id != ?');
+		params.push(scope.excludeNode);
+	}
+	const whereSQL = where.length > 0 ? ` WHERE ${where.join(' AND ')}` : '';
 
-	query += ' ORDER BY request_count DESC';
+	// 指定 nodeId 时取原始行; 其余情况按 path 跨节点求和。
+	// last_access_time 取 MAX (最近一次被访问), updated_at 取 MAX (最近一次上报);
+	// 派生值 (命中率 / 平均延迟) 不在这里算, 由读侧用 total_latency_ns 与 request_count 还原。
+	const query = scope.nodeId
+		? `SELECT * FROM path_stats${whereSQL} ORDER BY request_count DESC`
+		: `SELECT
+			path,
+			'' AS node_id,
+			SUM(request_count) AS request_count,
+			SUM(error_count) AS error_count,
+			SUM(bytes_transferred) AS bytes_transferred,
+			SUM(status_2xx) AS status_2xx,
+			SUM(status_3xx) AS status_3xx,
+			SUM(status_4xx) AS status_4xx,
+			SUM(status_5xx) AS status_5xx,
+			SUM(cache_hits) AS cache_hits,
+			SUM(cache_misses) AS cache_misses,
+			SUM(bytes_saved) AS bytes_saved,
+			SUM(total_latency_ns) AS total_latency_ns,
+			MAX(last_access_time) AS last_access_time,
+			MAX(updated_at) AS updated_at
+		   FROM path_stats${whereSQL}
+		   GROUP BY path
+		   ORDER BY request_count DESC`;
 
 	const result = await db.prepare(query).bind(...params).all<PathStat>();
 	return result.results || [];
 }
 
-export async function upsertPathStat(db: D1Database, stat: PathStat): Promise<void> {
-	await db
-		.prepare(
-			`INSERT INTO path_stats (
-        path, request_count, error_count, bytes_transferred,
-        status_2xx, status_3xx, status_4xx, status_5xx,
-        cache_hits, cache_misses, cache_hit_rate, bytes_saved,
-        avg_latency, last_access_time, updated_at
-      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
-      ON CONFLICT(path) DO UPDATE SET
-        request_count = excluded.request_count,
-        error_count = excluded.error_count,
-        bytes_transferred = excluded.bytes_transferred,
-        status_2xx = excluded.status_2xx,
-        status_3xx = excluded.status_3xx,
-        status_4xx = excluded.status_4xx,
-        status_5xx = excluded.status_5xx,
-        cache_hits = excluded.cache_hits,
-        cache_misses = excluded.cache_misses,
-        cache_hit_rate = excluded.cache_hit_rate,
-        bytes_saved = excluded.bytes_saved,
-        avg_latency = excluded.avg_latency,
-        last_access_time = excluded.last_access_time,
-        updated_at = excluded.updated_at`
-		)
-		.bind(
-			stat.path,
-			stat.request_count,
-			stat.error_count,
-			stat.bytes_transferred,
-			stat.status_2xx,
-			stat.status_3xx,
-			stat.status_4xx,
-			stat.status_5xx,
-			stat.cache_hits,
-			stat.cache_misses,
-			stat.cache_hit_rate,
-			stat.bytes_saved,
-			stat.avg_latency || null,
-			stat.last_access_time || null,
-			stat.updated_at
-		)
-		.run();
-}
-
+/**
+ * 按 (path, node_id) 覆盖写本节点的累计快照
+ *
+ * 覆盖语义是刻意的: 上报的是节点自身的绝对累计值, 重复上报同一份不会双计。
+ * 跨节点求和交给读侧的 GROUP BY, 不在写侧做累加。
+ */
 export async function batchUpsertPathStats(db: D1Database, stats: PathStat[]): Promise<void> {
+	if (stats.length === 0) return;
+
 	const batch = stats.map((stat) =>
 		db.prepare(
 			`INSERT INTO path_stats (
-        path, request_count, error_count, bytes_transferred,
+        path, node_id, request_count, error_count, bytes_transferred,
         status_2xx, status_3xx, status_4xx, status_5xx,
-        cache_hits, cache_misses, cache_hit_rate, bytes_saved,
-        avg_latency, last_access_time, updated_at
+        cache_hits, cache_misses, bytes_saved,
+        total_latency_ns, last_access_time, updated_at
       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
-      ON CONFLICT(path) DO UPDATE SET
+      ON CONFLICT(path, node_id) DO UPDATE SET
         request_count = excluded.request_count,
         error_count = excluded.error_count,
         bytes_transferred = excluded.bytes_transferred,
@@ -108,13 +122,13 @@ export async function batchUpsertPathStats(db: D1Database, stats: PathStat[]): P
         status_5xx = excluded.status_5xx,
         cache_hits = excluded.cache_hits,
         cache_misses = excluded.cache_misses,
-        cache_hit_rate = excluded.cache_hit_rate,
         bytes_saved = excluded.bytes_saved,
-        avg_latency = excluded.avg_latency,
+        total_latency_ns = excluded.total_latency_ns,
         last_access_time = excluded.last_access_time,
         updated_at = excluded.updated_at`
 		).bind(
 			stat.path,
+			stat.node_id || 'default',
 			stat.request_count,
 			stat.error_count,
 			stat.bytes_transferred,
@@ -124,9 +138,8 @@ export async function batchUpsertPathStats(db: D1Database, stats: PathStat[]): P
 			stat.status_5xx,
 			stat.cache_hits,
 			stat.cache_misses,
-			stat.cache_hit_rate,
 			stat.bytes_saved,
-			stat.avg_latency || null,
+			stat.total_latency_ns || 0,
 			stat.last_access_time || null,
 			stat.updated_at
 		)
@@ -386,18 +399,43 @@ export async function upsertConfigOther(db: D1Database, config: ConfigOther): Pr
 
 export interface StatusCodeMetric {
 	status_code: string;
+	node_id: string;
 	count: number;
 	updated_at: number;
 }
 
 export interface LatencyMetric {
 	bucket: string;
+	node_id: string;
 	count: number;
 	updated_at: number;
 }
 
-export async function getStatusCodes(db: D1Database): Promise<StatusCodeMetric[]> {
-	const result = await db.prepare('SELECT * FROM status_codes ORDER BY status_code').all<StatusCodeMetric>();
+/**
+ * 拼出"按 key 跨节点求和"或"取单节点原始行"的查询, 供两张单键计数表复用
+ */
+function buildCounterQuery(table: string, keyColumn: string, scope: MetricsScope): { sql: string; params: any[] } {
+	const params: any[] = [];
+	let whereSQL = '';
+	if (scope.nodeId) {
+		whereSQL = ' WHERE node_id = ?';
+		params.push(scope.nodeId);
+	} else if (scope.excludeNode) {
+		whereSQL = ' WHERE node_id != ?';
+		params.push(scope.excludeNode);
+	}
+
+	const sql = scope.nodeId
+		? `SELECT * FROM ${table}${whereSQL} ORDER BY ${keyColumn}`
+		: `SELECT ${keyColumn}, '' AS node_id, SUM(count) AS count, MAX(updated_at) AS updated_at
+		   FROM ${table}${whereSQL} GROUP BY ${keyColumn} ORDER BY ${keyColumn}`;
+
+	return { sql, params };
+}
+
+export async function getStatusCodes(db: D1Database, scope: MetricsScope = {}): Promise<StatusCodeMetric[]> {
+	const { sql, params } = buildCounterQuery('status_codes', 'status_code', scope);
+	const result = await db.prepare(sql).bind(...params).all<StatusCodeMetric>();
 	return result.results || [];
 }
 
@@ -406,19 +444,20 @@ export async function batchUpsertStatusCodes(db: D1Database, metrics: StatusCode
 
 	const batch = metrics.map((m) =>
 		db.prepare(
-			`INSERT INTO status_codes (status_code, count, updated_at)
-       VALUES (?1, ?2, ?3)
-       ON CONFLICT(status_code) DO UPDATE SET
+			`INSERT INTO status_codes (status_code, node_id, count, updated_at)
+       VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT(status_code, node_id) DO UPDATE SET
          count = excluded.count,
          updated_at = excluded.updated_at`
-		).bind(m.status_code, m.count, m.updated_at)
+		).bind(m.status_code, m.node_id || 'default', m.count, m.updated_at)
 	);
 
 	await db.batch(batch);
 }
 
-export async function getLatencyDistribution(db: D1Database): Promise<LatencyMetric[]> {
-	const result = await db.prepare('SELECT * FROM latency_distribution ORDER BY bucket').all<LatencyMetric>();
+export async function getLatencyDistribution(db: D1Database, scope: MetricsScope = {}): Promise<LatencyMetric[]> {
+	const { sql, params } = buildCounterQuery('latency_distribution', 'bucket', scope);
+	const result = await db.prepare(sql).bind(...params).all<LatencyMetric>();
 	return result.results || [];
 }
 
@@ -427,12 +466,12 @@ export async function batchUpsertLatencyDistribution(db: D1Database, metrics: La
 
 	const batch = metrics.map((m) =>
 		db.prepare(
-			`INSERT INTO latency_distribution (bucket, count, updated_at)
-       VALUES (?1, ?2, ?3)
-       ON CONFLICT(bucket) DO UPDATE SET
+			`INSERT INTO latency_distribution (bucket, node_id, count, updated_at)
+       VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT(bucket, node_id) DO UPDATE SET
          count = excluded.count,
          updated_at = excluded.updated_at`
-		).bind(m.bucket, m.count, m.updated_at)
+		).bind(m.bucket, m.node_id || 'default', m.count, m.updated_at)
 	);
 
 	await db.batch(batch);

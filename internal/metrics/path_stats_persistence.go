@@ -44,11 +44,14 @@ func (pss *PathStatsStorage) Load() (*PathStatsPersistence, error) {
 		}, nil
 	}
 
-	// 从 D1 加载数据
+	// 从 D1 加载数据: 只取本节点自己上报的行
+	//
+	// 这里恢复的是本节点内存计数的起点, 拿全节点合计会让本节点把其他节点的量
+	// 当成自己的继续累加, 下个周期又写回 D1, 每次重启放大一轮
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	pathStats, err := sync.LoadPathStats(ctx)
+	pathStats, err := sync.LoadOwnPathStats(ctx)
 	if err != nil {
 		log.Printf("[PathStatsStorage] 从 D1 加载失败: %v", err)
 		return &PathStatsPersistence{
@@ -62,24 +65,23 @@ func (pss *PathStatsStorage) Load() (*PathStatsPersistence, error) {
 	statsMap := make(map[string]models.PathMetricsJSON)
 	for _, stat := range pathStats {
 		statsMap[stat.Path] = models.PathMetricsJSON{
-			Path:              stat.Path,
-			RequestCount:      stat.RequestCount,
-			ErrorCount:        stat.ErrorCount,
-			BytesTransferred:  stat.BytesTransferred,
-			Status2xx:         stat.Status2xx,
-			Status3xx:         stat.Status3xx,
-			Status4xx:         stat.Status4xx,
-			Status5xx:         stat.Status5xx,
-			CacheHits:         stat.CacheHits,
-			CacheMisses:       stat.CacheMisses,
-			CacheHitRate:      stat.CacheHitRate,
-			BytesSaved:        stat.BytesSaved,
-			AvgLatency:        stat.AvgLatency,
-			LastAccessTime:    stat.LastAccessTime,
+			Path:             stat.Path,
+			RequestCount:     stat.RequestCount,
+			ErrorCount:       stat.ErrorCount,
+			BytesTransferred: stat.BytesTransferred,
+			Status2xx:        stat.Status2xx,
+			Status3xx:        stat.Status3xx,
+			Status4xx:        stat.Status4xx,
+			Status5xx:        stat.Status5xx,
+			CacheHits:        stat.CacheHits,
+			CacheMisses:      stat.CacheMisses,
+			BytesSaved:       stat.BytesSaved,
+			TotalLatency:     stat.TotalLatencyNs,
+			LastAccessTime:   stat.LastAccessTime,
 		}
 	}
 
-	log.Printf("[PathStatsStorage] 从 D1 加载了 %d 条路径统计", len(statsMap))
+	log.Printf("[PathStatsStorage] 从 D1 加载了 %d 条本节点路径统计", len(statsMap))
 
 	return &PathStatsPersistence{
 		PathStats:  statsMap,
@@ -117,58 +119,4 @@ func (pss *PathStatsStorage) LoadPathStats() ([]models.PathMetricsJSON, error) {
 	return result, nil
 }
 
-// MergePathStats 合并路径统计数据（用于从持久化存储恢复时合并数据）
-func MergePathStats(current, loaded []models.PathMetricsJSON) []models.PathMetricsJSON {
-	// 使用 map 进行合并
-	merged := make(map[string]models.PathMetricsJSON)
-
-	// 先加载已有数据
-	for _, stat := range loaded {
-		merged[stat.Path] = stat
-	}
-
-	// 合并当前数据（累加）
-	for _, stat := range current {
-		if existing, ok := merged[stat.Path]; ok {
-			// 累加统计数据
-			existing.RequestCount += stat.RequestCount
-			existing.ErrorCount += stat.ErrorCount
-			existing.BytesTransferred += stat.BytesTransferred
-			existing.Status2xx += stat.Status2xx
-			existing.Status3xx += stat.Status3xx
-			existing.Status4xx += stat.Status4xx
-			existing.Status5xx += stat.Status5xx
-			existing.CacheHits += stat.CacheHits
-			existing.CacheMisses += stat.CacheMisses
-			existing.BytesSaved += stat.BytesSaved
-
-			// 更新最后访问时间（取最新的）
-			if stat.LastAccessTime > existing.LastAccessTime {
-				existing.LastAccessTime = stat.LastAccessTime
-			}
-
-			// 重新计算平均延迟和缓存命中率
-			if existing.RequestCount > 0 {
-				existing.AvgLatency = stat.AvgLatency // 使用最新的平均延迟
-			}
-
-			totalCacheRequests := existing.CacheHits + existing.CacheMisses
-			if totalCacheRequests > 0 {
-				existing.CacheHitRate = float64(existing.CacheHits) / float64(totalCacheRequests)
-			}
-
-			merged[stat.Path] = existing
-		} else {
-			// 新路径，直接添加
-			merged[stat.Path] = stat
-		}
-	}
-
-	// 转换为数组
-	result := make([]models.PathMetricsJSON, 0, len(merged))
-	for _, stat := range merged {
-		result = append(result, stat)
-	}
-
-	return result
-}
+// 跨节点合并见 cluster.go 的 PeerStats.MergePathStats

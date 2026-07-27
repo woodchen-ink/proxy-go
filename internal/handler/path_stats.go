@@ -6,6 +6,7 @@ import (
 	"proxy-go/internal/config"
 	"proxy-go/internal/metrics"
 	"proxy-go/internal/models"
+	"sort"
 	"strings"
 )
 
@@ -20,10 +21,14 @@ func NewPathStatsHandler(collector *metrics.Collector) *PathStatsHandler {
 }
 
 // GetAllPathStats 获取所有路径的统计信息
-// 将详细路径的统计数据聚合到配置的路径前缀下
+//
+// 数据口径为全集群合计: 本节点内存实时值 + 其他节点最近上报到 D1 的累计值。
+// 管理员从任意节点登录看到的都是同一份合计, 不再取决于 DNS 把他分到了哪个节点。
+// 详细路径统计会先聚合到配置的路径前缀下再返回。
 func (h *PathStatsHandler) GetAllPathStats(w http.ResponseWriter, r *http.Request) {
-	// 获取原始统计数据
-	rawStats := h.collector.GetPathStats()
+	// 本节点实时值与其他节点 D1 值先按 path 合并, 再走前缀聚合
+	peers := metrics.GetPeerStats()
+	rawStats := peers.MergePathStats(h.collector.GetPathStats())
 
 	// 获取配置的路径前缀
 	cfg := config.GetConfig()
@@ -31,6 +36,7 @@ func (h *PathStatsHandler) GetAllPathStats(w http.ResponseWriter, r *http.Reques
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"path_stats": []models.PathMetricsJSON{},
+			"cluster":    peers.Info(),
 		})
 		return
 	}
@@ -54,6 +60,7 @@ func (h *PathStatsHandler) GetAllPathStats(w http.ResponseWriter, r *http.Reques
 			existing.RequestCount += stat.RequestCount
 			existing.ErrorCount += stat.ErrorCount
 			existing.BytesTransferred += stat.BytesTransferred
+			existing.TotalLatency += stat.TotalLatency
 			existing.Status2xx += stat.Status2xx
 			existing.Status3xx += stat.Status3xx
 			existing.Status4xx += stat.Status4xx
@@ -62,21 +69,9 @@ func (h *PathStatsHandler) GetAllPathStats(w http.ResponseWriter, r *http.Reques
 			existing.CacheMisses += stat.CacheMisses
 			existing.BytesSaved += stat.BytesSaved
 
-			// 更新平均延迟（加权平均）
-			if existing.RequestCount > 0 {
-				// 这里简化处理，使用最新的延迟值
-				existing.AvgLatency = stat.AvgLatency
-			}
-
 			// 更新最后访问时间（取最新的）
 			if stat.LastAccessTime > existing.LastAccessTime {
 				existing.LastAccessTime = stat.LastAccessTime
-			}
-
-			// 重新计算缓存命中率
-			totalCacheRequests := existing.CacheHits + existing.CacheMisses
-			if totalCacheRequests > 0 {
-				existing.CacheHitRate = float64(existing.CacheHits) / float64(totalCacheRequests)
 			}
 		} else {
 			// 创建新的统计项
@@ -86,15 +81,25 @@ func (h *PathStatsHandler) GetAllPathStats(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// 转换为数组
+	// 转换为数组, 派生值由累加后的原始计数统一重算 (命中率 / 按请求数加权的平均延迟)
 	result := make([]models.PathMetricsJSON, 0, len(aggregatedStats))
 	for _, stat := range aggregatedStats {
+		metrics.FinalizeDerivedStats(stat)
 		result = append(result, *stat)
 	}
+
+	// map 遍历顺序随机, 按请求数降序固定输出, 保证前端表格不会每次刷新都乱序
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].RequestCount != result[j].RequestCount {
+			return result[i].RequestCount > result[j].RequestCount
+		}
+		return result[i].Path < result[j].Path
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"path_stats": result,
+		"cluster":    peers.Info(),
 	})
 }
 

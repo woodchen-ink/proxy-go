@@ -166,8 +166,8 @@ func (ms *MetricsStorage) LoadMetrics() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// 加载状态码统计
-	statusCodes, err := sync.LoadStatusCodes(ctx)
+	// 加载状态码统计 (只取本节点上报的行, 见 LoadOwnStatusCodes 的说明)
+	statusCodes, err := sync.LoadOwnStatusCodes(ctx)
 	if err != nil {
 		log.Printf("[MetricsStorage] 加载状态码统计失败: %v", err)
 	} else if len(statusCodes) > 0 {
@@ -186,8 +186,8 @@ func (ms *MetricsStorage) LoadMetrics() error {
 		log.Printf("[MetricsStorage] 成功加载了 %d 条状态码统计", loadedCount)
 	}
 
-	// 加载延迟分布
-	latencyDist, err := sync.LoadLatencyDistribution(ctx)
+	// 加载延迟分布 (同样只取本节点)
+	latencyDist, err := sync.LoadOwnLatencyDistribution(ctx)
 	if err != nil {
 		log.Printf("[MetricsStorage] 加载延迟分布失败: %v", err)
 	} else if len(latencyDist) > 0 {
@@ -359,9 +359,8 @@ func (ms *MetricsStorage) getPathStatsArray() []sync.PathStat {
 			Status5xx:        pm.Status5xx,
 			CacheHits:        pm.CacheHits,
 			CacheMisses:      pm.CacheMisses,
-			CacheHitRate:     pm.CacheHitRate,
 			BytesSaved:       pm.BytesSaved,
-			AvgLatency:       pm.AvgLatency,
+			TotalLatencyNs:   pm.TotalLatency,
 			LastAccessTime:   pm.LastAccessTime,
 			UpdatedAt:        now,
 		})

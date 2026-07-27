@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"math"
@@ -9,6 +10,7 @@ import (
 	"proxy-go/internal/config"
 	"proxy-go/internal/models"
 	"proxy-go/internal/utils"
+	d1sync "proxy-go/pkg/sync"
 	"runtime"
 	"sort"
 	"strconv"
@@ -530,6 +532,8 @@ func (c *Collector) GetStats() map[string]interface{} {
 		"status_code_stats":   statusCodeStats,
 		"top_referers":        refererMetricsValues,
 		"recent_requests":     recentRequests,
+		// 纳秒累计原值, 供跨节点合并时重算加权平均延迟 (平均值本身不能相加)
+		"latency_sum": atomic.LoadInt64(&c.latencySum),
 		"latency_stats": map[string]interface{}{
 			"min":          fmt.Sprintf("%.2fms", float64(minLatency)/float64(time.Millisecond)),
 			"max":          fmt.Sprintf("%.2fms", float64(maxLatency)/float64(time.Millisecond)),
@@ -1026,21 +1030,6 @@ func (c *Collector) GetPathStats() []models.PathMetricsJSON {
 	return result
 }
 
-// GetPathStatByPath 获取指定路径的统计信息
-func (c *Collector) GetPathStatByPath(path string) *models.PathMetricsJSON {
-	if stats, ok := c.pathStats.Load(path); ok {
-		requestCount := stats.GetRequestCount()
-		if requestCount > 0 {
-			totalLatency := stats.GetTotalLatency()
-			avgLatencyMs := float64(totalLatency) / float64(requestCount) / float64(time.Millisecond)
-			stats.AvgLatency = fmt.Sprintf("%.2fms", avgLatencyMs)
-			result := stats.ToJSON()
-			return &result
-		}
-	}
-	return nil
-}
-
 // loadPathStats 加载持久化的路径统计数据
 func (c *Collector) loadPathStats() error {
 	loadedStats, err := c.pathStatsStorage.LoadPathStats()
@@ -1063,7 +1052,7 @@ func (c *Collector) loadPathStats() error {
 		pathMetrics.RequestCount.Store(stat.RequestCount)
 		pathMetrics.ErrorCount.Store(stat.ErrorCount)
 		pathMetrics.BytesTransferred.Store(stat.BytesTransferred)
-		pathMetrics.TotalLatency.Store(0) // 延迟重新累计
+		pathMetrics.TotalLatency.Store(stat.TotalLatency)
 		pathMetrics.LastAccessTime.Store(stat.LastAccessTime)
 
 		// 恢复状态码统计
@@ -1161,10 +1150,8 @@ func (c *Collector) ResetPathStats(pathPrefix string) error {
 
 	log.Printf("[Collector] 已重置路径前缀 %s 的统计，共 %d 条", pathPrefix, resetCount)
 
-	// 立即持久化
-	if err := c.savePathStats(); err != nil {
-		log.Printf("[Collector] 重置后持久化失败: %v", err)
-	}
+	// 同步清掉 D1 里本节点对应的行, 否则重启会把重置前的值读回来
+	clearOwnPathStatsInD1(pathPrefix)
 
 	return nil
 }
@@ -1202,10 +1189,22 @@ func (c *Collector) ResetAllPathStats() error {
 
 	log.Printf("[Collector] 已重置所有路径统计，共 %d 条", count)
 
-	// 立即持久化
-	if err := c.savePathStats(); err != nil {
-		log.Printf("[Collector] 重置后持久化失败: %v", err)
-	}
+	// 同步清掉 D1 里本节点的行, 否则重启会把重置前的值读回来
+	clearOwnPathStatsInD1("")
 
 	return nil
+}
+
+// clearOwnPathStatsInD1 删除本节点在 D1 中的路径统计行, prefix 为空表示全部
+//
+// 失败只记日志: 内存已经重置, 后台会立刻显示为 0; D1 残留最坏影响是本节点重启后恢复旧值
+func clearOwnPathStatsInD1(prefix string) {
+	if !d1sync.IsEnabled() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := d1sync.DeleteOwnPathStats(ctx, prefix); err != nil {
+		log.Printf("[Collector] 清理 D1 中本节点路径统计失败 (prefix=%q): %v", prefix, err)
+	}
 }

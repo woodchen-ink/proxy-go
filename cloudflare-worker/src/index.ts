@@ -39,7 +39,7 @@ export default {
 			// ============================================
 			if (path === '/path-stats' && request.method === 'GET') {
 				const pathParam = url.searchParams.get('path');
-				const stats = await db.getPathStats(env.DB, pathParam || undefined);
+				const stats = await db.getPathStats(env.DB, pathParam || undefined, readScope(url));
 				return jsonResponse({ success: true, data: stats }, 200, corsHeaders);
 			}
 
@@ -136,7 +136,7 @@ export default {
 			// Metrics API (status_codes, latency_distribution)
 			// ============================================
 			if (path === '/metrics/status-codes' && request.method === 'GET') {
-				const metrics = await db.getStatusCodes(env.DB);
+				const metrics = await db.getStatusCodes(env.DB, readScope(url));
 				return jsonResponse({ success: true, data: metrics }, 200, corsHeaders);
 			}
 
@@ -150,7 +150,7 @@ export default {
 			}
 
 			if (path === '/metrics/latency' && request.method === 'GET') {
-				const metrics = await db.getLatencyDistribution(env.DB);
+				const metrics = await db.getLatencyDistribution(env.DB, readScope(url));
 				return jsonResponse({ success: true, data: metrics }, 200, corsHeaders);
 			}
 
@@ -401,6 +401,20 @@ export default {
 		}
 	},
 };
+
+/**
+ * 从 query string 解析累计统计的读取范围
+ *
+ * node_id=X       只返回节点 X 的原始行 (节点恢复自身内存计数)
+ * exclude_node=X  返回除 X 外所有节点的求和 (调用方叠加自己的实时值)
+ * 都不带          返回全节点求和
+ */
+function readScope(url: URL): db.MetricsScope {
+	return {
+		nodeId: url.searchParams.get('node_id') || undefined,
+		excludeNode: url.searchParams.get('exclude_node') || undefined,
+	};
+}
 
 function jsonResponse(data: any, status: number, headers: Record<string, string> = {}): Response {
 	return new Response(JSON.stringify(data), {

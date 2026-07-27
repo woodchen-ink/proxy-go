@@ -250,6 +250,7 @@ export default function PathStatsList() {
                 <AlertDialogTitle>重置所有路径统计?</AlertDialogTitle>
                 <AlertDialogDescription>
                   将清零所有路径的累计请求、错误、状态码与缓存统计, 此操作无法撤销。
+                  多节点部署时只影响当前节点, 其他节点的累计值需分别登录各自节点重置。
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>

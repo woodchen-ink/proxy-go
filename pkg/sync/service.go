@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 	"time"
 )
@@ -284,8 +285,8 @@ func SaveStatusCodes(ctx context.Context, statusCodes map[string]int64) error {
 	return globalSyncService.manager.SaveStatusCodes(ctx, statusCodes)
 }
 
-// LoadStatusCodes 从 D1 加载状态码统计
-func LoadStatusCodes(ctx context.Context) (map[string]int64, error) {
+// LoadOwnStatusCodes 只加载本节点上报的状态码统计, 用于启动恢复内存计数
+func LoadOwnStatusCodes(ctx context.Context) (map[string]int64, error) {
 	globalSyncMutex.RLock()
 	defer globalSyncMutex.RUnlock()
 
@@ -293,7 +294,19 @@ func LoadStatusCodes(ctx context.Context) (map[string]int64, error) {
 		return nil, nil
 	}
 
-	return globalSyncService.manager.LoadStatusCodes(ctx)
+	return globalSyncService.manager.LoadStatusCodes(ctx, MetricsQuery{NodeID: NodeID()})
+}
+
+// LoadPeerStatusCodes 加载除本节点外所有节点的状态码合计, 由调用方叠加本地实时值
+func LoadPeerStatusCodes(ctx context.Context) (map[string]int64, error) {
+	globalSyncMutex.RLock()
+	defer globalSyncMutex.RUnlock()
+
+	if globalSyncService == nil || !globalSyncService.isEnabled {
+		return nil, nil
+	}
+
+	return globalSyncService.manager.LoadStatusCodes(ctx, MetricsQuery{ExcludeNode: NodeID()})
 }
 
 // SaveLatencyDistribution 保存延迟分布到 D1
@@ -308,8 +321,8 @@ func SaveLatencyDistribution(ctx context.Context, distribution map[string]int64)
 	return globalSyncService.manager.SaveLatencyDistribution(ctx, distribution)
 }
 
-// LoadLatencyDistribution 从 D1 加载延迟分布
-func LoadLatencyDistribution(ctx context.Context) (map[string]int64, error) {
+// LoadOwnLatencyDistribution 只加载本节点上报的延迟分布, 用于启动恢复内存计数
+func LoadOwnLatencyDistribution(ctx context.Context) (map[string]int64, error) {
 	globalSyncMutex.RLock()
 	defer globalSyncMutex.RUnlock()
 
@@ -317,11 +330,11 @@ func LoadLatencyDistribution(ctx context.Context) (map[string]int64, error) {
 		return nil, nil
 	}
 
-	return globalSyncService.manager.LoadLatencyDistribution(ctx)
+	return globalSyncService.manager.LoadLatencyDistribution(ctx, MetricsQuery{NodeID: NodeID()})
 }
 
-// LoadPathStats 从 D1 加载路径统计
-func LoadPathStats(ctx context.Context) ([]PathStat, error) {
+// LoadPeerLatencyDistribution 加载除本节点外所有节点的延迟分布合计
+func LoadPeerLatencyDistribution(ctx context.Context) (map[string]int64, error) {
 	globalSyncMutex.RLock()
 	defer globalSyncMutex.RUnlock()
 
@@ -329,8 +342,94 @@ func LoadPathStats(ctx context.Context) ([]PathStat, error) {
 		return nil, nil
 	}
 
-	// 调用 D1Client 的 GetPathStats 方法
-	return globalSyncService.manager.storage.GetPathStats(ctx, "")
+	return globalSyncService.manager.LoadLatencyDistribution(ctx, MetricsQuery{ExcludeNode: NodeID()})
+}
+
+// LoadOwnPathStats 只加载本节点上报的路径统计, 用于启动恢复内存计数
+//
+// 必须按节点过滤: 拿全节点合计恢复会让本节点把其他节点的量当成自己的起点继续累加,
+// 下次上报又把这个虚高值写回 D1, 每次重启滚一轮雪球
+func LoadOwnPathStats(ctx context.Context) ([]PathStat, error) {
+	globalSyncMutex.RLock()
+	defer globalSyncMutex.RUnlock()
+
+	if globalSyncService == nil || !globalSyncService.isEnabled {
+		return nil, nil
+	}
+
+	return globalSyncService.manager.storage.GetPathStats(ctx, MetricsQuery{NodeID: NodeID()})
+}
+
+// LoadPeerPathStats 加载除本节点外所有节点的路径统计合计, 由调用方叠加本地实时值
+func LoadPeerPathStats(ctx context.Context) ([]PathStat, error) {
+	globalSyncMutex.RLock()
+	defer globalSyncMutex.RUnlock()
+
+	if globalSyncService == nil || !globalSyncService.isEnabled {
+		return nil, nil
+	}
+
+	return globalSyncService.manager.storage.GetPathStats(ctx, MetricsQuery{ExcludeNode: NodeID()})
+}
+
+// DeleteOwnPathStats 删除本节点在 D1 中的路径统计行, prefix 为空时删除本节点全部行
+//
+// 重置统计时必须调用: 上报逻辑会跳过请求数为 0 的路径, 单靠清空内存不会覆盖 D1 里的旧值,
+// 节点下次重启从 D1 恢复时会把重置前的数字又读回来
+//
+// 只删本节点的行: 其他节点的内存里仍有各自的累计值, 删了它们的行也会在下个上报周期重新写回
+func DeleteOwnPathStats(ctx context.Context, prefix string) error {
+	globalSyncMutex.RLock()
+	defer globalSyncMutex.RUnlock()
+
+	if globalSyncService == nil || !globalSyncService.isEnabled {
+		return nil
+	}
+
+	stmt := SQLStatement{
+		SQL:    "DELETE FROM path_stats WHERE node_id = ?",
+		Params: []any{NodeID()},
+	}
+	if prefix != "" {
+		stmt.SQL = "DELETE FROM path_stats WHERE node_id = ? AND (path = ? OR path LIKE ?)"
+		stmt.Params = []any{NodeID(), prefix, prefix + "/%"}
+	}
+
+	_, err := globalSyncService.manager.storage.ExecuteSQLBatch(ctx, []SQLStatement{stmt})
+	return err
+}
+
+// ListMetricNodes 列出 path_stats 中出现过的全部 node_id (含本节点, 已排序)
+//
+// 节点集合是数据驱动的: 新节点第一次上报后自动出现, 不需要任何注册或配置。
+// 反过来, 下线节点的历史累计仍会留在合计里 —— 那部分流量确实发生过, 属预期行为
+func ListMetricNodes(ctx context.Context) ([]string, error) {
+	globalSyncMutex.RLock()
+	defer globalSyncMutex.RUnlock()
+
+	if globalSyncService == nil || !globalSyncService.isEnabled {
+		return []string{NodeID()}, nil
+	}
+
+	rows, err := globalSyncService.manager.storage.QuerySQL(ctx,
+		"SELECT DISTINCT node_id FROM path_stats ORDER BY node_id", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	self := NodeID()
+	seen := map[string]struct{}{self: {}}
+	nodes := []string{self}
+	for _, row := range rows {
+		if id, ok := row["node_id"].(string); ok && id != "" {
+			if _, dup := seen[id]; !dup {
+				seen[id] = struct{}{}
+				nodes = append(nodes, id)
+			}
+		}
+	}
+	sort.Strings(nodes)
+	return nodes, nil
 }
 
 // SavePathStats 保存路径统计到 D1

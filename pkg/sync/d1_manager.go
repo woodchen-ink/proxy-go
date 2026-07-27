@@ -222,10 +222,12 @@ func (m *D1Manager) SaveStatusCodes(ctx context.Context, statusCodes map[string]
 	}
 
 	now := time.Now().UnixMilli()
+	nodeID := NodeID()
 	metrics := make([]StatusCodeMetric, 0, len(statusCodes))
 	for code, count := range statusCodes {
 		metrics = append(metrics, StatusCodeMetric{
 			StatusCode: code,
+			NodeID:     nodeID,
 			Count:      count,
 			UpdatedAt:  now,
 		})
@@ -235,20 +237,20 @@ func (m *D1Manager) SaveStatusCodes(ctx context.Context, statusCodes map[string]
 		return fmt.Errorf("failed to save status codes: %w", err)
 	}
 
-	log.Printf("[D1Sync] Saved %d status codes", len(metrics))
+	log.Printf("[D1Sync] Saved %d status codes (node=%s)", len(metrics), nodeID)
 	return nil
 }
 
-// LoadStatusCodes 从 D1 加载状态码统计
-func (m *D1Manager) LoadStatusCodes(ctx context.Context) (map[string]int64, error) {
-	metrics, err := m.storage.GetStatusCodes(ctx)
+// LoadStatusCodes 从 D1 加载状态码统计, 聚合范围由 q 决定
+func (m *D1Manager) LoadStatusCodes(ctx context.Context, q MetricsQuery) (map[string]int64, error) {
+	metrics, err := m.storage.GetStatusCodes(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load status codes: %w", err)
 	}
 
 	result := make(map[string]int64, len(metrics))
 	for _, m := range metrics {
-		result[m.StatusCode] = m.Count
+		result[m.StatusCode] += m.Count
 	}
 
 	log.Printf("[D1Sync] Loaded %d status codes", len(result))
@@ -262,10 +264,12 @@ func (m *D1Manager) SaveLatencyDistribution(ctx context.Context, distribution ma
 	}
 
 	now := time.Now().UnixMilli()
+	nodeID := NodeID()
 	metrics := make([]LatencyMetric, 0, len(distribution))
 	for bucket, count := range distribution {
 		metrics = append(metrics, LatencyMetric{
 			Bucket:    bucket,
+			NodeID:    nodeID,
 			Count:     count,
 			UpdatedAt: now,
 		})
@@ -275,37 +279,44 @@ func (m *D1Manager) SaveLatencyDistribution(ctx context.Context, distribution ma
 		return fmt.Errorf("failed to save latency distribution: %w", err)
 	}
 
-	log.Printf("[D1Sync] Saved %d latency buckets", len(metrics))
+	log.Printf("[D1Sync] Saved %d latency buckets (node=%s)", len(metrics), nodeID)
 	return nil
 }
 
-// LoadLatencyDistribution 从 D1 加载延迟分布
-func (m *D1Manager) LoadLatencyDistribution(ctx context.Context) (map[string]int64, error) {
-	metrics, err := m.storage.GetLatencyDistribution(ctx)
+// LoadLatencyDistribution 从 D1 加载延迟分布, 聚合范围由 q 决定
+func (m *D1Manager) LoadLatencyDistribution(ctx context.Context, q MetricsQuery) (map[string]int64, error) {
+	metrics, err := m.storage.GetLatencyDistribution(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load latency distribution: %w", err)
 	}
 
 	result := make(map[string]int64, len(metrics))
 	for _, m := range metrics {
-		result[m.Bucket] = m.Count
+		result[m.Bucket] += m.Count
 	}
 
 	log.Printf("[D1Sync] Loaded %d latency buckets", len(result))
 	return result, nil
 }
 
-// SavePathStats 保存路径统计到 D1
+// SavePathStats 保存路径统计到 D1, 统一在此打上本节点 node_id
+//
+// 在 manager 层盖章而不是让各调用方自己填, 避免漏填导致写进 'default' 行与其他节点互相覆盖
 func (m *D1Manager) SavePathStats(ctx context.Context, stats []PathStat) error {
 	if len(stats) == 0 {
 		return nil
+	}
+
+	nodeID := NodeID()
+	for i := range stats {
+		stats[i].NodeID = nodeID
 	}
 
 	if err := m.storage.BatchUpsertPathStats(ctx, stats); err != nil {
 		return fmt.Errorf("failed to save path stats: %w", err)
 	}
 
-	log.Printf("[D1Sync] Saved %d path stats", len(stats))
+	log.Printf("[D1Sync] Saved %d path stats (node=%s)", len(stats), nodeID)
 	return nil
 }
 

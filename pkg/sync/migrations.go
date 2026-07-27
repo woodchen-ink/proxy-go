@@ -175,6 +175,69 @@ var migrations = []Migration{
 			`ALTER TABLE config_maps ADD COLUMN extra_config TEXT`,
 		},
 	},
+	{
+		// 给三张累计统计表补 node_id 维度, 与 path_timeseries / referer_daily 对齐。
+		//
+		// 旧 schema 主键只有 path / status_code / bucket, worker UPSERT 又是直接覆盖
+		// (count = excluded.count), 多节点部署时每个节点每 30 分钟把自己的绝对值写进同一行,
+		// 后写的覆盖先写的 → D1 存的永远是"最后上报节点的单节点值", 从来不是合计;
+		// 且节点重启时会把 D1 里别人的值当成自己的起点继续累加, 数字随部署次数滚雪球。
+		//
+		// 清零重建而不是迁移旧数据: 旧行已被覆盖 + 重复累加污染, 迁过来只会让新的合计
+		// 长期背着一个无法校准的错误基数。时间序列 (path_timeseries) 不受影响, 照常保留。
+		//
+		// 同时去掉两个派生列 (cache_hit_rate / avg_latency): 它们跨节点既不能 SUM 也不能 AVG,
+		// 改存 total_latency_ns, 由读侧用 SUM(total_latency_ns)/SUM(request_count) 算加权平均。
+		//
+		// 注: DROP + CREATE 组合本身可重入, 且 app_migrations 保证本 id 只执行一次。
+		ID: "0006_node_scoped_metrics",
+		Statements: []string{
+			`DROP TABLE IF EXISTS path_stats`,
+			`CREATE TABLE path_stats (
+				path TEXT NOT NULL,
+				node_id TEXT NOT NULL DEFAULT 'default',
+				request_count INTEGER DEFAULT 0,
+				error_count INTEGER DEFAULT 0,
+				bytes_transferred INTEGER DEFAULT 0,
+				status_2xx INTEGER DEFAULT 0,
+				status_3xx INTEGER DEFAULT 0,
+				status_4xx INTEGER DEFAULT 0,
+				status_5xx INTEGER DEFAULT 0,
+				cache_hits INTEGER DEFAULT 0,
+				cache_misses INTEGER DEFAULT 0,
+				bytes_saved INTEGER DEFAULT 0,
+				total_latency_ns INTEGER DEFAULT 0,
+				last_access_time INTEGER,
+				updated_at INTEGER NOT NULL,
+				PRIMARY KEY (path, node_id)
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_path_stats_path ON path_stats(path)`,
+			`CREATE INDEX IF NOT EXISTS idx_path_stats_node ON path_stats(node_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_path_stats_updated_at ON path_stats(updated_at)`,
+
+			`DROP TABLE IF EXISTS status_codes`,
+			`CREATE TABLE status_codes (
+				status_code TEXT NOT NULL,
+				node_id TEXT NOT NULL DEFAULT 'default',
+				count INTEGER DEFAULT 0,
+				updated_at INTEGER NOT NULL,
+				PRIMARY KEY (status_code, node_id)
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_status_codes_node ON status_codes(node_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_status_codes_updated_at ON status_codes(updated_at)`,
+
+			`DROP TABLE IF EXISTS latency_distribution`,
+			`CREATE TABLE latency_distribution (
+				bucket TEXT NOT NULL,
+				node_id TEXT NOT NULL DEFAULT 'default',
+				count INTEGER DEFAULT 0,
+				updated_at INTEGER NOT NULL,
+				PRIMARY KEY (bucket, node_id)
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_latency_distribution_node ON latency_distribution(node_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_latency_distribution_updated_at ON latency_distribution(updated_at)`,
+		},
+	},
 }
 
 // MigrationResult 启动期迁移汇总, 仅用于日志

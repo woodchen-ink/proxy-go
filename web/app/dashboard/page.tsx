@@ -16,6 +16,7 @@ import PathTotalsChart from "./components/PathTotalsChart"
 import PathStatsList from "./components/PathStatsList"
 import RefererDailyChart from "./components/RefererDailyChart"
 import CacheStatsTiles from "./components/CacheStatsTiles"
+import ClusterBadge from "./components/ClusterBadge"
 
 interface Metrics {
   uptime: string
@@ -55,6 +56,16 @@ interface Metrics {
     bytes_transferred: number
     last_access_time: number
   }>
+  cluster?: ClusterInfo
+}
+
+// ClusterInfo 说明累计类指标覆盖了哪些节点
+// 瞬时类指标 (QPS / 带宽 / 内存 / 最近请求) 始终只反映 node_id 这一个节点
+export interface ClusterInfo {
+  node_id: string
+  nodes: string[]
+  aggregated: boolean
+  degraded: boolean
 }
 
 // RECENT_PAGE_SIZE 最近请求每次加载的步长; 后端 RequestQueue 上限 100, 所以 50 + 50 刚好两次到顶
@@ -156,13 +167,16 @@ export default function DashboardPage() {
 
   return (
     <Tabs defaultValue="overview" className="space-y-6">
-      <TabsList>
-        <TabsTrigger value="overview">概览</TabsTrigger>
-        <TabsTrigger value="traffic">流量</TabsTrigger>
-        <TabsTrigger value="quality">质量</TabsTrigger>
-        <TabsTrigger value="requests">请求</TabsTrigger>
-        <TabsTrigger value="cache">缓存</TabsTrigger>
-      </TabsList>
+      <div className="space-y-3">
+        <TabsList>
+          <TabsTrigger value="overview">概览</TabsTrigger>
+          <TabsTrigger value="traffic">流量</TabsTrigger>
+          <TabsTrigger value="quality">质量</TabsTrigger>
+          <TabsTrigger value="requests">请求</TabsTrigger>
+          <TabsTrigger value="cache">缓存</TabsTrigger>
+        </TabsList>
+        <ClusterBadge cluster={metrics.cluster} />
+      </div>
 
       <TabsContent value="overview" className="space-y-6">
         <MetricTiles m={metrics} />
