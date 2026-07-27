@@ -125,15 +125,32 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      # 每个 dokploy 应用有各自的 webhook, 多节点部署需要逐个触发;
+      # 漏掉一个会让该节点长期停在旧镜像上, 与其他节点行为不一致
       - name: Trigger Dokploy deploy
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           DOKPLOY_WEBHOOK_URL: ${{ secrets.DOKPLOY_WEBHOOK_URL }}
+          DOKPLOY_WEBHOOK_URL_DE: ${{ secrets.DOKPLOY_WEBHOOK_URL_DE }}
         run: |
-          if [ -z "$DOKPLOY_WEBHOOK_URL" ]; then
-            echo "DOKPLOY_WEBHOOK_URL secret 未配置, 跳过部署触发"
-            exit 0
+          triggered=0
+          failed=0
+          for hook in "$DOKPLOY_WEBHOOK_URL" "$DOKPLOY_WEBHOOK_URL_DE"; do
+            [ -z "$hook" ] && continue
+            # 单个节点触发失败不阻断其余节点, 但要在末尾汇总为失败, 避免静默漏部署
+            if curl -fsSL -X POST "$hook" \
+                 -H "Content-Type: application/json" \
+                 -d "{\"ref\":\"${GITHUB_REF}\",\"sha\":\"${GITHUB_SHA}\"}"; then
+              triggered=$((triggered + 1))
+            else
+              echo "::warning::某个 dokploy webhook 触发失败"
+              failed=$((failed + 1))
+            fi
+          done
+          echo "已触发 $triggered 个节点, 失败 $failed 个"
+          if [ "$triggered" -eq 0 ]; then
+            echo "::error::没有配置任何 dokploy webhook, 所有节点都不会更新"
+            exit 1
           fi
-          curl -fsSL -X POST "$DOKPLOY_WEBHOOK_URL" \
-            -H "Content-Type: application/json" \
-            -d "{\"ref\":\"${GITHUB_REF}\",\"sha\":\"${GITHUB_SHA}\"}"
+          [ "$failed" -gt 0 ] && exit 1
+          exit 0

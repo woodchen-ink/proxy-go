@@ -1,7 +1,9 @@
 package models
 
 import (
+	"fmt"
 	"sync/atomic"
+	"time"
 )
 
 type PathStats struct {
@@ -56,6 +58,50 @@ type PathMetricsJSON struct {
 	CacheMisses      int64   `json:"cache_misses"`
 	CacheHitRate     float64 `json:"cache_hit_rate"` // 缓存命中率
 	BytesSaved       int64   `json:"bytes_saved"`
+
+	// Nodes 该路径在各节点上的分布, 上面的字段是这些节点的合计
+	// 多节点部署时用于看清流量偏斜; 单节点部署为空数组 (契约: 不返回 null)
+	Nodes []PathNodeStat `json:"nodes"`
+}
+
+// PathNodeStat 单个路径在单个节点上的计数
+type PathNodeStat struct {
+	NodeID       string  `json:"node_id"`
+	IsCurrent    bool    `json:"is_current"` // 是否为响应本次请求的节点 (其数据为实时, 其余最多滞后一个上报周期)
+	RequestCount int64   `json:"request_count"`
+	ErrorCount   int64   `json:"error_count"`
+	ErrorRate    float64 `json:"error_rate"`
+
+	BytesTransferred int64 `json:"bytes_transferred"`
+	CacheHits        int64 `json:"cache_hits"`
+	CacheMisses      int64 `json:"cache_misses"`
+
+	CacheHitRate float64 `json:"cache_hit_rate"`
+	AvgLatency   string  `json:"avg_latency"`
+
+	// totalLatency 纳秒累计, 仅用于重算平均延迟, 不出现在接口里
+	totalLatency int64
+}
+
+// AddLatency 累加纳秒延迟, 供跨节点聚合时使用
+func (p *PathNodeStat) AddLatency(ns int64) {
+	p.totalLatency += ns
+}
+
+// Finalize 由累加后的原始计数重算派生值 (错误率 / 命中率 / 平均延迟)
+//
+// 派生值不能相加, 必须在累加完成后统一重算
+func (p *PathNodeStat) Finalize() {
+	if p.RequestCount > 0 {
+		p.ErrorRate = float64(p.ErrorCount) / float64(p.RequestCount)
+		avgMs := float64(p.totalLatency) / float64(p.RequestCount) / float64(time.Millisecond)
+		p.AvgLatency = fmt.Sprintf("%.2fms", avgMs)
+	} else {
+		p.AvgLatency = "0.00ms"
+	}
+	if total := p.CacheHits + p.CacheMisses; total > 0 {
+		p.CacheHitRate = float64(p.CacheHits) / float64(total)
+	}
 }
 
 // GetRequestCount 获取请求数

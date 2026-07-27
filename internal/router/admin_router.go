@@ -41,6 +41,7 @@ func SetupAdminRoutes(proxyHandler *handler.ProxyHandler, authHandler *handler.A
 		{http.MethodGet, "/admin/api/cache/config", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).GetCacheConfig, true},
 		{http.MethodPost, "/admin/api/cache/config", handler.NewCacheAdminHandler(proxyHandler.Cache, mirrorHandler.Cache).UpdateCacheConfig, true},
 		{http.MethodGet, "/admin/api/path-stats", pathStatsHandler.GetAllPathStats, true},
+		{http.MethodGet, "/admin/api/node-stats", pathStatsHandler.GetNodeStats, true},
 		{http.MethodPost, "/admin/api/path-stats/reset", pathStatsHandler.ResetPathStats, true},
 		{http.MethodPost, "/admin/api/path-stats/reset-all", pathStatsHandler.ResetAllPathStats, true},
 		{http.MethodGet, "/admin/api/metrics/timeseries", handler.NewTimeseriesHandler().GetTimeseries, true},

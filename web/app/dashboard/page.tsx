@@ -17,6 +17,7 @@ import PathStatsList from "./components/PathStatsList"
 import RefererDailyChart from "./components/RefererDailyChart"
 import CacheStatsTiles from "./components/CacheStatsTiles"
 import ClusterBadge from "./components/ClusterBadge"
+import NodeStatsCard from "./components/NodeStatsCard"
 
 interface Metrics {
   uptime: string
@@ -180,6 +181,7 @@ export default function DashboardPage() {
 
       <TabsContent value="overview" className="space-y-6">
         <MetricTiles m={metrics} />
+        <NodeStatsCard />
         <PathStatsList />
       </TabsContent>
 

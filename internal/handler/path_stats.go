@@ -28,7 +28,8 @@ func NewPathStatsHandler(collector *metrics.Collector) *PathStatsHandler {
 func (h *PathStatsHandler) GetAllPathStats(w http.ResponseWriter, r *http.Request) {
 	// 本节点实时值与其他节点 D1 值先按 path 合并, 再走前缀聚合
 	peers := metrics.GetPeerStats()
-	rawStats := peers.MergePathStats(h.collector.GetPathStats())
+	localStats := h.collector.GetPathStats()
+	rawStats := peers.MergePathStats(localStats)
 
 	// 获取配置的路径前缀
 	cfg := config.GetConfig()
@@ -39,6 +40,14 @@ func (h *PathStatsHandler) GetAllPathStats(w http.ResponseWriter, r *http.Reques
 			"cluster":    peers.Info(),
 		})
 		return
+	}
+
+	// 各节点明细必须走同一套前缀归并, 否则明细路径与合计行对不上
+	resolvePrefix := func(path string) string {
+		if prefix := findMatchingPrefix(path, cfg.MAP); prefix != "" {
+			return prefix
+		}
+		return path
 	}
 
 	// 创建聚合后的统计数据映射
@@ -88,6 +97,9 @@ func (h *PathStatsHandler) GetAllPathStats(w http.ResponseWriter, r *http.Reques
 		result = append(result, *stat)
 	}
 
+	// 给每条路径挂上各节点分布, 让"这个路径的量是谁扛的"可见
+	peers.AttachNodeBreakdown(result, localStats, resolvePrefix)
+
 	// map 遍历顺序随机, 按请求数降序固定输出, 保证前端表格不会每次刷新都乱序
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].RequestCount != result[j].RequestCount {
@@ -100,6 +112,21 @@ func (h *PathStatsHandler) GetAllPathStats(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"path_stats": result,
 		"cluster":    peers.Info(),
+	})
+}
+
+// GetNodeStats 返回各节点的累计概览
+//
+// 本节点用内存实时值, 其他节点用 D1 里最后一次上报的值 (reported_at 标明时刻)。
+// 与合计视图互补: 合计回答"整体如何", 这里回答"每个节点各自如何、有没有偏斜"
+func (h *PathStatsHandler) GetNodeStats(w http.ResponseWriter, r *http.Request) {
+	peers := metrics.GetPeerStats()
+	nodes := peers.NodeSummaries(h.collector.GetPathStats())
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"nodes":   nodes,
+		"cluster": peers.Info(),
 	})
 }
 

@@ -63,12 +63,15 @@ type PathStat struct {
 //     (绝不能拿全节点合计来恢复, 否则本节点会把别人的量当成自己的起点继续累加)
 //   - ExcludeNode: 聚合除该节点外的所有节点, 由调用方叠加本地实时内存值,
 //     得到"其他节点(最多 30 分钟前) + 本节点实时"的全局合计
+//   - ByNode: 返回全部节点的原始行 (每行带 node_id), 供仪表盘展示各节点明细;
+//     它是 ExcludeNode 结果的超集, 调用方可本地折算出合计, 省掉一次往返
 //
 // 节点集合完全由 D1 中出现过的 node_id 决定, 新增节点上报后自动进入聚合, 无需注册或改配置。
 type MetricsQuery struct {
 	Path        string
 	NodeID      string
 	ExcludeNode string
+	ByNode      bool
 }
 
 // applyTo 把过滤条件写进 query string
@@ -82,6 +85,9 @@ func (q MetricsQuery) applyTo(base string) string {
 	}
 	if q.ExcludeNode != "" {
 		params.Set("exclude_node", q.ExcludeNode)
+	}
+	if q.ByNode {
+		params.Set("by_node", "1")
 	}
 	if len(params) == 0 {
 		return base

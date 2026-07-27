@@ -6,6 +6,7 @@ import (
 	"log"
 	"proxy-go/internal/models"
 	"proxy-go/pkg/sync"
+	"sort"
 	gosync "sync"
 	"time"
 )
@@ -24,26 +25,72 @@ import (
 
 // peerTTL 其他节点数据的缓存时长
 //
-// 上游数据本身就是 30 分钟粒度, 没必要跟着仪表盘轮询打 D1;
-// 同时避免多个管理页并发刷新时对 worker 产生放大请求
-const peerTTL = 60 * time.Second
+// 各节点每 30 分钟才上报一次, 所以 D1 里的数据在一个上报周期内根本不会变 ——
+// 缓存时长必须按"数据多久可能变一次"来定, 而不是按仪表盘多久刷新一次。
+// 取 5 分钟: 最坏让 peer 数据多滞后 5 分钟 (相对本身就有的 30 分钟滞后可忽略),
+// 换来 D1 读取量下降一个数量级。Worker / D1 都是按请求与行数计费的, 不能被轮询打穿
+const peerTTL = 5 * time.Minute
 
 // ClusterInfo 描述本次聚合实际覆盖的范围, 随指标接口一起返回给前端
 type ClusterInfo struct {
-	NodeID     string   `json:"node_id"`     // 当前响应来自哪个节点
-	Nodes      []string `json:"nodes"`       // 参与合计的全部节点 (含自己)
-	Aggregated bool     `json:"aggregated"`  // 是否真的做了跨节点合计
-	Degraded   bool     `json:"degraded"`    // true 表示拉取其他节点失败, 当前只有本节点数据
+	NodeID     string   `json:"node_id"`    // 当前响应来自哪个节点
+	Nodes      []string `json:"nodes"`      // 参与合计的全部节点 (含自己)
+	Aggregated bool     `json:"aggregated"` // 是否真的做了跨节点合计
+	Degraded   bool     `json:"degraded"`   // true 表示拉取其他节点失败, 当前只有本节点数据
+	FetchedAt  int64    `json:"fetched_at"` // 其他节点数据的抓取时刻 (秒), 供前端显示数据新鲜度
 }
 
-// PeerStats 其他节点累计统计的一次快照 (不含本节点)
+// PeerStats 一次跨节点快照
+//
+// nodeRows 是 D1 里**全部节点**的原始行 (含本节点上一次上报的那份)。
+// 只拉这一份原始数据, 在 Go 侧派生出三种视图, 避免为每种视图各打一次 D1:
+//   - 其他节点合计 (peerPathStats): 过滤掉本节点后按 path 求和, 叠加本地实时值即为全局合计
+//   - 各节点明细 (NodeSummaries): 按 node_id 分组, 本节点那份换成内存实时值
+//   - 节点列表: 直接取 node_id 去重, 不必再查一次 DISTINCT
 type PeerStats struct {
-	pathStats   []sync.PathStat
+	nodeRows    []sync.PathStat
 	statusCodes map[string]int64
 	latency     map[string]int64
-	nodes       []string
 	degraded    bool
 	fetchedAt   time.Time
+}
+
+// peerPathStats 折算出"除本节点外所有节点"按 path 的合计
+func (s *PeerStats) peerPathStats() []sync.PathStat {
+	self := sync.NodeID()
+	merged := make(map[string]*sync.PathStat)
+	for _, row := range s.nodeRows {
+		if row.NodeID == self {
+			continue
+		}
+		existing, ok := merged[row.Path]
+		if !ok {
+			cp := row
+			cp.NodeID = ""
+			merged[row.Path] = &cp
+			continue
+		}
+		existing.RequestCount += row.RequestCount
+		existing.ErrorCount += row.ErrorCount
+		existing.BytesTransferred += row.BytesTransferred
+		existing.Status2xx += row.Status2xx
+		existing.Status3xx += row.Status3xx
+		existing.Status4xx += row.Status4xx
+		existing.Status5xx += row.Status5xx
+		existing.CacheHits += row.CacheHits
+		existing.CacheMisses += row.CacheMisses
+		existing.BytesSaved += row.BytesSaved
+		existing.TotalLatencyNs += row.TotalLatencyNs
+		if row.LastAccessTime > existing.LastAccessTime {
+			existing.LastAccessTime = row.LastAccessTime
+		}
+	}
+
+	out := make([]sync.PathStat, 0, len(merged))
+	for _, stat := range merged {
+		out = append(out, *stat)
+	}
+	return out
 }
 
 var (
@@ -97,7 +144,6 @@ func fetchPeerStats() *PeerStats {
 	result := &PeerStats{
 		statusCodes: map[string]int64{},
 		latency:     map[string]int64{},
-		nodes:       []string{},
 		fetchedAt:   time.Now(),
 	}
 
@@ -109,13 +155,15 @@ func fetchPeerStats() *PeerStats {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	pathStats, err := sync.LoadPeerPathStats(ctx)
+	// 一次拉全部节点的原始行, 其他节点合计 / 各节点明细 / 节点列表都由它派生,
+	// 不再为每种视图各打一次 D1 (worker 与 D1 都按请求和行数计费)
+	nodeRows, err := sync.LoadPathStatsByNode(ctx)
 	if err != nil {
-		log.Printf("[Cluster] 拉取其他节点路径统计失败, 降级为仅本节点: %v", err)
+		log.Printf("[Cluster] 拉取各节点路径统计失败, 降级为仅本节点: %v", err)
 		result.degraded = true
 		return result
 	}
-	result.pathStats = pathStats
+	result.nodeRows = nodeRows
 
 	if statusCodes, err := sync.LoadPeerStatusCodes(ctx); err != nil {
 		log.Printf("[Cluster] 拉取其他节点状态码失败: %v", err)
@@ -131,27 +179,39 @@ func fetchPeerStats() *PeerStats {
 		result.latency = latency
 	}
 
-	if nodes, err := sync.ListMetricNodes(ctx); err != nil {
-		log.Printf("[Cluster] 读取节点列表失败: %v", err)
-	} else {
-		result.nodes = nodes
-	}
-
 	return result
+}
+
+// nodeIDs 从原始行里取出去重排序的节点列表, 本节点恒在内
+//
+// 节点集合数据驱动: D1 里出现过谁就有谁, 新节点首次上报后自动出现, 无需注册
+func (s *PeerStats) nodeIDs() []string {
+	self := sync.NodeID()
+	seen := map[string]struct{}{self: {}}
+	nodes := []string{self}
+	for _, row := range s.nodeRows {
+		if row.NodeID == "" {
+			continue
+		}
+		if _, dup := seen[row.NodeID]; dup {
+			continue
+		}
+		seen[row.NodeID] = struct{}{}
+		nodes = append(nodes, row.NodeID)
+	}
+	sort.Strings(nodes)
+	return nodes
 }
 
 // Info 汇报本次聚合覆盖范围
 func (s *PeerStats) Info() ClusterInfo {
-	self := sync.NodeID()
-	nodes := s.nodes
-	if len(nodes) == 0 {
-		nodes = []string{self}
-	}
+	nodes := s.nodeIDs()
 	return ClusterInfo{
-		NodeID:     self,
+		NodeID:     sync.NodeID(),
 		Nodes:      nodes,
-		Aggregated: len(s.pathStats) > 0 || len(nodes) > 1,
+		Aggregated: len(nodes) > 1,
 		Degraded:   s.degraded,
+		FetchedAt:  s.fetchedAt.Unix(),
 	}
 }
 
@@ -160,14 +220,15 @@ func (s *PeerStats) Info() ClusterInfo {
 // 派生值必须重算而不是相加: 命中率按合并后的 hits/(hits+misses),
 // 平均延迟按合并后的 总延迟/总请求数 (直接平均各节点的平均值会丢失请求数权重)
 func (s *PeerStats) MergePathStats(local []models.PathMetricsJSON) []models.PathMetricsJSON {
-	merged := make(map[string]*models.PathMetricsJSON, len(local)+len(s.pathStats))
+	peerStats := s.peerPathStats()
+	merged := make(map[string]*models.PathMetricsJSON, len(local)+len(peerStats))
 
 	for i := range local {
 		stat := local[i]
 		merged[stat.Path] = &stat
 	}
 
-	for _, peer := range s.pathStats {
+	for _, peer := range peerStats {
 		existing, ok := merged[peer.Path]
 		if !ok {
 			merged[peer.Path] = &models.PathMetricsJSON{
@@ -252,9 +313,12 @@ func (s *PeerStats) MergeStatusCodes(local map[string]int64) map[string]int64 {
 //
 // 全局总流量没有独立的 D1 表, 由各节点的逐路径字节数求和得到; 与仪表盘按路径展示的合计同源
 func (s *PeerStats) TotalBytes() int64 {
+	self := sync.NodeID()
 	var total int64
-	for _, stat := range s.pathStats {
-		total += stat.BytesTransferred
+	for _, stat := range s.nodeRows {
+		if stat.NodeID != self {
+			total += stat.BytesTransferred
+		}
 	}
 	return total
 }
@@ -264,7 +328,11 @@ func (s *PeerStats) TotalBytes() int64 {
 // 与 TotalBytes 同源, 用于把平均响应时间也做成全集群口径:
 // 直接平均各节点的平均值会丢掉请求数权重, 必须回到 总延迟/总请求数
 func (s *PeerStats) TotalLatencyNs() (latencyNs int64, requests int64) {
-	for _, stat := range s.pathStats {
+	self := sync.NodeID()
+	for _, stat := range s.nodeRows {
+		if stat.NodeID == self {
+			continue
+		}
 		latencyNs += stat.TotalLatencyNs
 		requests += stat.RequestCount
 	}
@@ -274,4 +342,178 @@ func (s *PeerStats) TotalLatencyNs() (latencyNs int64, requests int64) {
 // MergeLatencyDistribution 合并延迟分布桶
 func (s *PeerStats) MergeLatencyDistribution(local map[string]int64) map[string]int64 {
 	return mergeCounters(local, s.latency)
+}
+
+// NodeSummary 单个节点的累计概览
+type NodeSummary struct {
+	NodeID           string  `json:"node_id"`
+	IsCurrent        bool    `json:"is_current"` // 是否为响应本次请求的节点
+	RequestCount     int64   `json:"request_count"`
+	ErrorCount       int64   `json:"error_count"`
+	ErrorRate        float64 `json:"error_rate"`
+	BytesTransferred int64   `json:"bytes_transferred"`
+	BytesSaved       int64   `json:"bytes_saved"`
+	CacheHitRate     float64 `json:"cache_hit_rate"`
+	AvgLatency       string  `json:"avg_latency"`
+	// ReportedAt 该节点最后一次上报到 D1 的时刻 (秒); 本节点为 0, 因为用的是内存实时值
+	ReportedAt int64 `json:"reported_at"`
+}
+
+// NodeSummaries 按节点汇总累计指标, 本节点用传入的内存实时值而非 D1 里的上一次上报
+//
+// 之所以要区分: 本节点最近一个上报周期内的流量还没进 D1, 直接用 D1 值会少一截,
+// 且与页面上其他"本节点实时"口径对不上
+func (s *PeerStats) NodeSummaries(local []models.PathMetricsJSON) []NodeSummary {
+	self := sync.NodeID()
+
+	// 派生值 (错误率 / 命中率 / 平均延迟) 一律先攒原始计数, 最后统一重算,
+	// 中途累加派生值会得到错误结果
+	type acc struct {
+		summary     NodeSummary
+		totalLatncy int64
+		cacheHits   int64
+		cacheMisses int64
+		reportedAt  int64
+	}
+	nodes := make(map[string]*acc)
+
+	ensure := func(nodeID string) *acc {
+		if a, ok := nodes[nodeID]; ok {
+			return a
+		}
+		a := &acc{summary: NodeSummary{NodeID: nodeID, IsCurrent: nodeID == self}}
+		nodes[nodeID] = a
+		return a
+	}
+
+	// 本节点恒存在, 即便还没有任何流量也要出现在列表里
+	selfAcc := ensure(self)
+
+	for _, row := range s.nodeRows {
+		a := ensure(row.NodeID)
+		if row.UpdatedAt > a.reportedAt {
+			a.reportedAt = row.UpdatedAt
+		}
+		// 本节点跳过 D1 值, 下面改用内存实时值; 这里只借它的上报时间
+		if row.NodeID == self {
+			continue
+		}
+		a.summary.RequestCount += row.RequestCount
+		a.summary.ErrorCount += row.ErrorCount
+		a.summary.BytesTransferred += row.BytesTransferred
+		a.summary.BytesSaved += row.BytesSaved
+		a.totalLatncy += row.TotalLatencyNs
+		a.cacheHits += row.CacheHits
+		a.cacheMisses += row.CacheMisses
+	}
+
+	for _, stat := range local {
+		selfAcc.summary.RequestCount += stat.RequestCount
+		selfAcc.summary.ErrorCount += stat.ErrorCount
+		selfAcc.summary.BytesTransferred += stat.BytesTransferred
+		selfAcc.summary.BytesSaved += stat.BytesSaved
+		selfAcc.totalLatncy += stat.TotalLatency
+		selfAcc.cacheHits += stat.CacheHits
+		selfAcc.cacheMisses += stat.CacheMisses
+	}
+
+	out := make([]NodeSummary, 0, len(nodes))
+	for _, a := range nodes {
+		n := a.summary
+		if n.RequestCount > 0 {
+			n.ErrorRate = float64(n.ErrorCount) / float64(n.RequestCount)
+			avgMs := float64(a.totalLatncy) / float64(n.RequestCount) / float64(time.Millisecond)
+			n.AvgLatency = fmt.Sprintf("%.2fms", avgMs)
+		} else {
+			n.AvgLatency = "0.00ms"
+		}
+		if total := a.cacheHits + a.cacheMisses; total > 0 {
+			n.CacheHitRate = float64(a.cacheHits) / float64(total)
+		}
+		// 本节点是实时内存值, 不存在"上报时刻"这回事
+		if !n.IsCurrent {
+			n.ReportedAt = a.reportedAt / 1000 // D1 存的是毫秒
+		}
+		out = append(out, n)
+	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].NodeID < out[j].NodeID })
+	return out
+}
+
+// AttachNodeBreakdown 给每条路径挂上该路径在各节点上的分布
+//
+// 回答"这个路径的流量到底是哪个节点扛的" —— 合计数字看不出偏斜,
+// 而多节点部署最常见的问题恰恰是流量没按预期分流。
+//
+// resolvePath 把原始路径归并到与 aggregated 相同的键 (通常是配置的路径前缀),
+// 两侧必须用同一套归并逻辑, 否则明细挂不到对应的合计行上
+func (s *PeerStats) AttachNodeBreakdown(
+	aggregated []models.PathMetricsJSON,
+	local []models.PathMetricsJSON,
+	resolvePath func(string) string,
+) {
+	self := sync.NodeID()
+	if resolvePath == nil {
+		resolvePath = func(p string) string { return p }
+	}
+
+	// path -> nodeID -> 该节点在此路径上的计数
+	byPath := make(map[string]map[string]*models.PathNodeStat)
+	ensure := func(path, nodeID string) *models.PathNodeStat {
+		perNode, ok := byPath[path]
+		if !ok {
+			perNode = make(map[string]*models.PathNodeStat)
+			byPath[path] = perNode
+		}
+		if s, ok := perNode[nodeID]; ok {
+			return s
+		}
+		s := &models.PathNodeStat{NodeID: nodeID, IsCurrent: nodeID == self}
+		perNode[nodeID] = s
+		return s
+	}
+
+	for _, row := range s.nodeRows {
+		if row.NodeID == self {
+			continue // 本节点用内存实时值
+		}
+		n := ensure(resolvePath(row.Path), row.NodeID)
+		n.RequestCount += row.RequestCount
+		n.ErrorCount += row.ErrorCount
+		n.BytesTransferred += row.BytesTransferred
+		n.AddLatency(row.TotalLatencyNs)
+		n.CacheHits += row.CacheHits
+		n.CacheMisses += row.CacheMisses
+	}
+
+	for _, stat := range local {
+		n := ensure(resolvePath(stat.Path), self)
+		n.RequestCount += stat.RequestCount
+		n.ErrorCount += stat.ErrorCount
+		n.BytesTransferred += stat.BytesTransferred
+		n.AddLatency(stat.TotalLatency)
+		n.CacheHits += stat.CacheHits
+		n.CacheMisses += stat.CacheMisses
+	}
+
+	for i := range aggregated {
+		perNode := byPath[aggregated[i].Path]
+		if len(perNode) == 0 {
+			aggregated[i].Nodes = []models.PathNodeStat{}
+			continue
+		}
+		list := make([]models.PathNodeStat, 0, len(perNode))
+		for _, n := range perNode {
+			n.Finalize()
+			list = append(list, *n)
+		}
+		sort.Slice(list, func(a, b int) bool {
+			if list[a].RequestCount != list[b].RequestCount {
+				return list[a].RequestCount > list[b].RequestCount
+			}
+			return list[a].NodeID < list[b].NodeID
+		})
+		aggregated[i].Nodes = list
+	}
 }

@@ -32,9 +32,10 @@ export interface PathStat {
 /**
  * 累计统计表的读取范围
  *
- * nodeId 与 excludeNode 互斥:
+ * nodeId / excludeNode / byNode 互斥:
  *   - nodeId: 返回该节点的原始行, 不聚合 (节点启动时恢复自己的内存计数)
  *   - excludeNode: 聚合除该节点外的所有节点 (调用方再叠加自己的实时值)
+ *   - byNode: 返回全部节点的原始行, 不聚合 (仪表盘展示各节点明细)
  *   - 都不给: 聚合全部节点
  *
  * 节点集合由表里实际出现的 node_id 决定, 新节点上报后自动进入聚合, 无需注册。
@@ -42,6 +43,7 @@ export interface PathStat {
 export interface MetricsScope {
 	nodeId?: string;
 	excludeNode?: string;
+	byNode?: boolean;
 }
 
 export async function getPathStats(
@@ -66,11 +68,11 @@ export async function getPathStats(
 	}
 	const whereSQL = where.length > 0 ? ` WHERE ${where.join(' AND ')}` : '';
 
-	// 指定 nodeId 时取原始行; 其余情况按 path 跨节点求和。
+	// 取原始行 (不聚合) 的两种情形: 指定单节点, 或要各节点明细
 	// last_access_time 取 MAX (最近一次被访问), updated_at 取 MAX (最近一次上报);
 	// 派生值 (命中率 / 平均延迟) 不在这里算, 由读侧用 total_latency_ns 与 request_count 还原。
-	const query = scope.nodeId
-		? `SELECT * FROM path_stats${whereSQL} ORDER BY request_count DESC`
+	const query = scope.nodeId || scope.byNode
+		? `SELECT * FROM path_stats${whereSQL} ORDER BY node_id, request_count DESC`
 		: `SELECT
 			path,
 			'' AS node_id,

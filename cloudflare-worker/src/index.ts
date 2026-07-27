@@ -407,12 +407,14 @@ export default {
  *
  * node_id=X       只返回节点 X 的原始行 (节点恢复自身内存计数)
  * exclude_node=X  返回除 X 外所有节点的求和 (调用方叠加自己的实时值)
+ * by_node=1       返回全部节点的原始行 (仪表盘展示各节点明细)
  * 都不带          返回全节点求和
  */
 function readScope(url: URL): db.MetricsScope {
 	return {
 		nodeId: url.searchParams.get('node_id') || undefined,
 		excludeNode: url.searchParams.get('exclude_node') || undefined,
+		byNode: url.searchParams.get('by_node') === '1',
 	};
 }
 

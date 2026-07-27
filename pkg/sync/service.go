@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"sort"
 	"sync"
 	"time"
 )
@@ -360,8 +359,12 @@ func LoadOwnPathStats(ctx context.Context) ([]PathStat, error) {
 	return globalSyncService.manager.storage.GetPathStats(ctx, MetricsQuery{NodeID: NodeID()})
 }
 
-// LoadPeerPathStats 加载除本节点外所有节点的路径统计合计, 由调用方叠加本地实时值
-func LoadPeerPathStats(ctx context.Context) ([]PathStat, error) {
+// LoadPathStatsByNode 加载全部节点的路径统计原始行 (不聚合, 每行带 node_id)
+//
+// 仪表盘只拉这一份, 在 Go 侧派生出"其他节点合计"/"各节点明细"/"节点列表"三种视图。
+// 相比为每种视图各查一次 D1, 请求数与计费行数都更低 —— worker 与 D1 都按量计费,
+// 而仪表盘是会被反复轮询的
+func LoadPathStatsByNode(ctx context.Context) ([]PathStat, error) {
 	globalSyncMutex.RLock()
 	defer globalSyncMutex.RUnlock()
 
@@ -369,7 +372,7 @@ func LoadPeerPathStats(ctx context.Context) ([]PathStat, error) {
 		return nil, nil
 	}
 
-	return globalSyncService.manager.storage.GetPathStats(ctx, MetricsQuery{ExcludeNode: NodeID()})
+	return globalSyncService.manager.storage.GetPathStats(ctx, MetricsQuery{ByNode: true})
 }
 
 // DeleteOwnPathStats 删除本节点在 D1 中的路径统计行, prefix 为空时删除本节点全部行
@@ -399,38 +402,7 @@ func DeleteOwnPathStats(ctx context.Context, prefix string) error {
 	return err
 }
 
-// ListMetricNodes 列出 path_stats 中出现过的全部 node_id (含本节点, 已排序)
-//
-// 节点集合是数据驱动的: 新节点第一次上报后自动出现, 不需要任何注册或配置。
-// 反过来, 下线节点的历史累计仍会留在合计里 —— 那部分流量确实发生过, 属预期行为
-func ListMetricNodes(ctx context.Context) ([]string, error) {
-	globalSyncMutex.RLock()
-	defer globalSyncMutex.RUnlock()
-
-	if globalSyncService == nil || !globalSyncService.isEnabled {
-		return []string{NodeID()}, nil
-	}
-
-	rows, err := globalSyncService.manager.storage.QuerySQL(ctx,
-		"SELECT DISTINCT node_id FROM path_stats ORDER BY node_id", nil)
-	if err != nil {
-		return nil, err
-	}
-
-	self := NodeID()
-	seen := map[string]struct{}{self: {}}
-	nodes := []string{self}
-	for _, row := range rows {
-		if id, ok := row["node_id"].(string); ok && id != "" {
-			if _, dup := seen[id]; !dup {
-				seen[id] = struct{}{}
-				nodes = append(nodes, id)
-			}
-		}
-	}
-	sort.Strings(nodes)
-	return nodes, nil
-}
+// 节点列表不再单独查询, 由 LoadPathStatsByNode 的结果直接派生, 见 internal/metrics/cluster.go
 
 // SavePathStats 保存路径统计到 D1
 func SavePathStats(ctx context.Context, stats []PathStat) error {
