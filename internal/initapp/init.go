@@ -106,6 +106,19 @@ func InitWithOptions(opts InitOptions) (*AppComponents, error) {
 			log.Printf("[Init] 配置管理器初始化失败: %v", err)
 			return nil, err
 		}
+
+		// 接了 D1 却走到本地兜底, 说明这次启动没拿到线上配置。
+		// 兜底文件很可能只是仓库自带的样例, 节点会用一份"看起来正常"的错配置对外服务 ——
+		// 这种状态混在一堆 info 日志里极难发现, 必须显式喊出来
+		if sync.IsEnabled() {
+			paths := 0
+			if cfg := components.ConfigManager.GetConfig(); cfg != nil {
+				paths = len(cfg.MAP)
+			}
+			log.Printf("[Init] !!! 警告: 已启用 D1 但本次未能取到线上配置, 当前使用本地兜底配置 (%d 个路径映射)", paths)
+			log.Printf("[Init] !!! 该配置可能不是你的线上配置。已同时禁止本进程向 D1 上传配置, " +
+				"避免覆盖线上。确认 D1 可达后, 到后台点「从 D1 拉取」或重启本节点即可恢复")
+		}
 	}
 
 	// 设置为全局配置管理器

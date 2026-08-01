@@ -17,6 +17,14 @@ type D1Manager struct {
 	status       atomic.Value // SyncStatus
 	stopChan     chan struct{}
 	eventChan    chan SyncEvent
+
+	// configTrusted 标记"本进程内存里的配置是否可信"
+	//
+	// 只有确认过远端状态 (成功拉取, 或确认远端为空) 才置真。启动时拉取失败会
+	// 退回本地兜底配置 —— 那份配置可能只是仓库自带的样例, 绝不能拿它去覆盖线上。
+	// 由于 UploadConfig 会删除本地不存在的路径, 一次误传就会抹掉整个线上配置,
+	// 所以不可信时必须禁止一切上传
+	configTrusted atomic.Bool
 }
 
 // NewD1Manager 创建D1同步管理器
@@ -206,7 +214,15 @@ func (m *D1Manager) GetEventChannel() <-chan SyncEvent {
 }
 
 // syncConfigToD1 同步配置到D1
+//
+// 配置不可信时直接跳过: 见 configTrusted 字段说明。这条守卫覆盖了所有上传入口
+// (配置修改回调 / 关闭前的最终同步 / 手动 SyncNow), 是防止兜底配置覆盖线上的最后一道闸
 func (m *D1Manager) syncConfigToD1(ctx context.Context) error {
+	if !m.configTrusted.Load() {
+		log.Printf("[D1Sync] !!! 跳过配置上传: 本进程未能从 D1 成功拉取过配置, 内存中的配置不可信")
+		return nil
+	}
+
 	config, err := m.configLoader.LoadConfig()
 	if err != nil {
 		return fmt.Errorf("failed to load local config: %w", err)
@@ -215,45 +231,110 @@ func (m *D1Manager) syncConfigToD1(ctx context.Context) error {
 	return m.UploadConfig(ctx, config)
 }
 
+// MarkConfigTrusted 在确认已拿到远端配置后放开上传
+//
+// 供后台「从 D1 拉取」成功后调用, 让只读模式下的节点无需重启即可恢复配置同步
+func (m *D1Manager) MarkConfigTrusted() {
+	if m.configTrusted.CompareAndSwap(false, true) {
+		log.Printf("[D1Sync] 配置已与 D1 对齐, 恢复配置同步")
+	}
+}
+
+// fetchRemoteConfigWithRetry 拉取远端配置, 失败重试
+//
+// 只要有一次成功就返回。502 / 超时这类瞬时故障靠重试基本能躲过去 ——
+// 而一次误判"远端没有配置"的代价是整个线上配置被覆盖, 值得多等这几秒
+func (m *D1Manager) fetchRemoteConfigWithRetry(ctx context.Context) ([]ConfigMap, []ConfigOther, error) {
+	const attempts = 3
+	var lastErr error
+
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			delay := time.Duration(i*i) * time.Second // 0s / 1s / 4s
+			log.Printf("[D1Sync] 第 %d 次拉取配置失败 (%v), %v 后重试", i, lastErr, delay)
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			}
+		}
+
+		maps, mapsErr := m.storage.GetConfigMaps(ctx, false)
+		if mapsErr != nil {
+			lastErr = mapsErr
+			continue
+		}
+		others, othersErr := m.storage.GetConfigOther(ctx, "")
+		if othersErr != nil {
+			lastErr = othersErr
+			continue
+		}
+		return maps, others, nil
+	}
+
+	return nil, nil, lastErr
+}
+
+// toGenericMap 把任意配置对象过一遍 JSON 转成 map[string]any
+func toGenericMap(v any) (map[string]any, error) {
+	if m, ok := v.(map[string]any); ok {
+		return m, nil
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // downloadConfigWithFallback 下载配置，如果远程不存在则上传本地配置
 // 返回: 远程配置数据（如果存在），是否使用了本地配置，错误
 func (m *D1Manager) downloadConfigWithFallback(ctx context.Context) (map[string]any, bool, error) {
 	log.Printf("[D1Sync] Checking for remote config...")
 
-	// 尝试下载远程 ConfigMaps 和 ConfigOther
-	maps, mapsErr := m.storage.GetConfigMaps(ctx, false)
-	others, othersErr := m.storage.GetConfigOther(ctx, "")
+	maps, others, fetchErr := m.fetchRemoteConfigWithRetry(ctx)
 
-	// 判断远程是否有有效配置：
-	// 1. API调用失败（mapsErr/othersErr != nil）表示网络或权限问题
-	// 2. API调用成功但返回空数据（len == 0）表示远程数据库为空
-	// 两种情况都应该上传本地配置作为初始版本
-	remoteHasConfig := (mapsErr == nil && len(maps) > 0) || (othersErr == nil && len(others) > 0)
+	// "拉取失败" 与 "远端确实是空的" 必须区分对待, 这是数据安全的关键分界:
+	//
+	//   - 远端确实为空: 我们**知道**远端状态, 上传本地配置作为初始版本是安全的
+	//   - 拉取失败:     我们**不知道**远端有什么。此时上传本地配置等于拿一份可能是
+	//                   兜底样例的配置去覆盖线上 —— 而 UploadConfig 会删除本地不存在
+	//                   的路径, 后果是线上配置被整体抹掉
+	//
+	// 历史上这两种情况被合并处理 ("两种情况都应该上传本地配置"), 只因为下方的类型
+	// 断言恒失败才没有真正酿成事故。现在显式分开, 并把进程标记为"配置不可信"
+	if fetchErr != nil {
+		m.configTrusted.Store(false)
+		log.Printf("[D1Sync] !!! 无法从 D1 拉取配置: %v", fetchErr)
+		log.Printf("[D1Sync] !!! 本进程将以【配置只读】模式运行: 使用本地兜底配置对外服务, " +
+			"但禁止向 D1 上传配置, 以免用兜底配置覆盖线上。恢复方式: 后台点「从 D1 拉取」, 或在 D1 可达后重启本节点")
+		return nil, false, fmt.Errorf("fetch remote config: %w", fetchErr)
+	}
 
-	if !remoteHasConfig {
-		// 远程配置为空或API调用失败
-		if mapsErr != nil || othersErr != nil {
-			log.Printf("[D1Sync] Remote config check failed (maps: %v, others: %v), uploading local config", mapsErr, othersErr)
-		} else {
-			log.Printf("[D1Sync] Remote config is empty, uploading local config as initial version")
-		}
+	if len(maps) == 0 && len(others) == 0 {
+		// 远端确认为空: 播种本地配置作为初始版本
+		log.Printf("[D1Sync] Remote config is empty, uploading local config as initial version")
 
-		// 加载本地配置
 		localConfigAny, loadErr := m.configLoader.LoadConfig()
 		if loadErr != nil {
 			return nil, false, fmt.Errorf("failed to load local config: %w", loadErr)
 		}
 
-		// 类型断言
-		localConfig, ok := localConfigAny.(map[string]any)
-		if !ok {
-			return nil, false, fmt.Errorf("local config is not map[string]any")
+		// 本地配置是 *config.Config 而非 map, 过一遍 JSON 转成通用 map。
+		// 旧代码在这里直接做 map[string]any 断言, 恒失败, 导致播种从未真正生效
+		localConfig, convErr := toGenericMap(localConfigAny)
+		if convErr != nil {
+			return nil, false, fmt.Errorf("convert local config: %w", convErr)
 		}
 
-		// 上传本地配置作为初始版本
+		// 远端为空是已知状态, 允许上传
+		m.configTrusted.Store(true)
 		if uploadErr := m.UploadConfig(ctx, localConfigAny); uploadErr != nil {
 			log.Printf("[D1Sync] Warning: failed to upload initial config: %v", uploadErr)
-			// 即使上传失败，也返回本地配置
 		} else {
 			log.Printf("[D1Sync] Successfully uploaded local config as initial version")
 		}
@@ -267,7 +348,7 @@ func (m *D1Manager) downloadConfigWithFallback(ctx context.Context) (map[string]
 	config := make(map[string]any)
 
 	// 重建 MAP 配置
-	if mapsErr == nil && len(maps) > 0 {
+	if len(maps) > 0 {
 		mapConfig := make(map[string]any)
 		for _, cm := range maps {
 			pathConfig := map[string]any{
@@ -311,7 +392,7 @@ func (m *D1Manager) downloadConfigWithFallback(ctx context.Context) (map[string]
 	}
 
 	// 重建其他配置
-	if othersErr == nil {
+	{
 		for _, other := range others {
 			var value any
 			if err := json.Unmarshal([]byte(other.Value), &value); err == nil {
@@ -319,6 +400,9 @@ func (m *D1Manager) downloadConfigWithFallback(ctx context.Context) (map[string]
 			}
 		}
 	}
+
+	// 已确认远端状态, 本进程的配置与 D1 对齐, 放开上传
+	m.configTrusted.Store(true)
 
 	// 不再保存到本地文件，直接返回配置数据
 	log.Printf("[D1Sync] Successfully downloaded remote config (%d maps, %d others)",
