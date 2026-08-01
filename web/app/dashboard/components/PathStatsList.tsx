@@ -227,7 +227,8 @@ export default function PathStatsList() {
     }
   }, [fetchStats])
 
-  // resetPath 重置单个路径统计, 成功后立即刷新; 失败 toast
+  // resetPath 重置单个路径统计 (全集群生效), 成功后立即刷新; 失败 toast
+  // 后端 message 会说明实际生效范围 (全集群 / 仅本节点降级), 直接透传
   const resetPath = useCallback(
     async (path: string) => {
       try {
@@ -237,7 +238,8 @@ export default function PathStatsList() {
           body: JSON.stringify({ path }),
         })
         if (!resp.ok) throw new Error("重置统计失败")
-        toast({ title: "成功", description: `已重置 ${path} 的统计` })
+        const data = await resp.json().catch(() => null)
+        toast({ title: "成功", description: data?.message ?? `已重置 ${path} 的统计` })
         await fetchStats()
       } catch (e) {
         toast({
@@ -250,12 +252,13 @@ export default function PathStatsList() {
     [toast, fetchStats]
   )
 
-  // resetAll 一键重置全部路径统计
+  // resetAll 一键重置全部路径统计 (全集群生效)
   const resetAll = useCallback(async () => {
     try {
       const resp = await fetchApi("/admin/api/path-stats/reset-all", { method: "POST" })
       if (!resp.ok) throw new Error("重置失败")
-      toast({ title: "成功", description: "所有路径统计已重置" })
+      const data = await resp.json().catch(() => null)
+      toast({ title: "成功", description: data?.message ?? "所有路径统计已重置" })
       await fetchStats()
     } catch (e) {
       toast({
@@ -335,7 +338,7 @@ export default function PathStatsList() {
                 <AlertDialogTitle>重置所有路径统计?</AlertDialogTitle>
                 <AlertDialogDescription>
                   将清零所有路径的累计请求、错误、状态码与缓存统计, 此操作无法撤销。
-                  多节点部署时只影响当前节点, 其他节点的累计值需分别登录各自节点重置。
+                  重置对全部节点生效: 当前节点立即清零, 其他节点在约 5 分钟内自动同步。
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>

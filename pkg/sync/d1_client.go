@@ -165,19 +165,21 @@ func (c *D1Client) BatchUpsertPathStats(ctx context.Context, stats []PathStat) e
 // 合并读写
 // ============================================
 
-// BulkPayload 一次同步要写入的全部指标
+// BulkPayload 一次同步要写入的全部指标 + 心跳游标
 //
 // 五张表原本各打一个 POST, 合并成单请求: 请求数按量计费, 且每个请求都是一次
-// 独立的网络往返。各段允许为空, worker 会跳过空段
+// 独立的网络往返。各段允许为空, worker 会跳过空段。
+// Cursors 是心跳通道的上行部分 (见 pulse.go), worker 据此在响应里捎回增量状态
 type BulkPayload struct {
 	PathStats    []PathStat            `json:"path_stats,omitempty"`
 	StatusCodes  []StatusCodeMetric    `json:"status_codes,omitempty"`
 	Latency      []LatencyMetric       `json:"latency,omitempty"`
 	Timeseries   []PathTimeseriesPoint `json:"timeseries,omitempty"`
 	RefererDaily []RefererDailyPoint   `json:"referer_daily,omitempty"`
+	Cursors      *PulseCursors         `json:"cursors,omitempty"`
 }
 
-// IsEmpty 五段全空时无需发请求
+// IsEmpty 五段指标全空 (不含游标: 空指标的心跳仍要发, 否则闲置节点收不到下发状态)
 func (p *BulkPayload) IsEmpty() bool {
 	return len(p.PathStats) == 0 && len(p.StatusCodes) == 0 && len(p.Latency) == 0 &&
 		len(p.Timeseries) == 0 && len(p.RefererDaily) == 0
@@ -190,21 +192,24 @@ type BulkMetrics struct {
 	Latency     []LatencyMetric    `json:"latency"`
 }
 
-// BulkUpload 单请求写入全部指标
-func (c *D1Client) BulkUpload(ctx context.Context, payload *BulkPayload) error {
-	if payload == nil || payload.IsEmpty() {
-		return nil
+// BulkUpload 单请求写入全部指标, 同时完成一次心跳交换
+//
+// 返回 worker 捎回的下行状态 (可能为 nil: 老版本 worker 或未带游标)。
+// 指标为空但带游标时仍会发请求 —— 心跳本身就是目的
+func (c *D1Client) BulkUpload(ctx context.Context, payload *BulkPayload) (*PulseState, error) {
+	if payload == nil || (payload.IsEmpty() && payload.Cursors == nil) {
+		return nil, nil
 	}
 
 	reqData, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal bulk payload: %w", err)
+		return nil, fmt.Errorf("failed to marshal bulk payload: %w", err)
 	}
 
 	url := fmt.Sprintf("%s/metrics/bulk", c.endpoint)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqData))
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -214,16 +219,24 @@ func (c *D1Client) BulkUpload(ctx context.Context, payload *BulkPayload) error {
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("D1 API error (status %d): %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("D1 API error (status %d): %s", resp.StatusCode, string(body))
 	}
 
-	return nil
+	var result struct {
+		Success bool        `json:"success"`
+		State   *PulseState `json:"state"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		// 上传本身已成功, 下行状态解析失败只损失一轮心跳, 下轮重来
+		return nil, nil
+	}
+	return result.State, nil
 }
 
 // BulkFetch 单请求读回三类累计统计

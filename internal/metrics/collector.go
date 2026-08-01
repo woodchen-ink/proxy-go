@@ -1114,46 +1114,49 @@ func (c *Collector) startPersistenceTask() {
 	}()
 }
 
-// ResetPathStats 重置指定路径前缀的统计数据
-// 会重置所有以该前缀开头的路径
-func (c *Collector) ResetPathStats(pathPrefix string) error {
-	resetCount := 0
-
-	// 遍历所有路径统计
+// zeroPathStats 清零内存中匹配前缀的路径计数, prefix 为空清全部; 返回清零条数
+//
+// 只动内存, 不碰 D1 —— 集群侧动作 (marker / 删行) 由调用方决定, 这样发起端与
+// 心跳应用端能共用同一份清零逻辑
+func (c *Collector) zeroPathStats(prefix string) int {
+	count := 0
 	c.pathStats.Range(func(key string, stats *models.PathMetrics) bool {
-		// 检查路径是否以指定前缀开头
-		if strings.HasPrefix(key, pathPrefix) {
+		if prefix != "" {
 			// 确保匹配的是完整的路径段（避免 /abc 匹配到 /abcd）
-			if len(key) == len(pathPrefix) || (len(key) > len(pathPrefix) && key[len(pathPrefix)] == '/') {
-				// 重置所有计数器
-				stats.RequestCount.Store(0)
-				stats.ErrorCount.Store(0)
-				stats.BytesTransferred.Store(0)
-				stats.TotalLatency.Store(0)
-				stats.Status2xx.Store(0)
-				stats.Status3xx.Store(0)
-				stats.Status4xx.Store(0)
-				stats.Status5xx.Store(0)
-				stats.CacheHits.Store(0)
-				stats.CacheMisses.Store(0)
-				stats.BytesSaved.Store(0)
-				stats.LastAccessTime.Store(time.Now().Unix())
-				resetCount++
+			if !strings.HasPrefix(key, prefix) {
+				return true
+			}
+			if len(key) != len(prefix) && key[len(prefix)] != '/' {
+				return true
 			}
 		}
+		stats.RequestCount.Store(0)
+		stats.ErrorCount.Store(0)
+		stats.BytesTransferred.Store(0)
+		stats.TotalLatency.Store(0)
+		stats.Status2xx.Store(0)
+		stats.Status3xx.Store(0)
+		stats.Status4xx.Store(0)
+		stats.Status5xx.Store(0)
+		stats.CacheHits.Store(0)
+		stats.CacheMisses.Store(0)
+		stats.BytesSaved.Store(0)
+		stats.LastAccessTime.Store(time.Now().Unix())
+		count++
 		return true
 	})
+	return count
+}
 
-	if resetCount == 0 {
-		return fmt.Errorf("路径前缀 %s 下没有找到统计数据", pathPrefix)
-	}
-
-	log.Printf("[Collector] 已重置路径前缀 %s 的统计，共 %d 条", pathPrefix, resetCount)
-
-	// 同步清掉 D1 里本节点对应的行, 否则重启会把重置前的值读回来
-	clearOwnPathStatsInD1(pathPrefix)
-
-	return nil
+// ResetPathStats 重置指定路径前缀的统计数据 (全集群语义)
+//
+// 本地清零后向 D1 发布重置代际: marker + 删**全节点**行在一个事务里提交, 其他节点
+// 最多一个心跳周期 (~5 分钟) 内应用。返回 clusterWide 表明这次重置是否覆盖了全集群
+// (D1 未启用或 marker 发布失败时降级为仅本节点, 老行为)
+func (c *Collector) ResetPathStats(pathPrefix string) (clusterWide bool, err error) {
+	n := c.zeroPathStats(pathPrefix)
+	log.Printf("[Collector] 已重置路径前缀 %s 的本地统计, 共 %d 条", pathPrefix, n)
+	return c.publishReset(pathPrefix)
 }
 
 // PathTimeSeries 返回路径时间序列容器, 供同步 / 查询模块使用
@@ -1166,45 +1169,35 @@ func (c *Collector) RefererDaily() *RefererDailySeries {
 	return c.refererDaySeries
 }
 
-// ResetAllPathStats 重置所有路径的统计数据
-func (c *Collector) ResetAllPathStats() error {
-	count := 0
-	c.pathStats.Range(func(key string, value *models.PathMetrics) bool {
-		// 重置所有计数器
-		value.RequestCount.Store(0)
-		value.ErrorCount.Store(0)
-		value.BytesTransferred.Store(0)
-		value.TotalLatency.Store(0)
-		value.Status2xx.Store(0)
-		value.Status3xx.Store(0)
-		value.Status4xx.Store(0)
-		value.Status5xx.Store(0)
-		value.CacheHits.Store(0)
-		value.CacheMisses.Store(0)
-		value.BytesSaved.Store(0)
-		value.LastAccessTime.Store(time.Now().Unix())
-		count++
-		return true
-	})
-
-	log.Printf("[Collector] 已重置所有路径统计，共 %d 条", count)
-
-	// 同步清掉 D1 里本节点的行, 否则重启会把重置前的值读回来
-	clearOwnPathStatsInD1("")
-
-	return nil
+// ResetAllPathStats 重置所有路径的统计数据 (全集群语义, 见 ResetPathStats)
+func (c *Collector) ResetAllPathStats() (clusterWide bool, err error) {
+	n := c.zeroPathStats("")
+	log.Printf("[Collector] 已重置所有本地路径统计, 共 %d 条", n)
+	return c.publishReset("")
 }
 
-// clearOwnPathStatsInD1 删除本节点在 D1 中的路径统计行, prefix 为空表示全部
+// publishReset 把重置下发到集群: 写代际 marker + 删全节点行, 失败降级为只删本节点行
 //
-// 失败只记日志: 内存已经重置, 后台会立刻显示为 0; D1 残留最坏影响是本节点重启后恢复旧值
-func clearOwnPathStatsInD1(prefix string) {
+// 成功后推进本地位点 (自己发的 marker 不必再被心跳应用一遍) 并失效 peer 缓存,
+// 让发起节点的仪表盘立刻归零, 而不是等 5 分钟缓存过期
+func (c *Collector) publishReset(prefix string) (clusterWide bool, err error) {
 	if !d1sync.IsEnabled() {
-		return
+		return false, nil
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := d1sync.DeleteOwnPathStats(ctx, prefix); err != nil {
-		log.Printf("[Collector] 清理 D1 中本节点路径统计失败 (prefix=%q): %v", prefix, err)
+
+	resetAt, pubErr := d1sync.PublishStatsReset(ctx, prefix)
+	if pubErr != nil {
+		log.Printf("[Collector] 发布重置代际失败 (prefix=%q), 降级为仅清理本节点 D1 行: %v", prefix, pubErr)
+		if delErr := d1sync.DeleteOwnPathStats(ctx, prefix); delErr != nil {
+			log.Printf("[Collector] 清理 D1 中本节点路径统计失败 (prefix=%q): %v", prefix, delErr)
+		}
+		return false, nil
 	}
+
+	markResetApplied(resetAt)
+	InvalidatePeerStats()
+	return true, nil
 }

@@ -158,6 +158,9 @@ func findMatchingPrefix(requestPath string, configMap map[string]config.PathConf
 }
 
 // ResetPathStats 重置指定路径的统计数据
+//
+// 全集群语义: 本节点立即清零, 其他节点通过重置代际在最多一个心跳周期 (~5 分钟)
+// 内应用; D1 未启用或代际发布失败时降级为仅本节点, 响应的 cluster_wide 标明实际范围
 func (h *PathStatsHandler) ResetPathStats(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Path string `json:"path"`
@@ -173,28 +176,36 @@ func (h *PathStatsHandler) ResetPathStats(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := h.collector.ResetPathStats(req.Path); err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"message": "路径统计已重置",
-	})
-}
-
-// ResetAllPathStats 重置所有路径的统计数据
-func (h *PathStatsHandler) ResetAllPathStats(w http.ResponseWriter, r *http.Request) {
-	if err := h.collector.ResetAllPathStats(); err != nil {
+	clusterWide, err := h.collector.ResetPathStats(req.Path)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	writeResetResponse(w, clusterWide, "路径统计已重置")
+}
+
+// ResetAllPathStats 重置所有路径的统计数据 (全集群语义, 同 ResetPathStats)
+func (h *PathStatsHandler) ResetAllPathStats(w http.ResponseWriter, r *http.Request) {
+	clusterWide, err := h.collector.ResetAllPathStats()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeResetResponse(w, clusterWide, "所有路径统计已重置")
+}
+
+// writeResetResponse 输出重置结果, message 按实际生效范围补充说明
+func writeResetResponse(w http.ResponseWriter, clusterWide bool, message string) {
+	if clusterWide {
+		message += ", 其他节点将在约 5 分钟内同步"
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"message": "所有路径统计已重置",
+		"success":      true,
+		"message":      message,
+		"cluster_wide": clusterWide,
 	})
 }

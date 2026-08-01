@@ -121,6 +121,17 @@ func GetPeerStats() *PeerStats {
 	return peerCache
 }
 
+// InvalidatePeerStats 丢弃 peer 缓存 (含最近成功快照), 下次读取强制重新拉 D1
+//
+// 重置统计后调用: 缓存里躺着其他节点的重置前旧值, 沿用会让仪表盘在 TTL 内
+// 显示已被删除的数字。lastGood 一并丢弃 —— 它同样是重置前的数据, 不能再当兜底
+func InvalidatePeerStats() {
+	peerMu.Lock()
+	peerCache = nil
+	peerLastGood = nil
+	peerMu.Unlock()
+}
+
 // resolvePeerSnapshot 决定本轮对外快照: 成功用新结果, 失败则沿用最近一次成功的数据并标记降级
 //
 // 拉取失败时继续沿用旧数据, 避免 D1 抖动让面板上的数字瞬间掉一半; 累计量本来变化就慢,

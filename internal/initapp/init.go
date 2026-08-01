@@ -2,7 +2,9 @@ package initapp
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"os"
 	"proxy-go/internal/config"
 	"proxy-go/internal/handler"
 	"proxy-go/internal/metrics"
@@ -94,12 +96,26 @@ func InitWithOptions(opts InitOptions) (*AppComponents, error) {
 				} else {
 					log.Printf("[Init] D1 配置下载完成")
 				}
+				// 把线上配置固化为本地快照: 之后 D1 不可达时的兜底
+				// 是"最近一次成功同步的线上配置", 而不是仓库样例
+				components.ConfigManager.SaveSnapshot()
 			}
 		}
 	}
 
 	// 3. 如果还没有配置管理器，使用本地配置文件
 	if components.ConfigManager == nil {
+		// 接了 D1 却没拿到线上配置, 且本地连快照都没有 —— 此时能加载到的只会是
+		// 空白默认配置, 顶着它服务等于"看起来正常"地跑错配置。宁可响亮地失败:
+		// 容器退出重启会自动重试 D1, 恢复后无需人工干预
+		if sync.IsEnabled() {
+			if _, statErr := os.Stat(opts.ConfigPath); os.IsNotExist(statErr) {
+				return nil, fmt.Errorf(
+					"已启用 D1 但无法拉取线上配置, 且本地无配置快照 (%s): 拒绝以空白配置启动, "+
+						"请确认 D1_SYNC_URL 可达后重启", opts.ConfigPath)
+			}
+		}
+
 		log.Printf("[Init] 正在从本地文件初始化配置管理器...")
 		components.ConfigManager, err = config.NewConfigManager(opts.ConfigPath)
 		if err != nil {
@@ -107,17 +123,16 @@ func InitWithOptions(opts InitOptions) (*AppComponents, error) {
 			return nil, err
 		}
 
-		// 接了 D1 却走到本地兜底, 说明这次启动没拿到线上配置。
-		// 兜底文件很可能只是仓库自带的样例, 节点会用一份"看起来正常"的错配置对外服务 ——
-		// 这种状态混在一堆 info 日志里极难发现, 必须显式喊出来
+		// 接了 D1 却走到本地兜底: 快照是"最近一次成功同步的线上配置", 可以先顶着服务,
+		// 但它可能已过期。禁止上传防止覆盖线上, 心跳成功后自动热应用最新配置并解除只读
 		if sync.IsEnabled() {
 			paths := 0
 			if cfg := components.ConfigManager.GetConfig(); cfg != nil {
 				paths = len(cfg.MAP)
 			}
-			log.Printf("[Init] !!! 警告: 已启用 D1 但本次未能取到线上配置, 当前使用本地兜底配置 (%d 个路径映射)", paths)
-			log.Printf("[Init] !!! 该配置可能不是你的线上配置。已同时禁止本进程向 D1 上传配置, " +
-				"避免覆盖线上。确认 D1 可达后, 到后台点「从 D1 拉取」或重启本节点即可恢复")
+			log.Printf("[Init] !!! 警告: 已启用 D1 但本次未能取到线上配置, 当前使用本地快照兜底 (%d 个路径映射)", paths)
+			log.Printf("[Init] !!! 快照可能落后于线上。已禁止本进程向 D1 上传配置以免覆盖线上; " +
+				"D1 恢复可达后, 下一次心跳 (~5 分钟) 会自动拉齐配置并解除只读, 无需人工干预")
 		}
 	}
 
@@ -134,8 +149,9 @@ func InitWithOptions(opts InitOptions) (*AppComponents, error) {
 		} else {
 			log.Printf("[Init] 同步服务已启动")
 
-			// 注册配置更新回调
-			config.RegisterUpdateCallback(func(cfg *config.Config) {
+			// 注册"回写 D1"回调: 走 RegisterSyncCallback 而不是 RegisterUpdateCallback,
+			// 心跳热应用远端配置时不会触发它, 否则 A 改 → B 收 → B 又传, 形成回声循环
+			config.RegisterSyncCallback(func(cfg *config.Config) {
 				sync.ConfigSyncCallback()
 			})
 		}

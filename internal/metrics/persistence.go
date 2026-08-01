@@ -57,6 +57,14 @@ func (ms *MetricsStorage) Start() error {
 		// 加载失败不影响启动
 	}
 
+	// 内存计数恢复完成后对齐重置代际: 若本节点在"上报旧值"与"收到 marker"之间
+	// 崩溃过, 刚恢复回来的就是重置前的旧值, 这里把它补清掉
+	{
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		catchUpStatsResets(ctx)
+		cancel()
+	}
+
 	ms.wg.Add(1)
 	go ms.runSaveTask()
 	log.Printf("[MetricsStorage] 指标存储服务已启动，保存间隔: %v", ms.saveInterval)
@@ -129,8 +137,13 @@ func (ms *MetricsStorage) SaveMetrics() error {
 		})
 	}
 
-	if err := sync.BulkSave(ctx, payload); err != nil {
+	// 上报同时是一次心跳: 上行捎位点游标, 下行捎比游标新的状态 (重置代际 / 配置)
+	state, err := sync.BulkSave(ctx, payload, ResetSeen())
+	if err != nil {
 		log.Printf("[MetricsStorage] 上报指标失败: %v", err)
+	} else if state != nil {
+		applyStatsResets(ctx, state.Resets)
+		sync.ApplyPulseConfig(state)
 	}
 
 	// 清理 31 天之前的旧时间序列 (低频, 每 24 次保存触发一次)
@@ -313,6 +326,13 @@ func (ms *MetricsStorage) maybePruneTimeseries(ctx context.Context) {
 		log.Printf("[MetricsStorage] 清理旧 referer 天序列失败: %v", err)
 	} else if deleted > 0 {
 		log.Printf("[MetricsStorage] 已清理 %d 条 35 天前的 referer 天序列桶", deleted)
+	}
+
+	// 重置代际 marker 同窗口清理: 35 天足够覆盖任何离线节点的补应用需求
+	// (离线超过窗口的节点, 其 D1 行早已被发起端删除, 恢复时天然是重置后状态)
+	resetCutoff := time.Now().Add(-35 * 24 * time.Hour).UnixMilli()
+	if err := sync.PruneStatsResets(ctx, resetCutoff); err != nil {
+		log.Printf("[MetricsStorage] 清理旧重置代际失败: %v", err)
 	}
 }
 

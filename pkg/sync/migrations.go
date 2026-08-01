@@ -238,6 +238,22 @@ var migrations = []Migration{
 			`CREATE INDEX IF NOT EXISTS idx_latency_distribution_updated_at ON latency_distribution(updated_at)`,
 		},
 	},
+	{
+		// 重置代际表: 让"重置统计"跨节点生效。
+		//
+		// 发起节点在一个事务里写入 marker 并删除全节点 path_stats 行; 其他节点在
+		// 每 5 分钟的 bulk 上报响应里捎带收到新 marker (reset_at > 各自已应用位点),
+		// 随即清零自己内存中对应前缀并删掉自己刚写回的行。path 为空串表示全部路径。
+		ID: "0007_add_stats_resets",
+		Statements: []string{
+			`CREATE TABLE IF NOT EXISTS stats_resets (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				path TEXT NOT NULL DEFAULT '',
+				reset_at INTEGER NOT NULL
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_stats_resets_reset_at ON stats_resets(reset_at)`,
+		},
+	},
 }
 
 // MigrationResult 启动期迁移汇总, 仅用于日志

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -192,13 +193,22 @@ func (m *D1Manager) UploadConfig(ctx context.Context, config any) error {
 		log.Printf("[D1Sync] Uploaded %d config maps", len(maps))
 	}
 
-	// 批量上传 ConfigOther
-	if len(others) > 0 {
-		if err := m.storage.BatchUpsertConfigOther(ctx, others); err != nil {
-			return fmt.Errorf("failed to upload config other: %w", err)
-		}
-		log.Printf("[D1Sync] Uploaded %d other configs", len(others))
+	// 批量上传 ConfigOther, 顺带写入配置版本号 (心跳下行的判据, 见 pulse.go)
+	//
+	// 版本号必须显式维护而不是取 MAX(updated_at): 删除路径会让 MAX 回退, 版本必须单调
+	version := time.Now().UnixMilli()
+	others = append(others, ConfigOther{
+		Key:       configVersionKey,
+		Value:     fmt.Sprintf("%d", version),
+		UpdatedAt: version,
+	})
+	if err := m.storage.BatchUpsertConfigOther(ctx, others); err != nil {
+		return fmt.Errorf("failed to upload config other: %w", err)
 	}
+	log.Printf("[D1Sync] Uploaded %d other configs (version=%d)", len(others)-1, version)
+
+	// 本进程持有的配置已是这个版本, 心跳不必再回灌一遍
+	AdvanceConfigCursor(version)
 
 	return nil
 }
@@ -345,9 +355,46 @@ func (m *D1Manager) downloadConfigWithFallback(ctx context.Context) (map[string]
 	// 远程存在有效配置，重建配置对象
 	log.Printf("[D1Sync] Remote config found (%d maps, %d others), downloading...", len(maps), len(others))
 
+	config := rebuildConfigData(maps, others)
+
+	// 对齐配置版本位点: others 里已经带着 __config_version, 不必再打一次 D1
+	AdvanceConfigCursor(extractConfigVersion(others))
+
+	// 已确认远端状态, 本进程的配置与 D1 对齐, 放开上传
+	m.configTrusted.Store(true)
+
+	// 不再保存到本地文件，直接返回配置数据
+	log.Printf("[D1Sync] Successfully downloaded remote config (%d maps, %d others)",
+		len(maps), len(others))
+	return config, false, nil
+}
+
+// configVersionKey 存在 config_other 里的配置版本号 (ms), 上传时写入, 心跳按它判断增量。
+// 以 __ 开头的 key 是同步层内部状态, 重建配置时一律跳过, 不进业务配置
+const configVersionKey = "__config_version"
+
+// extractConfigVersion 从 config_other 行里解析版本号, 缺失或损坏返回 0
+func extractConfigVersion(others []ConfigOther) int64 {
+	for _, other := range others {
+		if other.Key != configVersionKey {
+			continue
+		}
+		var v int64
+		if err := json.Unmarshal([]byte(other.Value), &v); err == nil {
+			return v
+		}
+		return 0
+	}
+	return 0
+}
+
+// rebuildConfigData 把列式存储的 maps/others 还原为通用配置 map
+//
+// 启动下载与心跳热应用共用: 两条路径拿到的配置必须逐字节一致, 否则同一份 D1 数据
+// 会因入口不同而行为漂移
+func rebuildConfigData(maps []ConfigMap, others []ConfigOther) map[string]any {
 	config := make(map[string]any)
 
-	// 重建 MAP 配置
 	if len(maps) > 0 {
 		mapConfig := make(map[string]any)
 		for _, cm := range maps {
@@ -391,23 +438,18 @@ func (m *D1Manager) downloadConfigWithFallback(ctx context.Context) (map[string]
 		config["MAP"] = mapConfig
 	}
 
-	// 重建其他配置
-	{
-		for _, other := range others {
-			var value any
-			if err := json.Unmarshal([]byte(other.Value), &value); err == nil {
-				config[other.Key] = value
-			}
+	// 重建其他配置; __ 前缀是同步层内部 key (版本号等), 不属于业务配置
+	for _, other := range others {
+		if strings.HasPrefix(other.Key, "__") {
+			continue
+		}
+		var value any
+		if err := json.Unmarshal([]byte(other.Value), &value); err == nil {
+			config[other.Key] = value
 		}
 	}
 
-	// 已确认远端状态, 本进程的配置与 D1 对齐, 放开上传
-	m.configTrusted.Store(true)
-
-	// 不再保存到本地文件，直接返回配置数据
-	log.Printf("[D1Sync] Successfully downloaded remote config (%d maps, %d others)",
-		len(maps), len(others))
-	return config, false, nil
+	return config
 }
 
 // sendEvent 发送事件

@@ -2,8 +2,10 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -12,13 +14,18 @@ import (
 
 var (
 	configCallbacks []func(*Config)
-	callbackMutex   sync.RWMutex
+	// syncCallbacks 只在**本地发起**的配置变更时触发 (用于回写 D1)。
+	// 从 D1 心跳热应用远端配置时不触发, 否则 A 改 → B 收 → B 又传, 形成回声循环
+	syncCallbacks []func(*Config)
+	callbackMutex sync.RWMutex
 )
 
 type ConfigManager struct {
 	config     atomic.Value
 	configPath string
 	mu         sync.RWMutex
+	// snapshotMu 串行化快照文件写入 (tmp+rename), 避免并发写同名临时文件
+	snapshotMu sync.Mutex
 }
 
 func NewConfigManager(configPath string) (*ConfigManager, error) {
@@ -269,7 +276,12 @@ func (cm *ConfigManager) ensureMirrorPath(config *Config) bool {
 	return false
 }
 
-// createDefaultConfig 创建默认配置文件
+// createDefaultConfig 创建默认配置文件 (仅本地模式首次运行走到这里)
+//
+// 刻意不放任何样例路径: 历史上这里会伪造 "/test → localhost:8080" 之类的假配置,
+// 与生产兜底文件身份重叠 —— 一旦 D1 拉取失败, 节点会顶着一份"看起来正常"的假配置
+// 对外服务, 甚至把它播种进 D1。空 MAP 是诚实的状态: 没配置就是没配置, 由后台添加。
+// 参考样例见仓库的 data/config.example.json
 func (cm *ConfigManager) createDefaultConfig() error {
 	// 创建目录（如果不存在）
 	dir := cm.configPath[:strings.LastIndex(cm.configPath, "/")]
@@ -277,37 +289,8 @@ func (cm *ConfigManager) createDefaultConfig() error {
 		return err
 	}
 
-	// 创建默认配置
 	defaultConfig := Config{
-		MAP: map[string]PathConfig{
-			"/test": {
-				DefaultTarget: "http://localhost:8080",
-				// 添加新式扩展名规则映射示例
-				ExtensionMap: []ExtRuleConfig{
-					{
-						Extensions:    "jpg,png,webp",
-						Target:        "https://img1.example.com",
-						SizeThreshold: 500 * 1024,      // 500KB
-						MaxSize:       2 * 1024 * 1024, // 2MB
-						Domains:       "a.com,b.com",   // 只对a.com和b.com域名生效
-					},
-					{
-						Extensions:    "jpg,png,webp",
-						Target:        "https://img2.example.com",
-						SizeThreshold: 2 * 1024 * 1024, // 2MB
-						MaxSize:       5 * 1024 * 1024, // 5MB
-						Domains:       "b.com",         // 只对b.com域名生效
-					},
-					{
-						Extensions:    "mp4,avi",
-						Target:        "https://video.example.com",
-						SizeThreshold: 1024 * 1024,      // 1MB
-						MaxSize:       50 * 1024 * 1024, // 50MB
-						// 不指定Domains，对所有域名生效
-					},
-				},
-			},
-		},
+		MAP: map[string]PathConfig{},
 		Compression: CompressionConfig{
 			Gzip: CompressorConfig{
 				Enabled: true,
@@ -345,6 +328,8 @@ func (cm *ConfigManager) createDefaultConfig() error {
 		return err
 	}
 
+	log.Printf("[ConfigManager] 本地配置文件不存在, 已生成空白默认配置 (0 个路径映射), 请通过后台添加路径")
+
 	// 写入文件
 	return os.WriteFile(cm.configPath, data, 0644)
 }
@@ -354,7 +339,7 @@ func (cm *ConfigManager) GetConfig() *Config {
 	return cm.config.Load().(*Config)
 }
 
-// UpdateConfig 更新配置
+// UpdateConfig 更新配置 (本地发起: 后台保存 / 从 D1 手动拉取后落地)
 func (cm *ConfigManager) UpdateConfig(newConfig *Config) error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
@@ -374,8 +359,78 @@ func (cm *ConfigManager) UpdateConfig(newConfig *Config) error {
 	// 触发回调（会自动同步到 D1）
 	TriggerCallbacks(newConfig)
 
+	// 刷新本地快照: 兜底文件始终保持为"本节点见过的最新配置"
+	cm.SaveSnapshot()
+
 	log.Printf("[ConfigManager] 配置已更新: %d 个路径映射", len(newConfig.MAP))
 	return nil
+}
+
+// ApplyRemoteData 热应用来自 D1 心跳的远端配置
+//
+// 与 UpdateConfig 的区别只有一个: 触发本地回调 (matcher 重建 / 组件刷新) 但**不触发
+// 回写 D1 的 sync 回调** —— 这份配置本来就来自 D1, 回传就是回声循环。
+// 处理流程对齐启动时的 NewConfigManagerFromData (含 mirror 路径与环境变量覆盖),
+// 保证同一份 D1 数据从哪个入口进来行为都一致
+func (cm *ConfigManager) ApplyRemoteData(configData map[string]any) error {
+	newConfig, err := cm.convertMapToConfig(configData)
+	if err != nil {
+		return err
+	}
+
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	cm.normalizeConfig(newConfig)
+	cm.ensureMirrorPath(newConfig)
+	for path, pc := range newConfig.MAP {
+		pc.ProcessExtensionMap()
+		newConfig.MAP[path] = pc
+	}
+	cm.applyEnvOverrides(newConfig)
+
+	cm.config.Store(newConfig)
+	triggerLocalCallbacks(newConfig)
+	cm.SaveSnapshot()
+
+	log.Printf("[ConfigManager] 已热应用远端配置: %d 个路径映射", len(newConfig.MAP))
+	return nil
+}
+
+// SaveSnapshot 把当前内存配置原子写入本地兜底文件
+//
+// 让 data/config.json 的身份从"可能是样例"变成"最近一次成功同步的线上配置":
+// 之后 D1 不可达时的兜底才真正可信。失败只记日志 —— 快照是可用性增强, 不是主链路
+func (cm *ConfigManager) SaveSnapshot() {
+	cfg, ok := cm.config.Load().(*Config)
+	if !ok || cfg == nil {
+		return
+	}
+
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		log.Printf("[ConfigManager] 序列化配置快照失败: %v", err)
+		return
+	}
+
+	cm.snapshotMu.Lock()
+	defer cm.snapshotMu.Unlock()
+
+	if dir := filepath.Dir(cm.configPath); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			log.Printf("[ConfigManager] 创建快照目录失败: %v", err)
+			return
+		}
+	}
+
+	tempPath := cm.configPath + ".snapshot.tmp"
+	if err := os.WriteFile(tempPath, data, 0644); err != nil {
+		log.Printf("[ConfigManager] 写入配置快照失败: %v", err)
+		return
+	}
+	if err := os.Rename(tempPath, cm.configPath); err != nil {
+		log.Printf("[ConfigManager] 落盘配置快照失败: %v", err)
+	}
 }
 
 // ReloadConfig 重新加载配置文件
@@ -400,14 +455,24 @@ func (cm *ConfigManager) ReloadConfig() error {
 	return nil
 }
 
-// RegisterUpdateCallback 注册配置更新回调函数
+// RegisterUpdateCallback 注册配置更新回调函数 (本地与远端应用都会触发)
 func RegisterUpdateCallback(callback func(*Config)) {
 	callbackMutex.Lock()
 	defer callbackMutex.Unlock()
 	configCallbacks = append(configCallbacks, callback)
 }
 
-// TriggerCallbacks 触发所有回调
+// RegisterSyncCallback 注册"回写 D1"回调, 只在本地发起的配置变更时触发
+//
+// 与 RegisterUpdateCallback 分开注册, 是心跳热应用不产生回声循环的关键:
+// ApplyRemoteData 只跑普通回调, 不跑这里注册的回调
+func RegisterSyncCallback(callback func(*Config)) {
+	callbackMutex.Lock()
+	defer callbackMutex.Unlock()
+	syncCallbacks = append(syncCallbacks, callback)
+}
+
+// TriggerCallbacks 触发所有回调 (普通 + 回写 D1), 用于本地发起的配置变更
 func TriggerCallbacks(cfg *Config) {
 	// 确保所有路径配置的扩展名规则都已更新
 	for path, pc := range cfg.MAP {
@@ -420,9 +485,22 @@ func TriggerCallbacks(cfg *Config) {
 	for _, callback := range configCallbacks {
 		callback(cfg)
 	}
+	for _, callback := range syncCallbacks {
+		callback(cfg)
+	}
 
 	// 添加日志
-	log.Printf("[Config] 触发了 %d 个配置更新回调", len(configCallbacks))
+	log.Printf("[Config] 触发了 %d 个配置更新回调", len(configCallbacks)+len(syncCallbacks))
+}
+
+// triggerLocalCallbacks 只触发普通回调, 用于远端配置热应用 (不回写 D1)
+func triggerLocalCallbacks(cfg *Config) {
+	callbackMutex.RLock()
+	defer callbackMutex.RUnlock()
+	for _, callback := range configCallbacks {
+		callback(cfg)
+	}
+	log.Printf("[Config] 远端配置应用: 触发了 %d 个本地回调", len(configCallbacks))
 }
 
 // 为了向后兼容，保留Load函数，但现在它使用ConfigManager
@@ -467,4 +545,15 @@ func UpdateConfig(newConfig *Config) error {
 		return nil
 	}
 	return globalConfigManager.UpdateConfig(newConfig)
+}
+
+// ApplyRemoteConfig 热应用远端配置（全局接口, 供 D1 心跳调用）
+//
+// 管理器未初始化时必须报错而不是静默成功: 调用方 (pulse) 会在成功后推进版本位点
+// 并解除配置只读, 静默成功会让这两个状态在配置根本没落地时被错误推进
+func ApplyRemoteConfig(configData map[string]any) error {
+	if globalConfigManager == nil {
+		return fmt.Errorf("config manager not initialized")
+	}
+	return globalConfigManager.ApplyRemoteData(configData)
 }

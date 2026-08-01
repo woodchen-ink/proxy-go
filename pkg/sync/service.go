@@ -208,13 +208,17 @@ func IsEnabled() bool {
 	return IsD1ConfigComplete()
 }
 
-// ConfigSyncCallback 配置同步回调（在config包中使用）
+// ConfigSyncCallback 配置同步回调 (仅本地发起的配置变更触发, 见 config.RegisterSyncCallback)
 // 短时间内连续调用会被合并为一次，避免用户快速点击导致 goroutine 风暴
 func ConfigSyncCallback() {
 	if !IsServiceEnabled() {
 		log.Printf("[Sync] Config sync skipped - service not enabled")
 		return
 	}
+
+	// 本地改动即视为持有比 D1 更新的配置: 立刻推进位点, 挡住上传完成前
+	// 恰好到达的旧版本心跳把这份改动回灌覆盖
+	AdvanceConfigCursor(time.Now().UnixMilli())
 
 	configSyncDebounceMu.Lock()
 	defer configSyncDebounceMu.Unlock()
@@ -316,16 +320,19 @@ func DeleteOwnPathStats(ctx context.Context, prefix string) error {
 
 // 节点列表不再单独查询, 由 BulkFetch 的结果直接派生, 见 internal/metrics/cluster.go
 
-// BulkSave 单请求上报本节点全部指标, 统一在此打上 node_id
+// BulkSave 单请求上报本节点全部指标并完成一次心跳交换, 统一在此打上 node_id
 //
 // 合并前五张表各打一个 POST; 合并后一次往返, 请求数降到五分之一,
-// 也让上报间隔有余量往下调 (间隔越短, 其他节点在仪表盘上越新)
-func BulkSave(ctx context.Context, payload *BulkPayload) error {
+// 也让上报间隔有余量往下调 (间隔越短, 其他节点在仪表盘上越新)。
+//
+// resetSeen 是本节点已应用的重置代际位点; 返回的 PulseState 里带比游标新的
+// 下行状态 (配置 / 重置 marker), 由调用方 (MetricsStorage) 分发应用
+func BulkSave(ctx context.Context, payload *BulkPayload, resetSeen int64) (*PulseState, error) {
 	globalSyncMutex.RLock()
 	defer globalSyncMutex.RUnlock()
 
 	if globalSyncService == nil || !globalSyncService.isEnabled || payload == nil {
-		return nil
+		return nil, nil
 	}
 
 	nodeID := NodeID()
@@ -344,15 +351,20 @@ func BulkSave(ctx context.Context, payload *BulkPayload) error {
 	for i := range payload.RefererDaily {
 		payload.RefererDaily[i].NodeID = nodeID
 	}
+	payload.Cursors = &PulseCursors{
+		ConfigVersion: ConfigCursor(),
+		ResetSeen:     resetSeen,
+	}
 
-	if err := globalSyncService.manager.storage.BulkUpload(ctx, payload); err != nil {
-		return err
+	state, err := globalSyncService.manager.storage.BulkUpload(ctx, payload)
+	if err != nil {
+		return nil, err
 	}
 
 	log.Printf("[D1Sync] Bulk saved (node=%s): %d path stats, %d status codes, %d latency, %d ts, %d referer",
 		nodeID, len(payload.PathStats), len(payload.StatusCodes), len(payload.Latency),
 		len(payload.Timeseries), len(payload.RefererDaily))
-	return nil
+	return state, nil
 }
 
 // BulkLoadOwn 单请求读回本节点自己的累计统计, 用于启动恢复内存计数

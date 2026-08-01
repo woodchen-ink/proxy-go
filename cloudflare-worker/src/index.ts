@@ -178,6 +178,11 @@ export default {
 					latency?: db.LatencyMetric[];
 					timeseries?: db.PathTimeseriesPoint[];
 					referer_daily?: db.RefererDailyPoint[];
+					cursors?: {
+						config_version?: number;
+						reset_seen?: number;
+						bans_seen?: number;
+					};
 				}>();
 
 				const written: Record<string, number> = {};
@@ -203,7 +208,61 @@ export default {
 					written.referer_daily = body.referer_daily.length;
 				}
 
-				return jsonResponse({ success: true, written }, 200, corsHeaders);
+				// 心跳下行: 节点上行捎游标, 这里只回传比游标新的状态。
+				// 每个槽位独立 try/catch —— 下行状态是增值服务, 任何一段失败
+				// (表还没建好 / 查询异常) 都不能拖垮指标上报本身
+				const state: Record<string, unknown> = {};
+				const cursors = body.cursors;
+				if (cursors && typeof cursors === 'object') {
+					// 槽位 1: 配置版本 + 增量配置 (版本比游标新才带数据)
+					try {
+						const row = await env.DB.prepare(
+							"SELECT value FROM config_other WHERE key = '__config_version'"
+						).first<{ value: string }>();
+						const version = row ? parseInt(row.value, 10) || 0 : 0;
+						state.config_version = version;
+						if (version > (cursors.config_version ?? 0)) {
+							state.config_maps = await db.getConfigMaps(env.DB, false);
+							state.config_other = await db.getConfigOther(env.DB);
+						}
+					} catch (e) {
+						console.error('pulse config slot failed:', e);
+					}
+
+					// 槽位 2: 重置代际 marker
+					try {
+						if (typeof cursors.reset_seen === 'number') {
+							const rows = await env.DB.prepare(
+								'SELECT id, path, reset_at FROM stats_resets WHERE reset_at > ? ORDER BY reset_at ASC LIMIT 50'
+							)
+								.bind(cursors.reset_seen)
+								.all();
+							if (rows.results?.length) {
+								state.resets = rows.results;
+							}
+						}
+					} catch (e) {
+						console.error('pulse resets slot failed:', e);
+					}
+
+					// 槽位 3: 封禁变更 (预留; Go 侧封禁同步子系统落地后自动启用)
+					try {
+						if (typeof cursors.bans_seen === 'number') {
+							const rows = await env.DB.prepare(
+								'SELECT * FROM banned_ips WHERE updated_at > ? ORDER BY updated_at ASC LIMIT 200'
+							)
+								.bind(cursors.bans_seen)
+								.all();
+							if (rows.results?.length) {
+								state.bans = rows.results;
+							}
+						}
+					} catch (e) {
+						console.error('pulse bans slot failed:', e);
+					}
+				}
+
+				return jsonResponse({ success: true, written, state }, 200, corsHeaders);
 			}
 
 			if (path === '/metrics/bulk' && request.method === 'GET') {
