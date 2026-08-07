@@ -249,10 +249,10 @@ func (cm *ConfigManager) ensureMirrorPath(config *Config) bool {
 		config.MAP = make(map[string]PathConfig)
 	}
 
-	// 检查是否已经存在 mirror 功能的路径（DefaultTarget 为 "mirror"）
+	// 检查是否已经存在 mirror 功能的路径（DefaultTarget 为 MirrorTargetMarker）
 	hasMirrorPath := false
 	for _, pathConfig := range config.MAP {
-		if pathConfig.DefaultTarget == "mirror" {
+		if pathConfig.DefaultTarget == MirrorTargetMarker {
 			hasMirrorPath = true
 			break
 		}
@@ -261,7 +261,7 @@ func (cm *ConfigManager) ensureMirrorPath(config *Config) bool {
 	// 如果不存在 mirror 路径，添加默认的 /mirror 配置
 	if !hasMirrorPath {
 		config.MAP["/mirror"] = PathConfig{
-			DefaultTarget: "mirror", // 特殊标记，表示这是 mirror 功能
+			DefaultTarget: MirrorTargetMarker, // 特殊标记，表示这是 mirror 功能
 			Enabled:       true,
 			CacheConfig: &CacheConfig{
 				MaxAge:       30,

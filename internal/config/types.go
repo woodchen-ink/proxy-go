@@ -4,6 +4,12 @@ import (
 	"strings"
 )
 
+// MirrorTargetMarker 是 /mirror 系统路径的 DefaultTarget 哨兵值 (非真实 URL)。
+// 真正的 mirror 转发走 "/mirror/" 前缀路由 (与 MAP 配置无关), 这个 MAP 条目只是
+// ConfigManager.ensureMirrorPath 自动补的占位符, 供后台展示/挂缓存配置用。
+// 校验配置时必须识别并跳过它, 否则会被当成非法 URL 拒绝。
+const MirrorTargetMarker = "mirror"
+
 type Config struct {
 	MAP         map[string]PathConfig `json:"MAP"` // 路径映射配置
 	Compression CompressionConfig     `json:"Compression"`

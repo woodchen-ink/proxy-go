@@ -120,6 +120,10 @@ func (s *ConfigService) validateConfig(cfg *config.Config) error {
 		if pathConfig.DefaultTarget == "" {
 			return fmt.Errorf("路径 %s 的默认目标不能为空", path)
 		}
+		// /mirror 系统路径的 DefaultTarget 是 ensureMirrorPath 自动补的哨兵值, 不是真实 URL, 跳过格式校验
+		if pathConfig.DefaultTarget == config.MirrorTargetMarker {
+			continue
+		}
 		// url.Parse 对相对串几乎不报错, 必须显式校验 scheme 与 host, 否则形同虚设
 		parsed, err := url.Parse(pathConfig.DefaultTarget)
 		if err != nil {

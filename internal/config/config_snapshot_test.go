@@ -23,7 +23,7 @@ func TestCreateDefaultConfigIsBlank(t *testing.T) {
 	}
 	for p, pc := range cfg.MAP {
 		// ensureMirrorPath 会补系统路径 /mirror, 除此之外不允许出现任何路径
-		if pc.DefaultTarget != "mirror" {
+		if pc.DefaultTarget != MirrorTargetMarker {
 			t.Errorf("默认配置出现了非系统路径 %s → %s", p, pc.DefaultTarget)
 		}
 	}
