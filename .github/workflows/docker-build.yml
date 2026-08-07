@@ -131,11 +131,11 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           DOKPLOY_WEBHOOK_URL: ${{ secrets.DOKPLOY_WEBHOOK_URL }}
-          DOKPLOY_WEBHOOK_URL_DE: ${{ secrets.DOKPLOY_WEBHOOK_URL_DE }}
+          DOKPLOY_WEBHOOK_URL_US: ${{ secrets.DOKPLOY_WEBHOOK_URL_US }}
         run: |
           triggered=0
           failed=0
-          for hook in "$DOKPLOY_WEBHOOK_URL" "$DOKPLOY_WEBHOOK_URL_DE"; do
+          for hook in "$DOKPLOY_WEBHOOK_URL" "$DOKPLOY_WEBHOOK_URL_US"; do
             [ -z "$hook" ] && continue
             # 单个节点触发失败不阻断其余节点, 但要在末尾汇总为失败, 避免静默漏部署
             if curl -fsSL -X POST "$hook" \
