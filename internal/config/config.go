@@ -260,13 +260,13 @@ func (cm *ConfigManager) ensureMirrorPath(config *Config) bool {
 
 	// 如果不存在 mirror 路径，添加默认的 /mirror 配置
 	if !hasMirrorPath {
-		config.MAP["/mirror"] = PathConfig{
+		config.MAP[MirrorPathKey] = PathConfig{
 			DefaultTarget: MirrorTargetMarker, // 特殊标记，表示这是 mirror 功能
 			Enabled:       true,
 			CacheConfig: &CacheConfig{
-				MaxAge:       30,
-				CleanupTick:  5,
-				MaxCacheSize: 10,
+				MaxAge:       DefaultCacheMaxAge,
+				CleanupTick:  DefaultCacheCleanupTick,
+				MaxCacheSize: DefaultCacheMaxSizeGB,
 			},
 		}
 		log.Printf("[ConfigManager] 自动添加 /mirror 系统路径")
@@ -311,14 +311,14 @@ func (cm *ConfigManager) createDefaultConfig() error {
 			},
 		},
 		Cache: CacheConfig{
-			MaxAge:       30, // 30分钟
-			CleanupTick:  5,  // 5分钟清理一次
-			MaxCacheSize: 10, // 10GB
+			MaxAge:       DefaultCacheMaxAge,
+			CleanupTick:  DefaultCacheCleanupTick,
+			MaxCacheSize: DefaultCacheMaxSizeGB,
 		},
 		MirrorCache: CacheConfig{
-			MaxAge:       30, // 30分钟
-			CleanupTick:  5,  // 5分钟清理一次
-			MaxCacheSize: 10, // 10GB
+			MaxAge:       DefaultCacheMaxAge,
+			CleanupTick:  DefaultCacheCleanupTick,
+			MaxCacheSize: DefaultCacheMaxSizeGB,
 		},
 	}
 

@@ -172,6 +172,8 @@ func (h *MirrorProxyHandler) handleCacheHit(w http.ResponseWriter, r *http.Reque
 	if item.ContentEncoding != "" {
 		w.Header().Set("Content-Encoding", item.ContentEncoding)
 	}
+	// ServeFile 不走 copyHeaders, 必须在这里补 Cache-Control (mirror 取 /mirror 路径的缓存配置)
+	service.ApplyClientCacheHeaders(w, service.MirrorPathCacheConfig())
 	w.Header().Set("CZL-Proxy-Cache-HIT", "1")
 
 	if notModified {

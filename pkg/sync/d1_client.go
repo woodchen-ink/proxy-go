@@ -382,7 +382,7 @@ type ConfigMap struct {
 	ExtensionRules string `json:"extension_rules,omitempty"` // JSON
 	CacheConfig    string `json:"cache_config,omitempty"`    // JSON
 	// ExtraConfig 承载没有专属列的 PathConfig 字段 (JSON):
-	// DefaultTargets / RefererBan / CFImageOpt / RedirectMode
+	// DefaultTargets / RefererBan / RefererRedirect / CFImageOpt / RedirectMode
 	ExtraConfig string `json:"extra_config,omitempty"`
 	CreatedAt   int64  `json:"created_at"`
 	UpdatedAt   int64  `json:"updated_at"`

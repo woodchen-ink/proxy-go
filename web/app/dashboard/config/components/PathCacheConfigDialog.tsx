@@ -77,7 +77,8 @@ export default function PathCacheConfigDialog({
       return
     }
 
-    if (cleanupTick > maxAge) {
+    // maxAge 为 0 表示"不缓存", 此时清理间隔无意义, 跳过该项校验
+    if (maxAge > 0 && cleanupTick > maxAge) {
       toast({
         title: "验证失败",
         description: "清理间隔不能大于最大缓存时间",
@@ -106,7 +107,8 @@ export default function PathCacheConfigDialog({
         <DialogHeader>
           <DialogTitle>配置缓存 - {path}</DialogTitle>
           <DialogDescription>
-            为此路径配置独立的缓存策略，或使用全局缓存配置
+            为此路径配置独立的缓存策略，或使用全局缓存配置。
+            最大缓存时间同时决定下发给浏览器和 CDN 的 Cache-Control，设为 0 表示不缓存
           </DialogDescription>
         </DialogHeader>
 
@@ -137,8 +139,16 @@ export default function PathCacheConfigDialog({
                   min={0}
                 />
                 <div className="text-xs text-muted-foreground">
-                  缓存项在此时间后过期
+                  缓存项在此时间后过期，同时作为下发给浏览器 / CDN 的{" "}
+                  <code className="font-mono">max-age</code>
+                  （上游返回的缓存头会被覆盖）
                 </div>
+                {maxAge === 0 && (
+                  <div className="text-xs text-destructive">
+                    设为 0 表示此路径<strong>完全不缓存</strong>：不写本地缓存，
+                    并下发 <code className="font-mono">no-store</code>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-2">

@@ -156,6 +156,11 @@ func (s *MirrorProxyService) CheckCache(req *MirrorProxyRequest) (*cache.CacheIt
 		return nil, false, false
 	}
 
+	// /mirror 配为不缓存时, 旧副本也不再服务 (与主代理一致)
+	if MirrorPathCacheConfig().IsNoCache() {
+		return nil, false, false
+	}
+
 	cacheKey := s.getOrBuildCacheKey(req)
 	item, hit, notModified := s.cache.Get(cacheKey, req.OriginalRequest, false)
 	return item, hit, notModified
@@ -213,13 +218,18 @@ func (s *MirrorProxyService) ProcessResponse(req *MirrorProxyRequest, resp *http
 	// 复制响应头
 	s.copyHeaders(w.Header(), resp.Header)
 	w.Header().Set("CZL-Proxy-Cache-HIT", "0")
+
+	// mirror 无独立 MAP 条目, 缓存时长取 /mirror 系统路径上的配置 (必须在 WriteHeader 之前)
+	ApplyClientCacheHeaders(w, MirrorPathCacheConfig())
+
 	w.WriteHeader(resp.StatusCode)
 
 	var written int64
 	var err error
 
 	// 如果是GET请求且响应成功，使用TeeReader同时写入缓存
-	if req.OriginalRequest.Method == http.MethodGet && resp.StatusCode == http.StatusOK && s.cache != nil {
+	if req.OriginalRequest.Method == http.MethodGet && resp.StatusCode == http.StatusOK && s.cache != nil &&
+		!MirrorPathCacheConfig().IsNoCache() {
 		written, err = s.processWithCache(req, resp, w)
 	} else {
 		// 🚀 零拷贝优化: 使用 buffer pool 复用缓冲区

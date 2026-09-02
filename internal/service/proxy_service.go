@@ -77,6 +77,12 @@ func (s *ProxyService) CheckCache(req *ProxyRequest) (*cache.CacheItem, bool, bo
 		return nil, false, false
 	}
 
+	// 路径配为不缓存时也不能读缓存: 改配置之前落盘的旧副本仍在磁盘上,
+	// 只堵写入不堵读取的话, 该路径会继续拿到过期内容
+	if req.PathConfig.CacheConfig.IsNoCache() {
+		return nil, false, false
+	}
+
 	cacheKey := s.getOrBuildCacheKey(req)
 	item, hit, notModified := s.cache.Get(cacheKey, req.OriginalRequest, req.PathConfig.CFImageOpt)
 	return item, hit, notModified
@@ -343,6 +349,10 @@ func (s *ProxyService) ProcessResponse(req *ProxyRequest, resp *http.Response, w
 		}
 	}
 
+	// 按本节点缓存时长下发 Cache-Control (必须在 WriteHeader 之前)。
+	// 上游可能是网站 / GitHub / S3, 其缓存头不可控, 一律以我们自己的配置为准
+	ApplyClientCacheHeaders(w, req.PathConfig.CacheConfig)
+
 	// 设置状态码
 	w.WriteHeader(resp.StatusCode)
 
@@ -397,7 +407,13 @@ func (s *ProxyService) selfHealOn404(req *ProxyRequest, resp *http.Response) {
 }
 
 // shouldCache 判断是否应该缓存
+//
+// 路径级缓存时长显式配 0 表示该路径不缓存: 既不写本地磁盘, 也已下发 no-store。
+// 两者必须一致 —— 只下发 no-store 却照样落盘, 等于配置没生效。
 func (s *ProxyService) shouldCache(req *ProxyRequest, resp *http.Response) bool {
+	if req.PathConfig.CacheConfig.IsNoCache() {
+		return false
+	}
 	return req.OriginalRequest.Method == http.MethodGet &&
 		resp.StatusCode == http.StatusOK &&
 		s.cache != nil

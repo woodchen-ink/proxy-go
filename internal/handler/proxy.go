@@ -448,6 +448,8 @@ func (h *ProxyHandler) handleCacheHit(w http.ResponseWriter, r *http.Request, it
 	if item.ContentEncoding != "" {
 		w.Header().Set("Content-Encoding", item.ContentEncoding)
 	}
+	// ServeFile 不走 copyHeaders, 必须在这里补 Cache-Control, 否则同一 URL 会 "MISS 有头 / HIT 没头"
+	service.ApplyClientCacheHeaders(w, pathCfg.CacheConfig)
 	w.Header().Set("CZL-Proxy-Cache-HIT", "1")
 	w.Header().Set("CZL-Proxy-AltTarget", "0") // 缓存命中时设为0
 

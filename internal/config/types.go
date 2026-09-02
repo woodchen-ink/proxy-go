@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strconv"
 	"strings"
 )
 
@@ -9,6 +10,10 @@ import (
 // ConfigManager.ensureMirrorPath 自动补的占位符, 供后台展示/挂缓存配置用。
 // 校验配置时必须识别并跳过它, 否则会被当成非法 URL 拒绝。
 const MirrorTargetMarker = "mirror"
+
+// MirrorPathKey 是 /mirror 系统路径在 MAP 中的 key。
+// mirror 转发本身走 "/mirror/" 前缀路由, 不经过 MAP 匹配, 但缓存类配置挂在这个条目上。
+const MirrorPathKey = "/mirror"
 
 type Config struct {
 	MAP         map[string]PathConfig `json:"MAP"` // 路径映射配置
@@ -137,6 +142,63 @@ type CacheConfig struct {
 	MaxAge       int64 `json:"max_age"`        // 最大缓存时间（分钟）
 	CleanupTick  int64 `json:"cleanup_tick"`   // 清理间隔（分钟）
 	MaxCacheSize int64 `json:"max_cache_size"` // 最大缓存大小（GB）
+}
+
+// 缓存兜底默认值: 配置缺失 / 为 0 时使用。
+// CacheManager 与客户端缓存头必须共用同一份默认值, 否则会出现
+// "本地按 30 分钟缓存, 却不告诉浏览器缓存多久" 这类口径不一致。
+const (
+	DefaultCacheMaxAge      int64 = 30 // 分钟
+	DefaultCacheCleanupTick int64 = 5  // 分钟
+	DefaultCacheMaxSizeGB   int64 = 10 // GB
+)
+
+// IsNoCache 表示这份配置显式要求"不缓存"。
+//
+// 区分"没配"与"配了 0":
+//   - c == nil    : 没配 -> 继承上一级 (路径级缺失就用全局)
+//   - MaxAge == 0 : 显式关闭缓存 -> 不写本地缓存, 且下发 no-store
+//   - MaxAge < 0  : 非法值, 按没配处理, 回退默认值
+//
+// 因此调用方必须先判 IsNoCache 再取 EffectiveMaxAge, 不能只看时长。
+func (c *CacheConfig) IsNoCache() bool {
+	return c != nil && c.MaxAge == 0
+}
+
+// EffectiveMaxAge 返回实际生效的缓存分钟数: 配置缺失或为非法负值时回退到默认值,
+// 与 CacheManager 的兜底行为保持一致。
+//
+// 注意: MaxAge == 0 (显式不缓存) 也会返回默认值, 因为这个方法只回答"缓存多久",
+// 不回答"要不要缓存" —— 后者由 IsNoCache 判定, 调用方需先判它。
+func (c *CacheConfig) EffectiveMaxAge() int64 {
+	if c == nil || c.MaxAge <= 0 {
+		return DefaultCacheMaxAge
+	}
+	return c.MaxAge
+}
+
+// ClientCacheControl 按本路径的缓存时长, 生成下发给浏览器 / CDN 的 Cache-Control 值。
+//
+// 语义: 我们自己只保证缓存 MaxAge 分钟, 就让下游也缓存同样的时长 —— 超过这个时间我们
+// 都要回源重取了, 没有理由让浏览器继续用旧副本。这样"缓存多久"全局只有一个可调项,
+// 不需要再维护一份独立的客户端策略。
+//
+// 显式配 0 表示不缓存, 下发 no-store; 配置缺失 / 非法负值按 DefaultCacheMaxAge 兜底,
+// 与 CacheManager 的行为一致, 保证 "本地缓存多久" 与 "告诉浏览器缓存多久" 永远是同一个数。
+//
+// 注意: "0 = 不缓存" 只适用于路径级配置。全局配置请用 CacheControlWithDefault,
+// 它把 0 当作漏配而非全站禁用缓存 (与 CacheManager 的兜底一致)。
+func (c *CacheConfig) ClientCacheControl() string {
+	if c.IsNoCache() {
+		return "no-store, no-cache, must-revalidate"
+	}
+	return c.CacheControlWithDefault()
+}
+
+// CacheControlWithDefault 只按时长生成 Cache-Control, 不解读 "0 = 不缓存"。
+// 用于全局配置这一级: 漏配 max_age 不应静默关掉全站缓存。
+func (c *CacheConfig) CacheControlWithDefault() string {
+	return "public, max-age=" + strconv.FormatInt(c.EffectiveMaxAge()*60, 10)
 }
 
 // 扩展名映射配置结构
