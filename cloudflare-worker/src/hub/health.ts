@@ -22,6 +22,8 @@ const FAILOVER_AFTER_DOWN_MS = 60_000;
 const FAILBACK_STABLE_MS = 10 * 60_000;
 const CHECK_INTERVAL_MS = 10 * 60_000;
 const PRUNE_INTERVAL_MS = 3600_000;
+const RETRY_INTERVAL_MS = 60_000; // 切换失败 (如 EdgeOne 部署中拒绝修改) 或暂无健康节点时的重试间隔
+const MAX_RETRIES = 30;
 const RETENTION_MS = 30 * 86400_000;
 
 export interface HealthDeps {
@@ -116,7 +118,20 @@ export class HealthMonitor {
 			// ---- 故障切换 ----
 			if (b.auto_failover && active.state === 'down' && now - active.since >= FAILOVER_AFTER_DOWN_MS) {
 				const roundKey = `notice:${b.id}:${b.active_node}:${active.since}`;
-				if (this.getKV(roundKey)) continue;
+				// 回合状态: 空 = 首次处理; retry:<次数>:<时间> = 上次没切成, 间隔后重试; 其余为终态
+				const state = this.getKV(roundKey);
+				let attempt = 0;
+				if (state) {
+					if (!state.startsWith('retry:')) continue;
+					const [, n, at] = state.split(':');
+					attempt = Number(n);
+					if (now - Number(at) < RETRY_INTERVAL_MS) continue;
+					if (attempt >= MAX_RETRIES) {
+						this.setKV(roundKey, 'gave_up');
+						this.deps.event('error', 'failover_stuck', b.hostname, `${b.active_node} 故障后已重试 ${attempt} 次仍未切换成功, 停止自动重试, 请人工处理`, true);
+						continue;
+					}
+				}
 
 				const activeProbe = await this.probe(b.active_node);
 				if (activeProbe.ok) {
@@ -136,12 +151,18 @@ export class HealthMonitor {
 						break;
 					}
 				}
-				this.setKV(roundKey, target ? 'switched' : 'stuck');
 				if (!target) {
-					this.deps.event('error', 'failover_stuck', b.hostname, `${b.active_node} 已故障 (${activeProbe.error}), 池内没有健康节点, 解析保持不变`, true);
+					// 暂无健康节点: 解析保持不变, 之后按间隔重试 (备选节点可能稍后恢复); 只在第一次通知
+					this.setKV(roundKey, `retry:${attempt + 1}:${now}`);
+					if (attempt === 0) {
+						this.deps.event('error', 'failover_stuck', b.hostname, `${b.active_node} 已故障 (${activeProbe.error}), 池内没有健康节点, 解析保持不变, 将每分钟重试`, true);
+					}
 					continue;
 				}
-				await this.dns.switchTo(b.id, target, 'failover', `${b.active_node} 故障: ${activeProbe.error}`);
+				const res = await this.dns.switchTo(b.id, target, 'failover', `${b.active_node} 故障: ${activeProbe.error}`, attempt === 0);
+				const anyOK = [res.cf, res.dnspod, res.eo].some((r) => r === 'updated' || r === 'unchanged');
+				// 一处都没改成 (如 EdgeOne 部署中拒绝修改): active_node 未变, 按间隔重试; 改成任意一处即终态
+				this.setKV(roundKey, anyOK ? 'switched' : `retry:${attempt + 1}:${now}`);
 				continue;
 			}
 

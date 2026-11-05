@@ -267,7 +267,13 @@ export class DnsService {
 	}
 
 	// switchTo 把绑定切到 nodeId; 至少一处改成功即更新 active_node (结果如实记录, 巡检会标出半切状态)
-	async switchTo(id: number, nodeId: string, kind: 'switch' | 'failover' | 'failback', reason: string): Promise<SwitchResult & { check: BindingCheck }> {
+	async switchTo(
+		id: number,
+		nodeId: string,
+		kind: 'switch' | 'failover' | 'failback',
+		reason: string,
+		notifyFailure = true,
+	): Promise<SwitchResult & { check: BindingCheck }> {
 		const b = this.getBinding(id);
 		const origin = this.targetOf(b.kind, nodeId);
 		if (!origin) throw new Error(b.kind === 'edgeone' ? `节点 ${nodeId} 没有上报出口 IP` : `节点 ${nodeId} 未登记回源主机名`);
@@ -296,7 +302,7 @@ export class DnsService {
 		const parts = b.kind === 'edgeone' ? `EdgeOne ${result.eo}` : `CF ${result.cf}, DNSPod ${result.dnspod}`;
 		const detail = `${b.kind === 'edgeone' ? '[EdgeOne] ' : ''}${b.active_node || '-'} → ${nodeId} (${origin}); ${parts}${reason ? `; ${reason}` : ''}`;
 		if (result.errors.length) {
-			this.event('error', 'switch_failed', b.hostname, `${detail}; ${result.errors.join('; ')}`, true);
+			this.event('error', 'switch_failed', b.hostname, `${detail}; ${result.errors.join('; ')}`, notifyFailure);
 		} else {
 			this.event(kind === 'switch' ? 'info' : 'warning', kind, b.hostname, detail, true);
 		}
