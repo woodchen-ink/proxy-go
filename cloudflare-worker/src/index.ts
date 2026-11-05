@@ -42,15 +42,35 @@ export default {
 		// 节点旧协议: 路径不重叠, 以 Bearer API_TOKEN 区分
 		if (bearerMatches(request, env.API_TOKEN)) return handleLegacy(request, env);
 
+		// 漏了 /admin 前缀的后台页面地址 (旧书签 / 手输), 补上前缀跳回
+		if ((path === '/login' || path.startsWith('/login/') || path === '/dashboard' || path.startsWith('/dashboard/')) && request.method === 'GET') {
+			return Response.redirect(`${url.origin}/admin${path}${url.search}`, 302);
+		}
+
 		return json({ error: 'Not found' }, 404);
 	},
 };
 
 // serveAdminAsset 剥掉 /admin 前缀映射到静态导出产物; 页面路由缺失时回落到 404.html
+//
+// 资源服务按 html_handling 补结尾斜杠时会回 307, Location 是剥掉前缀后的路径
+// (/admin/dashboard → /dashboard/), 必须补回 /admin, 否则浏览器跳到前缀外落进 404
 async function serveAdminAsset(request: Request, env: Env, url: URL): Promise<Response> {
 	const inner = new URL(url);
 	inner.pathname = url.pathname.slice('/admin'.length) || '/';
 	const resp = await env.ASSETS.fetch(new Request(inner, request));
+	if (resp.status >= 300 && resp.status < 400) {
+		const location = resp.headers.get('Location');
+		if (location) {
+			const target = new URL(location, inner);
+			if (target.origin === url.origin && !target.pathname.startsWith('/admin/')) {
+				target.pathname = '/admin' + target.pathname;
+			}
+			const headers = new Headers(resp.headers);
+			headers.set('Location', target.pathname + target.search);
+			return new Response(null, { status: resp.status, headers });
+		}
+	}
 	if (resp.status !== 404) return resp;
 	const notFound = new URL(url);
 	notFound.pathname = '/404.html';

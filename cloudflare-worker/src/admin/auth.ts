@@ -129,7 +129,7 @@ async function oauthCallback(request: Request, env: Env): Promise<Response> {
 	if (!username) return fail(502, '用户信息缺少用户名');
 
 	const session = await signToken(env.SESSION_SECRET, { u: username, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SEC });
-	const headers = new Headers({ Location: '/admin/dashboard' });
+	const headers = new Headers({ Location: '/admin/dashboard/' });
 	headers.append('Set-Cookie', cookie(SESSION_COOKIE, session, SESSION_TTL_SEC));
 	headers.append('Set-Cookie', cookie(STATE_COOKIE, '', 0, '/admin/api/oauth'));
 	console.log(`admin login: ${username}`);
