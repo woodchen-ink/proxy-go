@@ -84,7 +84,6 @@ func main() {
 		}
 
 		// 触发待执行的配置同步（如有）
-		sync.FlushConfigSync()
 
 		// 停止同步服务
 		if err := sync.StopSyncService(); err != nil {

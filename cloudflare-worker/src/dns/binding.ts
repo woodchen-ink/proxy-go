@@ -4,7 +4,8 @@
  * 切换节点就是把两处同时改成目标节点的回源主机名 (如 rn-22dc3.20200511.xyz):
  *   1. SaaS 区自定义主机名的 custom_origin_server
  *   2. DNSPod 上该域名指定线路 (默认「默认」) 的 CNAME
- * EdgeOne 等其他线路不在绑定范围内, 不动。
+ * kind=edgeone 时改的是 EdgeOne 加速域名的源站 (OriginInfo.Origin = 节点 IP), 凭据复用腾讯云 API 密钥,
+ * EdgeOne 站点 ID 存在 saas_zone_id 列。两类绑定互相独立, 同一访问域名可以各有一条。
  *
  * 判定层区分"确实不一致"与"根本没读到": 读取失败记在 error 字段, 不当成不一致去自动修。
  */
@@ -12,9 +13,13 @@ import { openSecret } from '../lib/crypto';
 import type { TencentCredential } from '../lib/tc3';
 import * as cf from './cloudflare';
 import * as dnspod from './dnspod';
+import * as edgeone from './edgeone';
+
+export type BindingKind = 'cf_dnspod' | 'edgeone';
 
 export interface Binding {
 	id: number;
+	kind: BindingKind;
 	hostname: string;
 	enabled: boolean;
 	cf_credential_id: number;
@@ -43,6 +48,9 @@ export interface BindingCheck {
 	dnspod_value: string;
 	dnspod_record_id: number;
 	dnspod_error: string;
+	eo_origin: string;
+	eo_status: string;
+	eo_error: string;
 	consistent: boolean; // 两处都读到且都等于 expected
 	actual_node: string; // 两处实际指向的节点 (一致时), 便于识别线下被人改过
 }
@@ -61,6 +69,7 @@ export interface CloudflareSecret {
 export function rowToBinding(r: Record<string, SqlStorageValue>): Binding {
 	return {
 		id: Number(r.id),
+		kind: r.kind === 'edgeone' ? 'edgeone' : 'cf_dnspod',
 		hostname: String(r.hostname),
 		enabled: Number(r.enabled) === 1,
 		cf_credential_id: Number(r.cf_credential_id),
@@ -121,8 +130,8 @@ function findLineRecord(records: dnspod.DnspodRecord[], b: Binding): dnspod.Dnsp
 	return records.filter((r) => r.name === b.record_name && r.line === b.record_line && (r.type === 'CNAME' || r.type === 'A'));
 }
 
-export async function inspectBinding(b: Binding, creds: Credentials, originOf: OriginLookup, nodesByOrigin: Map<string, string>): Promise<BindingCheck> {
-	const expected = originOf(b.active_node);
+export async function inspectBinding(b: Binding, creds: Credentials, expected: string, nodesByOrigin: Map<string, string>): Promise<BindingCheck> {
+	if (b.kind === 'edgeone') return inspectEdgeOne(b, creds, expected, nodesByOrigin);
 	const check: BindingCheck = {
 		at: Date.now(),
 		expected,
@@ -132,6 +141,9 @@ export async function inspectBinding(b: Binding, creds: Credentials, originOf: O
 		dnspod_value: '',
 		dnspod_record_id: 0,
 		dnspod_error: '',
+		eo_origin: '',
+		eo_status: '',
+		eo_error: '',
 		consistent: false,
 		actual_node: '',
 	};
@@ -167,15 +179,63 @@ export async function inspectBinding(b: Binding, creds: Credentials, originOf: O
 	return check;
 }
 
+async function inspectEdgeOne(b: Binding, creds: Credentials, expected: string, nodesByIP: Map<string, string>): Promise<BindingCheck> {
+	const check: BindingCheck = {
+		at: Date.now(),
+		expected,
+		cf_origin: '',
+		cf_status: '',
+		cf_error: '',
+		dnspod_value: '',
+		dnspod_record_id: 0,
+		dnspod_error: '',
+		eo_origin: '',
+		eo_status: '',
+		eo_error: '',
+		consistent: false,
+		actual_node: '',
+	};
+	try {
+		const d = await edgeone.getDomain(await creds.dnspod(b.dnspod_credential_id), b.saas_zone_id, b.hostname);
+		if (!d) check.eo_error = 'EdgeOne 站点里没有这个加速域名';
+		else {
+			check.eo_origin = edgeone.originOf(d);
+			check.eo_status = d.DomainStatus;
+		}
+	} catch (e) {
+		check.eo_error = errText(e);
+	}
+	check.consistent = !check.eo_error && !!expected && check.eo_origin === expected;
+	if (!check.eo_error) check.actual_node = nodesByIP.get(check.eo_origin) ?? '';
+	return check;
+}
+
 export interface SwitchResult {
-	cf: 'updated' | 'unchanged' | 'failed';
-	dnspod: 'updated' | 'unchanged' | 'failed';
+	cf: 'updated' | 'unchanged' | 'failed' | 'n/a';
+	dnspod: 'updated' | 'unchanged' | 'failed' | 'n/a';
+	eo: 'updated' | 'unchanged' | 'failed' | 'n/a';
 	errors: string[];
 }
 
-// switchBinding 把两处都改成 origin; 每处独立执行, 一处失败不阻止另一处 (半切总比不切好, 结果如实回报)
+// switchBinding 把各处都改成 origin; 每处独立执行, 一处失败不阻止另一处 (半切总比不切好, 结果如实回报)
 export async function switchBinding(b: Binding, creds: Credentials, origin: string): Promise<SwitchResult> {
-	const result: SwitchResult = { cf: 'unchanged', dnspod: 'unchanged', errors: [] };
+	if (b.kind === 'edgeone') {
+		const result: SwitchResult = { cf: 'n/a', dnspod: 'n/a', eo: 'unchanged', errors: [] };
+		try {
+			const cred = await creds.dnspod(b.dnspod_credential_id);
+			const d = await edgeone.getDomain(cred, b.saas_zone_id, b.hostname);
+			if (!d) throw new Error('EdgeOne 站点里没有这个加速域名');
+			if (edgeone.originOf(d) !== origin) {
+				await edgeone.setOrigin(cred, b.saas_zone_id, b.hostname, origin);
+				result.eo = 'updated';
+			}
+		} catch (e) {
+			result.eo = 'failed';
+			result.errors.push(`EdgeOne: ${errText(e)}`);
+		}
+		return result;
+	}
+	const result: SwitchResult = { cf: 'unchanged', dnspod: 'unchanged', eo: 'n/a', errors: [] };
 
 	try {
 		const token = await creds.cloudflare(b.cf_credential_id);

@@ -17,6 +17,11 @@ database_id = ""
 name = "HUB"
 class_name = "Hub"
 
+# DO 常驻 (节点快照每 15s 一次) 永远等不到休眠, 默认会推迟 300s 才换新代码; 缩短到 60s
+[durable_objects.code_update_strategy]
+mode = "deferred"
+max_delay = 60
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Hub"]

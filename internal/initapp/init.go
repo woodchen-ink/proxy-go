@@ -138,13 +138,10 @@ func InitWithOptions(opts InitOptions) (*AppComponents, error) {
 		if err := sync.StartSyncService(ctx); err != nil {
 			log.Printf("[Init] 同步服务启动失败: %v", err)
 		} else {
+			// 不注册"回写 D1"回调: 中控是配置唯一写入方, 节点只读。
+			// 节点写快照会被本地文件监听当成配置变更重新加载, 注册了回写就会把配置传回 D1 并递增版本,
+			// 覆盖中控上并发的修改。节点上传只剩 D1 为空时的播种 (DownloadConfigOnly 内)
 			log.Printf("[Init] 同步服务已启动")
-
-			// 注册"回写 D1"回调: 走 RegisterSyncCallback 而不是 RegisterUpdateCallback,
-			// 心跳热应用远端配置时不会触发它, 否则 A 改 → B 收 → B 又传, 形成回声循环
-			config.RegisterSyncCallback(func(cfg *config.Config) {
-				sync.ConfigSyncCallback()
-			})
 		}
 	}
 

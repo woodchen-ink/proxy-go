@@ -5,6 +5,7 @@ import type { Env } from '../env';
 import { sealSecret } from '../lib/crypto';
 import * as cf from '../dns/cloudflare';
 import * as dnspod from '../dns/dnspod';
+import * as edgeone from '../dns/edgeone';
 import {
 	Credentials,
 	errText,
@@ -13,6 +14,7 @@ import {
 	switchBinding,
 	type Binding,
 	type BindingCheck,
+	type BindingKind,
 	type SwitchResult,
 } from '../dns/binding';
 
@@ -29,6 +31,7 @@ export interface CredentialInput {
 
 export interface BindingInput {
 	id?: number;
+	kind?: BindingKind;
 	hostname: string;
 	enabled?: boolean;
 	cf_credential_id: number;
@@ -67,6 +70,22 @@ export class DnsService {
 		const m = new Map<string, string>();
 		for (const r of this.sql.exec("SELECT node_id, origin_host FROM nodes WHERE origin_host != ''").toArray()) {
 			m.set(String(r.origin_host), String(r.node_id));
+		}
+		return m;
+	}
+
+	// targetOf 绑定切到某节点时写入的值: CF/DNSPod 用回源主机名, EdgeOne 用节点出口 IP
+	targetOf(kind: BindingKind, nodeId: string): string {
+		if (kind !== 'edgeone') return this.originOf(nodeId);
+		const r = this.sql.exec('SELECT ipv4, ipv6 FROM nodes WHERE node_id = ?', nodeId).toArray()[0];
+		return r ? String(r.ipv4 || r.ipv6 || '').toLowerCase() : '';
+	}
+
+	private nodesByTarget(kind: BindingKind): Map<string, string> {
+		if (kind !== 'edgeone') return this.nodesByOrigin();
+		const m = new Map<string, string>();
+		for (const r of this.sql.exec('SELECT node_id, ipv4, ipv6 FROM nodes').toArray()) {
+			for (const ip of [r.ipv4, r.ipv6]) if (ip) m.set(String(ip).toLowerCase(), String(r.node_id));
 		}
 		return m;
 	}
@@ -124,11 +143,14 @@ export class DnsService {
 	}
 
 	// discover 凭据可见的资源, 供表单下拉选择
-	async discover(credentialId: number): Promise<{ kind: string; zones?: cf.Zone[]; domains?: string[] }> {
+	async discover(credentialId: number): Promise<{ kind: string; zones?: cf.Zone[]; domains?: string[]; eo_zones?: edgeone.EdgeOneZone[] }> {
 		const row = this.sql.exec('SELECT kind FROM dns_credentials WHERE id = ?', credentialId).toArray()[0];
 		if (!row) throw new Error('凭据不存在');
 		if (row.kind === 'cloudflare') return { kind: 'cloudflare', zones: await cf.listZones(await this.creds().cloudflare(credentialId)) };
-		return { kind: 'dnspod', domains: await dnspod.listDomains(await this.creds().dnspod(credentialId)) };
+		// 腾讯云密钥同时用于 DNSPod 与 EdgeOne; 账号可能只开通其中一个, 各自失败不影响另一项
+		const cred = await this.creds().dnspod(credentialId);
+		const [domains, eoZones] = await Promise.all([dnspod.listDomains(cred).catch(() => []), edgeone.listZones(cred).catch(() => [])]);
+		return { kind: 'dnspod', domains, eo_zones: eoZones };
 	}
 
 	// suggestOrigins 按节点出口 IP 在 SaaS 区里找对应的橙云记录, 给"登记回源主机名"做预填
@@ -162,25 +184,31 @@ export class DnsService {
 	}
 
 	saveBinding(input: BindingInput): number {
+		const kind: BindingKind = input.kind === 'edgeone' ? 'edgeone' : 'cf_dnspod';
 		const hostname = (input.hostname ?? '').trim().toLowerCase().replace(/\.$/, '');
 		if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(hostname)) throw new Error('访问域名格式不对');
-		if (!input.cf_credential_id || !input.saas_zone_id) throw new Error('缺少 CF 凭据或 SaaS 区');
-		if (!input.dnspod_credential_id || !input.dnspod_domain) throw new Error('缺少 DNSPod 凭据或域名');
+		if (kind === 'edgeone') {
+			if (!input.dnspod_credential_id || !input.saas_zone_id) throw new Error('缺少腾讯云凭据或 EdgeOne 站点');
+		} else {
+			if (!input.cf_credential_id || !input.saas_zone_id) throw new Error('缺少 CF 凭据或 SaaS 区');
+			if (!input.dnspod_credential_id || !input.dnspod_domain) throw new Error('缺少 DNSPod 凭据或域名');
+		}
 		const pool = [...new Set((input.pool ?? []).map((s) => s.trim()).filter(Boolean))];
 		if (pool.length === 0) throw new Error('节点池不能为空');
 		for (const id of pool) {
-			if (!this.originOf(id)) throw new Error(`节点 ${id} 未登记回源主机名`);
+			if (!this.targetOf(kind, id)) throw new Error(kind === 'edgeone' ? `节点 ${id} 没有上报出口 IP` : `节点 ${id} 未登记回源主机名`);
 		}
 		const active = input.active_node && pool.includes(input.active_node) ? input.active_node : pool[0];
 		const now = Date.now();
 		const args = [
+			kind,
 			hostname,
 			input.enabled === false ? 0 : 1,
-			input.cf_credential_id,
+			kind === 'edgeone' ? 0 : input.cf_credential_id,
 			input.saas_zone_id,
 			input.saas_zone_name ?? '',
 			input.dnspod_credential_id,
-			input.dnspod_domain.trim().toLowerCase(),
+			kind === 'edgeone' ? '' : (input.dnspod_domain ?? '').trim().toLowerCase(),
 			(input.record_name ?? '@').trim() || '@',
 			(input.record_line ?? '默认').trim() || '默认',
 			JSON.stringify(pool),
@@ -193,7 +221,7 @@ export class DnsService {
 		if (input.id) {
 			this.getBinding(input.id);
 			this.sql.exec(
-				`UPDATE dns_bindings SET hostname=?, enabled=?, cf_credential_id=?, saas_zone_id=?, saas_zone_name=?,
+				`UPDATE dns_bindings SET kind=?, hostname=?, enabled=?, cf_credential_id=?, saas_zone_id=?, saas_zone_name=?,
 				 dnspod_credential_id=?, dnspod_domain=?, record_name=?, record_line=?, pool=?, active_node=?,
 				 auto_failover=?, auto_failback=?, note=?, updated_at=? WHERE id=?`,
 				...args,
@@ -204,9 +232,9 @@ export class DnsService {
 		return Number(
 			this.sql
 				.exec(
-					`INSERT INTO dns_bindings (hostname, enabled, cf_credential_id, saas_zone_id, saas_zone_name,
+					`INSERT INTO dns_bindings (kind, hostname, enabled, cf_credential_id, saas_zone_id, saas_zone_name,
 					 dnspod_credential_id, dnspod_domain, record_name, record_line, pool, active_node,
-					 auto_failover, auto_failback, note, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
+					 auto_failover, auto_failback, note, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
 					...args,
 				)
 				.one().id,
@@ -220,7 +248,7 @@ export class DnsService {
 	// check 读取两处线上实际值并落 last_check; 由一致变为不一致时记一次漂移事件
 	async check(id: number, notifyDrift = false): Promise<BindingCheck> {
 		const b = this.getBinding(id);
-		const result = await inspectBinding(b, this.creds(), this.originOf, this.nodesByOrigin());
+		const result = await inspectBinding(b, this.creds(), this.targetOf(b.kind, b.active_node), this.nodesByTarget(b.kind));
 		const wasConsistent = b.last_check?.consistent ?? true;
 		const readFailed = !!(result.cf_error || result.dnspod_error);
 		if (wasConsistent && !result.consistent && !readFailed) {
@@ -228,7 +256,9 @@ export class DnsService {
 				'warning',
 				'drift',
 				b.hostname,
-				`期望指向 ${result.expected} (${b.active_node}), 实际 CF=${result.cf_origin || '-'} DNSPod=${result.dnspod_value || '-'}`,
+				b.kind === 'edgeone'
+					? `[EdgeOne] 期望回源 ${result.expected} (${b.active_node}), 实际 ${result.eo_origin || '-'}`
+					: `期望指向 ${result.expected} (${b.active_node}), 实际 CF=${result.cf_origin || '-'} DNSPod=${result.dnspod_value || '-'}`,
 				notifyDrift,
 			);
 		}
@@ -239,17 +269,17 @@ export class DnsService {
 	// switchTo 把绑定切到 nodeId; 至少一处改成功即更新 active_node (结果如实记录, 巡检会标出半切状态)
 	async switchTo(id: number, nodeId: string, kind: 'switch' | 'failover' | 'failback', reason: string): Promise<SwitchResult & { check: BindingCheck }> {
 		const b = this.getBinding(id);
-		const origin = this.originOf(nodeId);
-		if (!origin) throw new Error(`节点 ${nodeId} 未登记回源主机名`);
+		const origin = this.targetOf(b.kind, nodeId);
+		if (!origin) throw new Error(b.kind === 'edgeone' ? `节点 ${nodeId} 没有上报出口 IP` : `节点 ${nodeId} 未登记回源主机名`);
 
 		let result: SwitchResult;
 		try {
 			result = await switchBinding(b, this.creds(), origin);
 		} catch (e) {
-			result = { cf: 'failed', dnspod: 'failed', errors: [errText(e)] };
+			result = { cf: 'failed', dnspod: 'failed', eo: 'failed', errors: [errText(e)] };
 		}
 
-		const anyOK = result.cf !== 'failed' || result.dnspod !== 'failed';
+		const anyOK = [result.cf, result.dnspod, result.eo].some((r) => r === 'updated' || r === 'unchanged');
 		// last_switch_at 记"最近一次尝试": 全部失败也要推进, 否则自动切回每 20s 重试一次并刷告警
 		this.sql.exec('UPDATE dns_bindings SET last_switch_at = ? WHERE id = ?', Date.now(), id);
 		if (anyOK) {
@@ -263,7 +293,8 @@ export class DnsService {
 				id,
 			);
 		}
-		const detail = `${b.active_node || '-'} → ${nodeId} (${origin}); CF ${result.cf}, DNSPod ${result.dnspod}${reason ? `; ${reason}` : ''}`;
+		const parts = b.kind === 'edgeone' ? `EdgeOne ${result.eo}` : `CF ${result.cf}, DNSPod ${result.dnspod}`;
+		const detail = `${b.kind === 'edgeone' ? '[EdgeOne] ' : ''}${b.active_node || '-'} → ${nodeId} (${origin}); ${parts}${reason ? `; ${reason}` : ''}`;
 		if (result.errors.length) {
 			this.event('error', 'switch_failed', b.hostname, `${detail}; ${result.errors.join('; ')}`, true);
 		} else {

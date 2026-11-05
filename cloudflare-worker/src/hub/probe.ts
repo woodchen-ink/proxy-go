@@ -12,10 +12,11 @@ export interface ProbeResult {
 	ok: boolean;
 	status: number;
 	error: string;
+	unknown?: boolean; // 节点没有可探测的回源主机名 (Worker 不能直连裸 IP), 只能靠 WS 状态判断
 }
 
 export async function probeOrigin(originHost: string, timeoutMs = 6000): Promise<ProbeResult> {
-	if (!originHost) return { ok: false, status: 0, error: '节点未登记回源主机名' };
+	if (!originHost) return { ok: false, status: 0, error: '无回源主机名, 无法主动探测', unknown: true };
 	try {
 		const resp = await fetch(`https://${originHost}/__proxy-go/health`, {
 			method: 'GET',
@@ -35,7 +36,7 @@ export async function probeOrigin(originHost: string, timeoutMs = 6000): Promise
 // probeTwice 两次探测都失败才算挂, 过滤单次网络抖动
 export async function probeTwice(originHost: string): Promise<ProbeResult> {
 	const first = await probeOrigin(originHost);
-	if (first.ok) return first;
+	if (first.ok || first.unknown) return first;
 	await new Promise((r) => setTimeout(r, 1500));
 	return probeOrigin(originHost);
 }

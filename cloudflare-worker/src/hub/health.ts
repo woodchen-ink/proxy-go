@@ -7,6 +7,7 @@
  *
  * 故障切换 (每个绑定独立):
  *   - 当前节点 down ≥ 60s, 且对其回源主机名的两次探测都失败 → 切到池里第一个 up 且探测通过的节点
+ *   - 节点没有回源主机名时无法主动探测 (Worker 不能直连裸 IP), 只凭 WS 失联判断
  *   - 只是 WS 断了但回源探测正常 (中控到节点的链路问题, 用户流量不受影响) → 不切, 记一次事件
  *   - 没有可切的健康节点 → 不动解析 (删空或指向坏节点都更糟), 记一次事件
  * 切回: 首选节点 (pool[0]) 持续 up ≥ 10 分钟、探测通过、距上次切换 ≥ 10 分钟 → 切回。
@@ -129,7 +130,8 @@ export class HealthMonitor {
 					if (candidate === b.active_node) continue;
 					const st = this.nodeState(candidate);
 					if (!st || st.state !== 'up') continue;
-					if ((await this.probe(candidate)).ok) {
+					const p = await this.probe(candidate);
+					if (p.ok || p.unknown) {
 						target = candidate;
 						break;
 					}
@@ -149,7 +151,8 @@ export class HealthMonitor {
 			const pref = this.nodeState(preferred);
 			if (!pref || pref.state !== 'up' || now - pref.since < FAILBACK_STABLE_MS) continue;
 			if (now - b.last_switch_at < FAILBACK_STABLE_MS) continue;
-			if (!(await this.probe(preferred)).ok) continue;
+			const pp = await this.probe(preferred);
+			if (!pp.ok && !pp.unknown) continue;
 			await this.dns.switchTo(b.id, preferred, 'failback', '首选节点已稳定恢复');
 		}
 	}
