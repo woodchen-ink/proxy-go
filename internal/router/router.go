@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"proxy-go/internal/config"
+	"proxy-go/internal/control"
 	"proxy-go/internal/handler"
 	"strings"
 	"time"
@@ -72,16 +73,27 @@ type RouteHandler struct {
 
 // SetupMainRoutes 设置主要路由
 func SetupMainRoutes(mirrorHandler *handler.MirrorProxyHandler, proxyHandler *handler.ProxyHandler, configManager *config.ConfigManager) []RouteHandler {
-	remoteCacheHandler := handler.NewCacheRemoteHandler(proxyHandler.Cache, mirrorHandler.Cache, configManager)
+	remoteCacheHandler := handler.NewCacheRemoteHandler(control.HubBaseURL)
 
 	return []RouteHandler{
-		// 远程缓存清理接口
 		{
 			Matcher: func(r *http.Request) bool {
 				return r.URL.Path == "/api/cache/clear-url"
 			},
 			Handler: http.HandlerFunc(remoteCacheHandler.ClearCacheByURL),
 		},
+		{
+			// 中控健康探测: 经 CF 回源主机名访问, 用于故障切换判定
+			Matcher: func(r *http.Request) bool {
+				return r.URL.Path == "/__proxy-go/health"
+			},
+			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Cache-Control", "no-store")
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				_, _ = w.Write([]byte("ok"))
+			}),
+		},
+		// 远程缓存清理接口
 		// favicon.ico 处理器
 		{
 			Matcher: func(r *http.Request) bool {

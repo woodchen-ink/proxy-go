@@ -1,7 +1,6 @@
 package metrics
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"math"
@@ -10,7 +9,6 @@ import (
 	"proxy-go/internal/config"
 	"proxy-go/internal/models"
 	"proxy-go/internal/utils"
-	d1sync "proxy-go/pkg/sync"
 	"runtime"
 	"sort"
 	"strconv"
@@ -1148,17 +1146,6 @@ func (c *Collector) zeroPathStats(prefix string) int {
 	return count
 }
 
-// ResetPathStats 重置指定路径前缀的统计数据 (全集群语义)
-//
-// 本地清零后向 D1 发布重置代际: marker + 删**全节点**行在一个事务里提交, 其他节点
-// 最多一个心跳周期 (~5 分钟) 内应用。返回 clusterWide 表明这次重置是否覆盖了全集群
-// (D1 未启用或 marker 发布失败时降级为仅本节点, 老行为)
-func (c *Collector) ResetPathStats(pathPrefix string) (clusterWide bool, err error) {
-	n := c.zeroPathStats(pathPrefix)
-	log.Printf("[Collector] 已重置路径前缀 %s 的本地统计, 共 %d 条", pathPrefix, n)
-	return c.publishReset(pathPrefix)
-}
-
 // PathTimeSeries 返回路径时间序列容器, 供同步 / 查询模块使用
 func (c *Collector) PathTimeSeries() *PathTimeSeries {
 	return c.pathTimeSeries
@@ -1167,37 +1154,4 @@ func (c *Collector) PathTimeSeries() *PathTimeSeries {
 // RefererDaily 返回引用来源 host 天级时间序列容器, 供同步 / 查询模块使用
 func (c *Collector) RefererDaily() *RefererDailySeries {
 	return c.refererDaySeries
-}
-
-// ResetAllPathStats 重置所有路径的统计数据 (全集群语义, 见 ResetPathStats)
-func (c *Collector) ResetAllPathStats() (clusterWide bool, err error) {
-	n := c.zeroPathStats("")
-	log.Printf("[Collector] 已重置所有本地路径统计, 共 %d 条", n)
-	return c.publishReset("")
-}
-
-// publishReset 把重置下发到集群: 写代际 marker + 删全节点行, 失败降级为只删本节点行
-//
-// 成功后推进本地位点 (自己发的 marker 不必再被心跳应用一遍) 并失效 peer 缓存,
-// 让发起节点的仪表盘立刻归零, 而不是等 5 分钟缓存过期
-func (c *Collector) publishReset(prefix string) (clusterWide bool, err error) {
-	if !d1sync.IsEnabled() {
-		return false, nil
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	resetAt, pubErr := d1sync.PublishStatsReset(ctx, prefix)
-	if pubErr != nil {
-		log.Printf("[Collector] 发布重置代际失败 (prefix=%q), 降级为仅清理本节点 D1 行: %v", prefix, pubErr)
-		if delErr := d1sync.DeleteOwnPathStats(ctx, prefix); delErr != nil {
-			log.Printf("[Collector] 清理 D1 中本节点路径统计失败 (prefix=%q): %v", prefix, delErr)
-		}
-		return false, nil
-	}
-
-	markResetApplied(resetAt)
-	InvalidatePeerStats()
-	return true, nil
 }

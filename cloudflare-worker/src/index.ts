@@ -1,545 +1,59 @@
 /**
- * Cloudflare Worker for proxy-go data synchronization (V2 - Column-based)
- * 使用列式存储替代 JSON 存储
+ * proxy-go 中控 (i-manage.czl.net)
+ *
+ * 路由:
+ *   /node/ws                 节点 WebSocket (Bearer API_TOKEN + X-Node-Id) → Hub DO
+ *   /api/cache/clear-url     公开清缓存 (Bearer CACHE_CLEAR_REMOTE_TOKEN)
+ *   /admin/api/*             管理 API (OAuth 会话 cookie)
+ *   /admin/*                 管理前端静态资源 (Next.js 静态导出, basePath=/admin)
+ *   其余带 Bearer API_TOKEN  节点 REST 旧协议 (D1 读写 / 心跳), 见 legacy.ts
  */
+import { hubStub, type Env } from './env';
+import { handleAdminAPI } from './admin/router';
+import { handleLegacy } from './legacy';
+import { bearerMatches, json } from './lib/http';
+import { handleCacheClearURL } from './public/cache_clear';
 
-import * as db from './db';
-
-export interface Env {
-	DB: D1Database;
-	API_TOKEN?: string;
-}
+export { Hub } from './hub/hub';
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-		const corsHeaders = {
-			'Access-Control-Allow-Origin': '*',
-			'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-			'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-		};
-
-		if (request.method === 'OPTIONS') {
-			return new Response(null, { headers: corsHeaders });
-		}
-
 		const url = new URL(request.url);
 		const path = url.pathname;
 
-		// API Token 认证
-		if (env.API_TOKEN) {
-			const authHeader = request.headers.get('Authorization');
-			if (!authHeader || authHeader !== `Bearer ${env.API_TOKEN}`) {
-				return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders);
-			}
+		if (path === '/node/ws') {
+			if (!bearerMatches(request, env.API_TOKEN)) return json({ error: 'Unauthorized' }, 401);
+			return hubStub(env).fetch(request);
 		}
 
-		try {
-			// ============================================
-			// Path Stats API
-			// ============================================
-			if (path === '/path-stats' && request.method === 'GET') {
-				const pathParam = url.searchParams.get('path');
-				const stats = await db.getPathStats(env.DB, pathParam || undefined, readScope(url));
-				return jsonResponse({ success: true, data: stats }, 200, corsHeaders);
-			}
+		if (path === '/api/cache/clear-url') return handleCacheClearURL(request, env, ctx);
 
-			if (path === '/path-stats' && request.method === 'POST') {
-				const body = await request.json<{ stats: db.PathStat[] }>();
-				if (!body.stats || !Array.isArray(body.stats)) {
-					return jsonResponse({ error: 'Invalid request: stats array required' }, 400, corsHeaders);
-				}
-				await db.batchUpsertPathStats(env.DB, body.stats);
-				return jsonResponse({ success: true, updated: body.stats.length }, 200, corsHeaders);
-			}
-
-			// ============================================
-			// Banned IPs API
-			// ============================================
-			if (path === '/banned-ips' && request.method === 'GET') {
-				const activeOnly = url.searchParams.get('active') === 'true';
-				const bans = await db.getBannedIPs(env.DB, activeOnly);
-				return jsonResponse({ success: true, data: bans }, 200, corsHeaders);
-			}
-
-			if (path === '/banned-ips' && request.method === 'POST') {
-				const body = await request.json<{ bans: db.BannedIP[] }>();
-				if (!body.bans || !Array.isArray(body.bans)) {
-					return jsonResponse({ error: 'Invalid request: bans array required' }, 400, corsHeaders);
-				}
-				await db.batchUpsertBannedIPs(env.DB, body.bans);
-				return jsonResponse({ success: true, updated: body.bans.length }, 200, corsHeaders);
-			}
-
-			if (path === '/banned-ips/history' && request.method === 'GET') {
-				const ip = url.searchParams.get('ip');
-				const limit = parseInt(url.searchParams.get('limit') || '100');
-				const history = await db.getBannedIPHistory(env.DB, ip || undefined, limit);
-				return jsonResponse({ success: true, data: history }, 200, corsHeaders);
-			}
-
-			// ============================================
-			// Config Maps API
-			// ============================================
-			if (path === '/config-maps' && request.method === 'GET') {
-				const enabledOnly = url.searchParams.get('enabled') === 'true';
-				const maps = await db.getConfigMaps(env.DB, enabledOnly);
-				return jsonResponse({ success: true, data: maps }, 200, corsHeaders);
-			}
-
-			if (path.startsWith('/config-maps/') && request.method === 'GET') {
-				const mapPath = decodeURIComponent(path.substring('/config-maps/'.length));
-				const map = await db.getConfigMap(env.DB, mapPath);
-				if (!map) {
-					return jsonResponse({ error: 'Config map not found' }, 404, corsHeaders);
-				}
-				return jsonResponse({ success: true, data: map }, 200, corsHeaders);
-			}
-
-			if (path === '/config-maps' && request.method === 'POST') {
-				const body = await request.json<{ maps: db.ConfigMap[] }>();
-				if (!body.maps || !Array.isArray(body.maps)) {
-					return jsonResponse({ error: 'Invalid request: maps array required' }, 400, corsHeaders);
-				}
-				for (const map of body.maps) {
-					await db.upsertConfigMap(env.DB, map);
-				}
-				return jsonResponse({ success: true, updated: body.maps.length }, 200, corsHeaders);
-			}
-
-			if (path.startsWith('/config-maps/') && request.method === 'DELETE') {
-				const mapPath = decodeURIComponent(path.substring('/config-maps/'.length));
-				await db.deleteConfigMap(env.DB, mapPath);
-				return jsonResponse({ success: true, message: 'Config map deleted' }, 200, corsHeaders);
-			}
-
-			// ============================================
-			// Config Other API
-			// ============================================
-			if (path === '/config-other' && request.method === 'GET') {
-				const key = url.searchParams.get('key');
-				const configs = await db.getConfigOther(env.DB, key || undefined);
-				return jsonResponse({ success: true, data: configs }, 200, corsHeaders);
-			}
-
-			if (path === '/config-other' && request.method === 'POST') {
-				const body = await request.json<{ configs: db.ConfigOther[] }>();
-				if (!body.configs || !Array.isArray(body.configs)) {
-					return jsonResponse({ error: 'Invalid request: configs array required' }, 400, corsHeaders);
-				}
-				for (const config of body.configs) {
-					await db.upsertConfigOther(env.DB, config);
-				}
-				return jsonResponse({ success: true, updated: body.configs.length }, 200, corsHeaders);
-			}
-
-			// ============================================
-			// Metrics API (status_codes, latency_distribution)
-			// ============================================
-			if (path === '/metrics/status-codes' && request.method === 'GET') {
-				const metrics = await db.getStatusCodes(env.DB, readScope(url));
-				return jsonResponse({ success: true, data: metrics }, 200, corsHeaders);
-			}
-
-			if (path === '/metrics/status-codes' && request.method === 'POST') {
-				const body = await request.json<{ metrics: db.StatusCodeMetric[] }>();
-				if (!body.metrics || !Array.isArray(body.metrics)) {
-					return jsonResponse({ error: 'Invalid request: metrics array required' }, 400, corsHeaders);
-				}
-				await db.batchUpsertStatusCodes(env.DB, body.metrics);
-				return jsonResponse({ success: true, updated: body.metrics.length }, 200, corsHeaders);
-			}
-
-			if (path === '/metrics/latency' && request.method === 'GET') {
-				const metrics = await db.getLatencyDistribution(env.DB, readScope(url));
-				return jsonResponse({ success: true, data: metrics }, 200, corsHeaders);
-			}
-
-			if (path === '/metrics/latency' && request.method === 'POST') {
-				const body = await request.json<{ metrics: db.LatencyMetric[] }>();
-				if (!body.metrics || !Array.isArray(body.metrics)) {
-					return jsonResponse({ error: 'Invalid request: metrics array required' }, 400, corsHeaders);
-				}
-				await db.batchUpsertLatencyDistribution(env.DB, body.metrics);
-				return jsonResponse({ success: true, updated: body.metrics.length }, 200, corsHeaders);
-			}
-
-			// ============================================
-			// 合并读写 endpoint
-			//
-			// 一次同步原本要打 5 个 POST, 一次仪表盘刷新要打 3 个 GET。
-			// 每个请求都单独计费, 且各自一次网络往返 —— 合并成单请求后, 上报 5→1、
-			// 读取 3→1, 请求数降到约五分之一, 也让上报间隔有余量往下调。
-			// 各表的批量写仍走原来的 db.batchUpsert*, 语义完全不变。
-			// ============================================
-			if (path === '/metrics/bulk' && request.method === 'POST') {
-				const body = await request.json<{
-					path_stats?: db.PathStat[];
-					status_codes?: db.StatusCodeMetric[];
-					latency?: db.LatencyMetric[];
-					timeseries?: db.PathTimeseriesPoint[];
-					referer_daily?: db.RefererDailyPoint[];
-					cursors?: {
-						config_version?: number;
-						reset_seen?: number;
-						bans_seen?: number;
-					};
-				}>();
-
-				const written: Record<string, number> = {};
-				// 逐段独立执行: 某一段为空就跳过, 不因为一段缺失而整体失败
-				if (body.path_stats?.length) {
-					await db.batchUpsertPathStats(env.DB, body.path_stats);
-					written.path_stats = body.path_stats.length;
-				}
-				if (body.status_codes?.length) {
-					await db.batchUpsertStatusCodes(env.DB, body.status_codes);
-					written.status_codes = body.status_codes.length;
-				}
-				if (body.latency?.length) {
-					await db.batchUpsertLatencyDistribution(env.DB, body.latency);
-					written.latency = body.latency.length;
-				}
-				if (body.timeseries?.length) {
-					await db.batchUpsertPathTimeseries(env.DB, body.timeseries);
-					written.timeseries = body.timeseries.length;
-				}
-				if (body.referer_daily?.length) {
-					await db.batchUpsertRefererDaily(env.DB, body.referer_daily);
-					written.referer_daily = body.referer_daily.length;
-				}
-
-				// 心跳下行: 节点上行捎游标, 这里只回传比游标新的状态。
-				// 每个槽位独立 try/catch —— 下行状态是增值服务, 任何一段失败
-				// (表还没建好 / 查询异常) 都不能拖垮指标上报本身
-				const state: Record<string, unknown> = {};
-				const cursors = body.cursors;
-				if (cursors && typeof cursors === 'object') {
-					// 槽位 1: 配置版本 + 增量配置 (版本比游标新才带数据)
-					try {
-						const row = await env.DB.prepare(
-							"SELECT value FROM config_other WHERE key = '__config_version'"
-						).first<{ value: string }>();
-						const version = row ? parseInt(row.value, 10) || 0 : 0;
-						state.config_version = version;
-						if (version > (cursors.config_version ?? 0)) {
-							state.config_maps = await db.getConfigMaps(env.DB, false);
-							state.config_other = await db.getConfigOther(env.DB);
-						}
-					} catch (e) {
-						console.error('pulse config slot failed:', e);
-					}
-
-					// 槽位 2: 重置代际 marker
-					try {
-						if (typeof cursors.reset_seen === 'number') {
-							const rows = await env.DB.prepare(
-								'SELECT id, path, reset_at FROM stats_resets WHERE reset_at > ? ORDER BY reset_at ASC LIMIT 50'
-							)
-								.bind(cursors.reset_seen)
-								.all();
-							if (rows.results?.length) {
-								state.resets = rows.results;
-							}
-						}
-					} catch (e) {
-						console.error('pulse resets slot failed:', e);
-					}
-
-					// 槽位 3: 封禁变更 (预留; Go 侧封禁同步子系统落地后自动启用)
-					try {
-						if (typeof cursors.bans_seen === 'number') {
-							const rows = await env.DB.prepare(
-								'SELECT * FROM banned_ips WHERE updated_at > ? ORDER BY updated_at ASC LIMIT 200'
-							)
-								.bind(cursors.bans_seen)
-								.all();
-							if (rows.results?.length) {
-								state.bans = rows.results;
-							}
-						}
-					} catch (e) {
-						console.error('pulse bans slot failed:', e);
-					}
-				}
-
-				return jsonResponse({ success: true, written, state }, 200, corsHeaders);
-			}
-
-			if (path === '/metrics/bulk' && request.method === 'GET') {
-				const scope = readScope(url);
-				const [pathStats, statusCodes, latency] = await Promise.all([
-					db.getPathStats(env.DB, undefined, scope),
-					db.getStatusCodes(env.DB, scope),
-					db.getLatencyDistribution(env.DB, scope),
-				]);
-				return jsonResponse(
-					{ success: true, data: { path_stats: pathStats, status_codes: statusCodes, latency } },
-					200,
-					corsHeaders
-				);
-			}
-
-			// ============================================
-			// 通用 SQL 执行 endpoint
-			//
-			// 由 Go 端持有所有 schema / migration 定义, worker 只做 D1 的薄壳代理:
-			//   POST /admin/sql/batch   { statements: [{sql, params?}] }  -> 事务批量执行 (D1 batch 是事务的)
-			//   POST /admin/sql/query   { sql, params? }                  -> 查询返回 rows
-			//
-			// 安全模型: 这两个 endpoint 能直接执行任意 SQL (含 DROP), 全部走 API_TOKEN 鉴权,
-			// 与其他写入 endpoint 同等保护; 没设 API_TOKEN 的部署等于裸奔, 与现状一致
-			// ============================================
-			if (path === '/admin/sql/batch' && request.method === 'POST') {
-				const body = await request.json<{
-					statements: Array<{ sql: string; params?: unknown[] }>;
-				}>();
-				if (!body.statements || !Array.isArray(body.statements) || body.statements.length === 0) {
-					return jsonResponse(
-						{ error: 'Invalid request: non-empty statements array required' },
-						400,
-						corsHeaders
-					);
-				}
-				const prepared = body.statements.map((s) => {
-					const stmt = env.DB.prepare(s.sql);
-					return s.params && s.params.length > 0 ? stmt.bind(...s.params) : stmt;
-				});
-				const results = await env.DB.batch(prepared);
-				return jsonResponse(
-					{
-						success: true,
-						results: results.map((r) => ({
-							changes: r.meta?.changes ?? 0,
-							last_row_id: r.meta?.last_row_id ?? 0,
-						})),
-					},
-					200,
-					corsHeaders
-				);
-			}
-
-			if (path === '/admin/sql/query' && request.method === 'POST') {
-				const body = await request.json<{ sql: string; params?: unknown[] }>();
-				if (!body.sql || typeof body.sql !== 'string') {
-					return jsonResponse(
-						{ error: 'Invalid request: sql string required' },
-						400,
-						corsHeaders
-					);
-				}
-				const stmt = env.DB.prepare(body.sql);
-				const bound = body.params && body.params.length > 0 ? stmt.bind(...body.params) : stmt;
-				const result = await bound.all();
-				return jsonResponse(
-					{ success: true, rows: result.results ?? [] },
-					200,
-					corsHeaders
-				);
-			}
-
-			// ============================================
-			// Path Time Series API
-			// ============================================
-			if (path === '/metrics/path-timeseries' && request.method === 'POST') {
-				const body = await request.json<{ points: db.PathTimeseriesPoint[] }>();
-				if (!body.points || !Array.isArray(body.points)) {
-					return jsonResponse(
-						{ error: 'Invalid request: points array required' },
-						400,
-						corsHeaders
-					);
-				}
-				await db.batchUpsertPathTimeseries(env.DB, body.points);
-				return jsonResponse(
-					{ success: true, updated: body.points.length },
-					200,
-					corsHeaders
-				);
-			}
-
-			if (path === '/metrics/path-timeseries' && request.method === 'GET') {
-				const minHour = parseInt(url.searchParams.get('min_hour') || '0');
-				const maxHour = parseInt(url.searchParams.get('max_hour') || '0');
-				if (!minHour || !maxHour || maxHour < minHour) {
-					return jsonResponse(
-						{ error: 'min_hour and max_hour required (max_hour >= min_hour)' },
-						400,
-						corsHeaders
-					);
-				}
-				// 上限保护: 单次最多查询 31 天 (744 小时)
-				if (maxHour - minHour > 744) {
-					return jsonResponse(
-						{ error: 'range too wide, max 744 hours' },
-						400,
-						corsHeaders
-					);
-				}
-				const data = await db.getAggregatedTimeseries(env.DB, minHour, maxHour);
-				return jsonResponse({ success: true, data }, 200, corsHeaders);
-			}
-
-			if (path === '/metrics/path-timeseries' && request.method === 'DELETE') {
-				const cutoff = parseInt(url.searchParams.get('cutoff_hour') || '0');
-				if (!cutoff) {
-					return jsonResponse(
-						{ error: 'cutoff_hour required' },
-						400,
-						corsHeaders
-					);
-				}
-				const deleted = await db.pruneOldTimeseries(env.DB, cutoff);
-				return jsonResponse({ success: true, deleted }, 200, corsHeaders);
-			}
-
-			// ============================================
-			// Referer Daily API (host 天级时间序列)
-			// ============================================
-			if (path === '/metrics/referer-daily' && request.method === 'POST') {
-				const body = await request.json<{ points: db.RefererDailyPoint[] }>();
-				if (!body.points || !Array.isArray(body.points)) {
-					return jsonResponse(
-						{ error: 'Invalid request: points array required' },
-						400,
-						corsHeaders
-					);
-				}
-				await db.batchUpsertRefererDaily(env.DB, body.points);
-				return jsonResponse(
-					{ success: true, updated: body.points.length },
-					200,
-					corsHeaders
-				);
-			}
-
-			if (path === '/metrics/referer-daily' && request.method === 'GET') {
-				const minDate = parseInt(url.searchParams.get('min_date') || '0');
-				const maxDate = parseInt(url.searchParams.get('max_date') || '0');
-				if (!minDate || !maxDate || maxDate < minDate) {
-					return jsonResponse(
-						{ error: 'min_date and max_date required (max_date >= min_date)' },
-						400,
-						corsHeaders
-					);
-				}
-				// 上限保护: 单次最多查询 90 天
-				if (maxDate - minDate > 90) {
-					return jsonResponse(
-						{ error: 'range too wide, max 90 days' },
-						400,
-						corsHeaders
-					);
-				}
-				const data = await db.getAggregatedRefererDaily(env.DB, minDate, maxDate);
-				return jsonResponse({ success: true, data }, 200, corsHeaders);
-			}
-
-			if (path === '/metrics/referer-daily' && request.method === 'DELETE') {
-				const cutoff = parseInt(url.searchParams.get('cutoff_date') || '0');
-				if (!cutoff) {
-					return jsonResponse(
-						{ error: 'cutoff_date required' },
-						400,
-						corsHeaders
-					);
-				}
-				const deleted = await db.pruneOldRefererDaily(env.DB, cutoff);
-				return jsonResponse({ success: true, deleted }, 200, corsHeaders);
-			}
-
-			// ============================================
-			// 根路径 - API 信息
-			// ============================================
-			if (path === '/' || path === '') {
-				return jsonResponse(
-					{
-						name: 'proxy-go-sync API v2',
-						version: '3.0.0',
-						endpoints: {
-							'Path Stats': {
-								'GET /path-stats': 'Get all path statistics',
-								'GET /path-stats?path=/xxx': 'Get stats for specific path',
-								'POST /path-stats': 'Batch update path statistics',
-							},
-							'Banned IPs': {
-								'GET /banned-ips': 'Get all banned IPs',
-								'GET /banned-ips?active=true': 'Get active bans only',
-								'POST /banned-ips': 'Batch update banned IPs',
-								'GET /banned-ips/history': 'Get ban history',
-								'GET /banned-ips/history?ip=xxx': 'Get history for specific IP',
-							},
-							'Config Maps': {
-								'GET /config-maps': 'Get all path configurations',
-								'GET /config-maps?enabled=true': 'Get enabled paths only',
-								'GET /config-maps/{path}': 'Get specific path config',
-								'POST /config-maps': 'Batch update path configs',
-								'DELETE /config-maps/{path}': 'Delete path config',
-							},
-							'Config Other': {
-								'GET /config-other': 'Get all system configs',
-								'GET /config-other?key=xxx': 'Get specific config',
-								'POST /config-other': 'Batch update system configs',
-							},
-							'Admin SQL (token-protected)': {
-								'POST /admin/sql/batch': 'Run a transactional batch of {sql, params?} statements',
-								'POST /admin/sql/query': 'Run a single read query and return rows',
-							},
-							'Metrics': {
-								'GET /metrics/status-codes': 'Get HTTP status code statistics',
-								'POST /metrics/status-codes': 'Batch update status code stats',
-								'GET /metrics/latency': 'Get latency distribution',
-								'POST /metrics/latency': 'Batch update latency distribution',
-								'GET /metrics/path-timeseries?min_hour&max_hour': 'Get aggregated path time series',
-								'POST /metrics/path-timeseries': 'Batch upload node-local time-series buckets',
-								'DELETE /metrics/path-timeseries?cutoff_hour': 'Prune old time-series buckets',
-								'GET /metrics/referer-daily?min_date&max_date': 'Get aggregated referer host daily series',
-								'POST /metrics/referer-daily': 'Batch upload node-local referer daily buckets',
-								'DELETE /metrics/referer-daily?cutoff_date': 'Prune old referer daily buckets',
-							},
-						},
-					},
-					200,
-					corsHeaders
-				);
-			}
-
-			return jsonResponse({ error: 'Not found' }, 404, corsHeaders);
-		} catch (error) {
-			console.error('Error handling request:', error);
-			return jsonResponse(
-				{
-					error: 'Internal server error',
-					message: error instanceof Error ? error.message : 'Unknown error',
-				},
-				500,
-				corsHeaders
-			);
+		// 旧协议的通用 SQL 执行器挂在 /admin/sql/*, 必须先于管理前端的 /admin/* 分发
+		if (path.startsWith('/admin/sql/')) {
+			return bearerMatches(request, env.API_TOKEN) ? handleLegacy(request, env) : json({ error: 'Unauthorized' }, 401);
 		}
+
+		if (path.startsWith('/admin/api/')) return handleAdminAPI(request, env, url);
+
+		if (path === '/' || path === '/admin') return Response.redirect(`${url.origin}/admin/`, 302);
+
+		if (path.startsWith('/admin/')) return serveAdminAsset(request, env, url);
+
+		// 节点旧协议: 路径不重叠, 以 Bearer API_TOKEN 区分
+		if (bearerMatches(request, env.API_TOKEN)) return handleLegacy(request, env);
+
+		return json({ error: 'Not found' }, 404);
 	},
 };
 
-/**
- * 从 query string 解析累计统计的读取范围
- *
- * node_id=X       只返回节点 X 的原始行 (节点恢复自身内存计数)
- * exclude_node=X  返回除 X 外所有节点的求和 (调用方叠加自己的实时值)
- * by_node=1       返回全部节点的原始行 (仪表盘展示各节点明细)
- * 都不带          返回全节点求和
- */
-function readScope(url: URL): db.MetricsScope {
-	return {
-		nodeId: url.searchParams.get('node_id') || undefined,
-		excludeNode: url.searchParams.get('exclude_node') || undefined,
-		byNode: url.searchParams.get('by_node') === '1',
-	};
-}
-
-function jsonResponse(data: any, status: number, headers: Record<string, string> = {}): Response {
-	return new Response(JSON.stringify(data), {
-		status,
-		headers: {
-			'Content-Type': 'application/json',
-			...headers,
-		},
-	});
+// serveAdminAsset 剥掉 /admin 前缀映射到静态导出产物; 页面路由缺失时回落到 404.html
+async function serveAdminAsset(request: Request, env: Env, url: URL): Promise<Response> {
+	const inner = new URL(url);
+	inner.pathname = url.pathname.slice('/admin'.length) || '/';
+	const resp = await env.ASSETS.fetch(new Request(inner, request));
+	if (resp.status !== 404) return resp;
+	const notFound = new URL(url);
+	notFound.pathname = '/404.html';
+	const page = await env.ASSETS.fetch(new Request(notFound, { method: 'GET' }));
+	return new Response(page.body, { status: 404, headers: page.headers });
 }

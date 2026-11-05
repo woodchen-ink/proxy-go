@@ -12,33 +12,6 @@ on:
     branches: [ main ]
 
 jobs:
-  build-web:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: web/package-lock.json
-
-      - name: Install dependencies
-        working-directory: web
-        run: npm ci
-
-      - name: Build web
-        working-directory: web
-        run: npm run build
-
-      - name: Upload web artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-out
-          path: web/out
-
   build-backend:
     runs-on: ubuntu-latest
     strategy:
@@ -64,7 +37,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          go build -o proxy-go-${{ matrix.arch }}
+          go build -ldflags "-X proxy-go/internal/control.Version=${GITHUB_SHA::7}" -o proxy-go-${{ matrix.arch }}
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
@@ -73,7 +46,7 @@ jobs:
           path: proxy-go-${{ matrix.arch }}
 
   docker:
-    needs: [build-web, build-backend]
+    needs: [build-backend]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -113,8 +86,6 @@ jobs:
           cp Dockerfile docker-context/
           cp proxy-go-amd64/proxy-go-amd64 docker-context/proxy-go.amd64
           cp proxy-go-arm64/proxy-go-arm64 docker-context/proxy-go.arm64
-          mkdir -p docker-context/web/out
-          cp -r web-out/* docker-context/web/out/
   
       - name: Build and push Docker images
         uses: docker/build-push-action@v6

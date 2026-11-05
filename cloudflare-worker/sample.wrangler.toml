@@ -1,13 +1,39 @@
 name = "proxy-go-sync"
 main = "src/index.ts"
-compatibility_date = "2024-01-01"
+compatibility_date = "2025-09-01"
+workers_dev = true
 
-# D1 数据库绑定
+# 中控管理域名 (czl.net 在同账号下, Custom Domain 自动建 DNS 与证书)
+routes = [
+  { pattern = "i-manage.czl.net", custom_domain = true }
+]
+
 [[d1_databases]]
 binding = "DB"
 database_name = "proxy-go-data"
-database_id = "" # 部署时需要填写实际的 database_id
+database_id = ""
 
-# 可选: 添加环境变量用于 API 认证
-[vars]
-API_TOKEN = ""  # 改为你的实际 token
+[[durable_objects.bindings]]
+name = "HUB"
+class_name = "Hub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Hub"]
+
+# 管理前端: web/ 的 Next.js 静态导出; Worker 先行, 由 index.ts 剥掉 /admin 前缀后取资源
+[assets]
+directory = "../web/out"
+binding = "ASSETS"
+run_worker_first = true
+html_handling = "auto-trailing-slash"
+not_found_handling = "none"
+
+# 密钥全部用 wrangler secret put 设置, 见 src/env.ts
+
+[observability]
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
+persist = true

@@ -55,6 +55,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # 管理前端随 Worker 一起发布 (wrangler.toml [assets] 指向 ../web/out)
+      - name: Build admin frontend
+        working-directory: web
+        run: npm ci && npm run build
+
       - name: Generate or use provided API token
         id: token
         run: |
@@ -95,12 +100,28 @@ jobs:
           cat > wrangler.toml <<EOF
           name = "${WORKER_NAME}"
           main = "src/index.ts"
-          compatibility_date = "2024-01-01"
+          compatibility_date = "2025-09-01"
+          workers_dev = true
 
           [[d1_databases]]
           binding = "DB"
           database_name = "${D1_DB_NAME}"
           database_id = "${{ steps.d1.outputs.database_id }}"
+
+          [[durable_objects.bindings]]
+          name = "HUB"
+          class_name = "Hub"
+
+          [[migrations]]
+          tag = "v1"
+          new_sqlite_classes = ["Hub"]
+
+          [assets]
+          directory = "../web/out"
+          binding = "ASSETS"
+          run_worker_first = true
+          html_handling = "auto-trailing-slash"
+          not_found_handling = "none"
 
           [observability]
           [observability.logs]

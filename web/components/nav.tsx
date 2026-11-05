@@ -37,13 +37,19 @@ export function Nav() {
   return (
     <nav className="border-b bg-card">
       <div className="container mx-auto flex h-14 items-center px-4">
-        <div className="mr-6 font-semibold tracking-tight">Proxy Go 管理后台</div>
+        <div className="mr-6 font-semibold tracking-tight">Proxy Go 中控</div>
         <div className="flex flex-1 items-center space-x-4 md:space-x-6 text-sm">
           <Link href="/dashboard" className={navLinkClass(pathname === "/dashboard")}>
             仪表盘
           </Link>
           <Link href="/dashboard/config" className={navLinkClass(pathname === "/dashboard/config")}>
             配置
+          </Link>
+          <Link href="/dashboard/nodes" className={navLinkClass(pathname === "/dashboard/nodes")}>
+            节点
+          </Link>
+          <Link href="/dashboard/dns" className={navLinkClass(pathname === "/dashboard/dns")}>
+            DNS
           </Link>
           <Link href="/dashboard/security" className={navLinkClass(pathname === "/dashboard/security")}>
             安全

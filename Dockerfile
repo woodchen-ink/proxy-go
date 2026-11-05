@@ -1,11 +1,10 @@
-# 构建后端
+# 节点镜像: 只含代理进程; 管理前端随中控 Worker 发布 (cloudflare-worker/)
 FROM alpine:latest
 
 ARG TARGETARCH
 WORKDIR /app
 
 COPY proxy-go.${TARGETARCH} /app/proxy-go
-COPY web/out /app/web/out
 
 RUN mkdir -p /app/data && \
     chmod +x /app/proxy-go && \

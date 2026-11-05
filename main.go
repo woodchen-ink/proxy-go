@@ -7,7 +7,6 @@ import (
 	"os/signal"
 	"proxy-go/internal/initapp"
 	"proxy-go/internal/metrics"
-	"proxy-go/internal/router"
 	"proxy-go/pkg/sync"
 	"syscall"
 	"time"
@@ -34,8 +33,7 @@ func main() {
 	}
 
 	// 创建路由处理器
-	handlers := []router.RouteHandler{components.AdminHandler}
-	handlers = append(handlers, components.MainRoutes...)
+	handlers := components.MainRoutes
 
 	// 创建主处理器
 	mainHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

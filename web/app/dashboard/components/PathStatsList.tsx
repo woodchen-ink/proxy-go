@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/alert-dialog"
 
 // PathNodeStat 单个路径在单个节点上的计数
-// is_current 为 true 的那份是实时值, 其余最多滞后一个上报周期
+// is_current 为 true 的节点在线 (中控实时快照), 其余是离线节点最后一次上报的值
 interface PathNodeStat {
   node_id: string
   is_current: boolean
@@ -469,7 +469,7 @@ export default function PathStatsList() {
                             {n.node_id}
                             {n.is_current && (
                               <span className="ml-1.5 text-[10px] text-muted-foreground">
-                                (本节点·实时)
+                                (实时)
                               </span>
                             )}
                           </TableCell>

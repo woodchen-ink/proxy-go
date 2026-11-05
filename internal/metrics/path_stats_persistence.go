@@ -119,4 +119,4 @@ func (pss *PathStatsStorage) LoadPathStats() ([]models.PathMetricsJSON, error) {
 	return result, nil
 }
 
-// 跨节点合并见 cluster.go 的 PeerStats.MergePathStats
+// 跨节点合并由中控完成 (cloudflare-worker/src/admin/stats.ts)

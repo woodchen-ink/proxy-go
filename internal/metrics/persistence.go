@@ -34,6 +34,7 @@ type MetricsStorage struct {
 	lastSaveTime time.Time
 	mutex        gosync.RWMutex
 	saveCount    int64 // 已执行保存次数, 用于按频率触发清理任务
+	saveMu       gosync.Mutex // 定时心跳与中控 pulse 指令可能并发触发, 串行化避免重复上报 / 重复应用重置
 }
 
 // NewMetricsStorage 创建新的指标存储
@@ -108,6 +109,8 @@ func (ms *MetricsStorage) SaveMetrics() error {
 	if !sync.IsEnabled() {
 		return nil // D1 未启用，跳过保存
 	}
+	ms.saveMu.Lock()
+	defer ms.saveMu.Unlock()
 
 	start := time.Now()
 	log.Printf("[MetricsStorage] 开始保存指标数据到 D1...")

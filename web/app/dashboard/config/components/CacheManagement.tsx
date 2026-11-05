@@ -143,10 +143,11 @@ export default function CacheManagement() {
       })
 
       if (!response.ok) throw new Error("清理缓存失败")
+      const result = await response.json().catch(() => ({}))
 
       toast({
         title: "成功",
-        description: "缓存已清理",
+        description: result.message || "缓存已清理",
       })
 
       fetchStats()

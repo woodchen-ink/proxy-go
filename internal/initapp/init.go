@@ -6,12 +6,12 @@ import (
 	"log"
 	"os"
 	"proxy-go/internal/config"
+	"proxy-go/internal/control"
 	"proxy-go/internal/handler"
 	"proxy-go/internal/metrics"
 	"proxy-go/internal/middleware"
 	"proxy-go/internal/router"
 	"proxy-go/internal/security"
-	"proxy-go/internal/service"
 	"proxy-go/pkg/sync"
 	"time"
 )
@@ -28,20 +28,11 @@ type AppComponents struct {
 	Config             *config.Config
 	BanManager         *security.IPBanManager
 	SecurityMiddleware *middleware.SecurityMiddleware
-	MetricsService     *service.MetricsService
-	AuthService        *service.AuthService
-	// Handlers
-	ProxyHandler     *handler.ProxyHandler
-	MirrorHandler    *handler.MirrorProxyHandler
-	ConfigHandler    *handler.ConfigHandler
-	SecurityHandler  *handler.SecurityHandler
-	AuthHandler      *handler.AuthHandler
-	MetricsHandler   *handler.MetricsHandler
-	PathStatsHandler *handler.PathStatsHandler
-	CDNHandler       *handler.CDNHandler
-	// Routes
-	AdminHandler router.RouteHandler
-	MainRoutes   []router.RouteHandler
+
+	ProxyHandler  *handler.ProxyHandler
+	MirrorHandler *handler.MirrorProxyHandler
+
+	MainRoutes []router.RouteHandler
 }
 
 // Init 初始化应用程序（简化版本，兼容现有代码）
@@ -207,10 +198,6 @@ func initServices(components *AppComponents) error {
 	applyReferer(components.Config)
 	config.RegisterUpdateCallback(applyReferer)
 
-	// 创建服务层
-	startTime := time.Now()
-	components.MetricsService = service.NewMetricsService(startTime)
-	components.AuthService = service.NewAuthServiceFromEnv()
 
 	log.Printf("[Init] 应用服务初始化完成")
 	return nil
@@ -219,50 +206,22 @@ func initServices(components *AppComponents) error {
 // createHandlers 创建各种处理器
 func createHandlers(components *AppComponents) error {
 	log.Printf("[Init] 正在创建处理器...")
-
-	// 创建代理处理器
 	components.MirrorHandler = handler.NewMirrorProxyHandler()
 	components.ProxyHandler = handler.NewProxyHandler(components.Config)
 
-	// 创建配置处理器
-	components.ConfigHandler = handler.NewConfigHandler(components.ConfigManager)
-
-	// 创建安全管理处理器 (始终创建; banManager 为 nil 时各端点返回空态而非 404)
-	components.SecurityHandler = handler.NewSecurityHandler(components.BanManager)
-
-	// 创建认证处理器
-	components.AuthHandler = handler.NewAuthHandler(components.AuthService)
-
-	// 创建指标处理器
-	components.MetricsHandler = handler.NewMetricsHandler(components.MetricsService)
-
-	// 创建路径统计处理器
-	components.PathStatsHandler = handler.NewPathStatsHandler(metrics.GetCollector())
-
-	// 创建 CDN 缓存清理处理器
-	components.CDNHandler = handler.NewCDNHandler(components.ConfigManager)
-
+	// 中控通道: 清缓存 / 配置生效 / 解封等指令经 WebSocket 下发到这里执行
+	control.Start(control.Deps{
+		ProxyCache:  components.ProxyHandler.Cache,
+		MirrorCache: components.MirrorHandler.Cache,
+		BanManager:  components.BanManager,
+	})
 	log.Printf("[Init] 处理器创建完成")
 	return nil
 }
 
-// setupRoutes 设置路由
 func setupRoutes(components *AppComponents) error {
 	log.Printf("[Init] 正在设置路由...")
-
-	// 设置路由
-	_, components.AdminHandler = router.SetupAdminRoutes(
-		components.ProxyHandler,
-		components.AuthHandler,
-		components.MetricsHandler,
-		components.MirrorHandler,
-		components.ConfigHandler,
-		components.SecurityHandler,
-		components.PathStatsHandler,
-		components.CDNHandler,
-	)
 	components.MainRoutes = router.SetupMainRoutes(components.MirrorHandler, components.ProxyHandler, components.ConfigManager)
-
 	log.Printf("[Init] 路由设置完成")
 	return nil
 }

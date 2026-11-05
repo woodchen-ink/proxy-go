@@ -60,11 +60,14 @@ interface Metrics {
   cluster?: ClusterInfo
 }
 
-// ClusterInfo 说明累计类指标覆盖了哪些节点
-// 瞬时类指标 (QPS / 带宽 / 内存 / 最近请求) 始终只反映 node_id 这一个节点
+// ClusterInfo 说明指标覆盖了哪些节点
+// 中控汇总口径: 在线节点 (live_nodes) 为实时快照, 离线节点为其最后一次上报的累计值;
+// QPS / 带宽 / 内存 / 最近请求只能来自在线节点
 export interface ClusterInfo {
   node_id: string
   nodes: string[]
+  live_nodes?: string[]
+  hub?: boolean
   aggregated: boolean
   degraded: boolean
 }

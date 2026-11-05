@@ -14,7 +14,7 @@ import {
 import { fetchApi } from "@/lib/api-client"
 
 // NodeSummary 单节点累计概览
-// is_current 那份来自本节点内存 (实时), 其余来自 D1 (reported_at 为其上报时刻)
+// is_current 为 true 的节点在线, 数据来自中控实时快照; 其余来自 D1 (reported_at 为其最后上报时刻)
 interface NodeSummary {
   node_id: string
   is_current: boolean
@@ -148,7 +148,7 @@ export default function NodeStatsCard() {
                     {n.node_id}
                     {n.is_current && (
                       <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
-                        本节点
+                        在线
                       </span>
                     )}
                   </TableCell>

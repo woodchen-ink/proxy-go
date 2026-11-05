@@ -129,9 +129,5 @@ func applyStatsResets(ctx context.Context, resets []d1sync.StatsReset) int {
 		applied++
 	}
 
-	if applied > 0 {
-		// 其他节点的旧值可能还躺在 peer 缓存里, 强制下次仪表盘读取重新拉 D1
-		InvalidatePeerStats()
-	}
 	return applied
 }
