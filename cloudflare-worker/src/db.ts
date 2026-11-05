@@ -102,6 +102,10 @@ export async function getPathStats(
  *
  * 覆盖语义是刻意的: 上报的是节点自身的绝对累计值, 重复上报同一份不会双计。
  * 跨节点求和交给读侧的 GROUP BY, 不在写侧做累加。
+ *
+ * 各统计表的 UPSERT 都带 WHERE: 值没变的行不更新, 不计 D1 写入行数。节点每 5 分钟
+ * 全量上报 (含近 6 小时时间序列窗口), 大部分行两次之间不变, 不跳过会让免费额度
+ * (10 万行/天) 每天超标。代价是 updated_at 只在值变化时刷新, 读侧把它当"最后变化时间"。
  */
 export async function batchUpsertPathStats(db: D1Database, stats: PathStat[]): Promise<void> {
 	if (stats.length === 0) return;
@@ -127,7 +131,19 @@ export async function batchUpsertPathStats(db: D1Database, stats: PathStat[]): P
         bytes_saved = excluded.bytes_saved,
         total_latency_ns = excluded.total_latency_ns,
         last_access_time = excluded.last_access_time,
-        updated_at = excluded.updated_at`
+        updated_at = excluded.updated_at
+      WHERE request_count IS NOT excluded.request_count
+        OR error_count IS NOT excluded.error_count
+        OR bytes_transferred IS NOT excluded.bytes_transferred
+        OR status_2xx IS NOT excluded.status_2xx
+        OR status_3xx IS NOT excluded.status_3xx
+        OR status_4xx IS NOT excluded.status_4xx
+        OR status_5xx IS NOT excluded.status_5xx
+        OR cache_hits IS NOT excluded.cache_hits
+        OR cache_misses IS NOT excluded.cache_misses
+        OR bytes_saved IS NOT excluded.bytes_saved
+        OR total_latency_ns IS NOT excluded.total_latency_ns
+        OR last_access_time IS NOT excluded.last_access_time`
 		).bind(
 			stat.path,
 			stat.node_id || 'default',
@@ -450,7 +466,8 @@ export async function batchUpsertStatusCodes(db: D1Database, metrics: StatusCode
        VALUES (?1, ?2, ?3, ?4)
        ON CONFLICT(status_code, node_id) DO UPDATE SET
          count = excluded.count,
-         updated_at = excluded.updated_at`
+         updated_at = excluded.updated_at
+       WHERE count IS NOT excluded.count`
 		).bind(m.status_code, m.node_id || 'default', m.count, m.updated_at)
 	);
 
@@ -472,7 +489,8 @@ export async function batchUpsertLatencyDistribution(db: D1Database, metrics: La
        VALUES (?1, ?2, ?3, ?4)
        ON CONFLICT(bucket, node_id) DO UPDATE SET
          count = excluded.count,
-         updated_at = excluded.updated_at`
+         updated_at = excluded.updated_at
+       WHERE count IS NOT excluded.count`
 		).bind(m.bucket, m.node_id || 'default', m.count, m.updated_at)
 	);
 
@@ -519,7 +537,8 @@ export async function batchUpsertPathTimeseries(
          requests = MAX(excluded.requests, requests),
          bytes = MAX(excluded.bytes, bytes),
          errors = MAX(excluded.errors, errors),
-         updated_at = excluded.updated_at`
+         updated_at = excluded.updated_at
+       WHERE excluded.requests > requests OR excluded.bytes > bytes OR excluded.errors > errors`
 		).bind(
 			p.path,
 			p.ts_hour,
@@ -605,7 +624,8 @@ export async function batchUpsertRefererDaily(
          requests = MAX(excluded.requests, requests),
          bytes = MAX(excluded.bytes, bytes),
          errors = MAX(excluded.errors, errors),
-         updated_at = excluded.updated_at`
+         updated_at = excluded.updated_at
+       WHERE excluded.requests > requests OR excluded.bytes > bytes OR excluded.errors > errors`
 		).bind(
 			p.host,
 			p.ts_date,
