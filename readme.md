@@ -1,139 +1,140 @@
 # Proxy-Go
 
-A 'simple' reverse proxy server written in Go.
+高性能反向代理 (Go), 配一个跑在 Cloudflare 上的中控 (Worker + Durable Object + D1)。节点只负责代理, 管理后台、配置下发、全集群清缓存、统计汇总、DNS 故障切换都在中控完成, 全部在 Cloudflare 免费额度内运行。
 
-使用方法: https://www.sunai.net/t/topic/165
+使用说明 / 部署帖: https://www.sunai.net/t/topic/165
 
-最新镜像地址: woodchen/proxy-go:latest
+镜像: `ghcr.io/woodchen-ink/proxy-go:latest`
 
-## 新版统计仪表盘
+## 架构
 
-![image](https://github.com/user-attachments/assets/0b87863e-5566-4ee6-a3b7-94a994cdd572)
+```
+管理员浏览器 ──> 中控 (Cloudflare Worker, 你的管理域名)
+                 ├─ 管理后台 / 管理 API (CZL Connect 登录)
+                 ├─ 公开清缓存接口 /api/cache/clear-url
+                 └─ Hub (Durable Object): 节点 WebSocket / 指令下发 / 实时快照 / 健康巡检 / DNS 切换
+                         ▲ WebSocket (节点主动连出)          D1: 配置 + 累计统计
+节点 A / 节点 B / 节点 C (Docker, 只跑代理, 不带管理界面)
+```
 
-## 图片
-
-![image](https://github.com/user-attachments/assets/99b1767f-9470-4838-a4eb-3ce70bbe2094)
-
-### 仪表统计盘
-
-![image](https://github.com/user-attachments/assets/e09d0eb1-e1bb-435b-8f90-b04bc474477b)
-
-### 配置页
-
-![image](https://github.com/user-attachments/assets/5acddc06-57f5-417c-9fec-87e906dc22af)
-
-### 缓存页
-
-![image](https://github.com/user-attachments/assets/6225b909-c5ff-4374-bb07-c472fbec791d)
-
-## 说明
-
-1. 支持gzip和brotli压缩
-2. 不同路径代理不同站点
-3. 回源Host修改
-4. 大文件使用流式传输, 小文件直接提供
-5. 可以按照文件后缀名代理不同站点, 方便图片处理等
-6. 适配Cloudflare Images的图片自适应功能, 透传`Accept`头, 支持`format=auto`
-7. 支持网页端监控和管理
+- **改配置**: 后台保存后几秒内全部节点生效 (中控广播, 逐节点回执)
+- **清缓存**: 一次清全部节点, 再清 Cloudflare / EdgeOne 的 CDN 缓存
+- **仪表盘**: 在线节点 15 秒实时快照, 离线节点显示最后上报值
+- **DNS 分流与故障切换**: 节点挂了自动改 CF for SaaS 回源 + DNSPod 线路记录, 或 EdgeOne 源站; 首选节点恢复后自动切回; 全程推送企业微信
 
 ## 功能特性
 
-- 🚀 **多路径代理**: 根据不同路径代理到不同的目标服务器
-- 🔄 **扩展名规则**: 根据文件扩展名和大小智能选择目标服务器
-- 🌐 **域名过滤**: 支持根据请求域名应用不同的扩展规则
-- 📦 **压缩支持**: 支持Gzip和Brotli压缩
-- 🎯 **302跳转**: 支持302跳转模式
-- 📊 **缓存管理**: 智能缓存机制提升性能
-- 🕒 **客户端缓存头**: 按路径的缓存时长自动下发 `Cache-Control`，不受上游影响
-- 📈 **监控指标**: 内置监控和指标收集
-- 🎨 **自定义 Favicon**: 通过环境变量轻松设置自定义 favicon
-- ☁️ **D1 云同步**: 配置和指标跨节点同步，支持一键部署到 Cloudflare
+- 🚀 **多路径代理**: 不同路径代理到不同源站, 支持多源按序故障转移
+- 🔄 **扩展名规则**: 按文件扩展名、大小、请求域名选择目标服务器
+- 🎯 **302 跳转**: 路径级 / 扩展名级 302 模式
+- 📦 **智能缓存**: 默认按 URL 缓存, 可按路径开启 Cloudflare Images 兼容的按格式分桶
+- 🕒 **客户端缓存头**: 按路径缓存时长下发 `Cache-Control`
+- 🛡️ **Referer 黑白名单 / 重定向**, IP 封禁
+- 🎛️ **中控**: 全集群配置 / 清缓存 / 统计 / 节点状态 / DNS 故障切换 / 企业微信告警
 
-## D1 云同步部署（可选，推荐）
+## 部署
 
-启用后，配置/路径统计/IP 封禁/指标会持久化到 Cloudflare D1，支持多节点共享配置，**完全免费额度内可用**。
+需要: 一个 Cloudflare 账号 (免费即可), 一个托管在 Cloudflare 上的域名 (给中控用), 一个 [CZL Connect](https://connect.czl.net) OAuth 应用 (管理后台登录), 以及至少一台装了 Docker 的服务器跑节点。
 
-### 一键部署（无需下载代码）
+### 让 Agent 帮你部署
 
-整个流程在浏览器里完成：
+把下面这段整体复制给 Claude Code / Codex / Cursor 等编程 Agent (需要它能执行命令), 按提示补齐尖括号里的值即可:
 
-1. **Fork 本仓库**
-2. **拿 Cloudflare 凭据**：
-   - `CLOUDFLARE_ACCOUNT_ID`（Dashboard 任意域名 Overview 右下侧栏）
-   - `CLOUDFLARE_API_TOKEN`（[创建 Token](https://dash.cloudflare.com/profile/api-tokens) → 模板选 "Edit Cloudflare Workers"，并勾上 `Account → D1:Edit`）
-3. **写入仓库 Secret**：fork 后的仓库 → Settings → Secrets and variables → Actions → 添加 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID`
-4. **触发部署**：Actions → **Deploy Cloudflare Worker** → Run workflow（可全用默认）
-5. **复制结果**：workflow 跑完后 Summary 页面会输出三行环境变量，加到 proxy-go 的 `.env` 即可：
+```text
+帮我部署 proxy-go (https://github.com/woodchen-ink/proxy-go): 中控部署到我的 Cloudflare 账号, 节点用 Docker 部署。
 
-   ```bash
-   D1_SYNC_ENABLED=true
-   D1_SYNC_URL=https://proxy-go-sync.<你的子域>.workers.dev
-   D1_SYNC_TOKEN=<自动生成>
-   ```
+我的信息:
+- 中控管理域名: <例如 proxy-admin.example.com, 域名需托管在 Cloudflare>
+- CZL Connect OAuth: client_id=<...> client_secret=<...>
+  (回调地址需要在 CZL Connect 应用里填 https://<中控管理域名>/admin/api/oauth/callback)
+- 企业微信群机器人 webhook (可选, 用于节点掉线 / 切换通知): <...>
+- 节点服务器: <SSH 地址列表, 或说明我自己去服务器上执行>
 
-> ⚠️ Token 只在 Summary 显示一次，请立即保存。
+步骤:
+1. git clone 仓库; 确认本机有 Node.js 20+, 用 `npx wrangler login` 登录 Cloudflare。
+2. 构建管理前端: `cd web && npm ci && npm run build` (产物 web/out 会随中控一起发布)。
+3. `cd cloudflare-worker && npm ci`; `npx wrangler d1 create proxy-go-data` 拿到 database_id。
+4. 复制 sample.wrangler.toml 为 wrangler.toml, 填入 database_id, 把 routes 里的 i-manage.czl.net 换成我的中控管理域名。
+5. 生成随机值并用 `npx wrangler secret put <名字>` 写入以下密钥 (值不要打印到日志):
+   API_TOKEN (节点令牌, openssl rand -hex 32), CACHE_CLEAR_REMOTE_TOKEN (公开清缓存令牌),
+   SESSION_SECRET (openssl rand -base64 48), CRED_KEY (必须是 32 字节 base64: openssl rand -base64 32),
+   OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, 以及可选的 WECOM_WEBHOOK_URL。
+   API_TOKEN 和 CACHE_CLEAR_REMOTE_TOKEN 部署完要告诉我, 后面节点和第三方要用。
+6. `npx wrangler deploy`; 打开 https://<中控管理域名>/admin/ 确认能看到登录页。
+7. 在每台节点服务器上用仓库里的 docker-compose.yml 部署, 环境变量:
+   D1_SYNC_ENABLED=true, D1_SYNC_URL=https://<中控管理域名>, D1_SYNC_TOKEN=<API_TOKEN>, TZ=Asia/Shanghai;
+   挂载 ./data:/app/data 持久化 (节点 ID / 配置快照 / 指令游标都在里面)。
+8. 节点启动后会自动连上中控。登录后台「节点」页确认每个节点在线, 再到「配置」页添加路径映射。
+9. 如需 DNS 故障切换: 在「DNS」页添加 Cloudflare / 腾讯云凭据, 在「节点」页给节点登记回源主机名, 再新建绑定。
+```
 
-详见 [D1_SYNC_SETUP.md](D1_SYNC_SETUP.md) 和 [cloudflare-worker/README.md](cloudflare-worker/README.md)（含本地部署方式）。
+### 手动部署
 
-## Favicon 配置
+**1. 中控**
 
-### 方式 1: 环境变量 (推荐)
+```bash
+git clone https://github.com/woodchen-ink/proxy-go && cd proxy-go
+cd web && npm ci && npm run build && cd ..
+cd cloudflare-worker && npm ci
+npx wrangler login
+npx wrangler d1 create proxy-go-data          # 记下 database_id
+cp sample.wrangler.toml wrangler.toml         # 填 database_id, 改 routes 为你的管理域名
+npx wrangler secret put API_TOKEN              # 节点令牌, 随机 32 字节 hex
+npx wrangler secret put CACHE_CLEAR_REMOTE_TOKEN
+npx wrangler secret put SESSION_SECRET
+npx wrangler secret put CRED_KEY               # openssl rand -base64 32
+npx wrangler secret put OAUTH_CLIENT_ID
+npx wrangler secret put OAUTH_CLIENT_SECRET
+npx wrangler secret put WECOM_WEBHOOK_URL      # 可选
+npx wrangler deploy
+```
 
-通过环境变量 `FAVICON_URL` 指定一个外部 URL，无需修改任何文件：
+不想装本地环境也可以用仓库的 GitHub Actions: Fork 后在 Secrets 里填 `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`, 运行 **Deploy Cloudflare Worker**, 再用 `wrangler secret put` (或 Dashboard → Worker → Settings → Variables) 补上其余密钥, 详见 [cloudflare-worker/README.md](cloudflare-worker/README.md)。
+
+**2. 节点**
 
 ```yaml
 # docker-compose.yml
-environment:
-  - FAVICON_URL=https://example.com/favicon.ico
+services:
+  proxy:
+    image: ghcr.io/woodchen-ink/proxy-go:latest
+    ports:
+      - "3336:3336"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
+      - D1_SYNC_ENABLED=true
+      - D1_SYNC_URL=https://<中控管理域名>
+      - D1_SYNC_TOKEN=<API_TOKEN>
+    restart: always
 ```
 
-**优点**:
-- ✅ 无需映射本地文件或目录
-- ✅ 适合使用预构建 Docker 镜像的用户
-- ✅ 可以使用 R2/B2/CDN 上的 favicon
+节点 ID 默认按出口 IP 生成并固化到 `data/node_id`, 也可以用 `NODE_ID` 指定。节点连中控默认走 `D1_SYNC_URL`, 需要分开时设 `CONTROL_URL`。
 
-### 方式 2: 本地文件
+**3. 登录后台**: 打开 `https://<中控管理域名>/admin/`, 用 CZL Connect 登录。
 
-替换 `web/public/favicon.ico` 文件并重启服务。
+## Favicon
 
-**优先级**: 环境变量 `FAVICON_URL` > 本地文件 `web/public/favicon.ico` > 返回 404
-
-详细说明请查看 [favicon/README.md](favicon/README.md)
+环境变量 `FAVICON_URL` 指定一个外部地址即可 (`FAVICON_URL=https://example.com/favicon.ico`); 也可以替换镜像内的 `web/public/favicon.ico`。优先级: `FAVICON_URL` > 本地文件 > 404。
 
 ## 远程单 URL 清理缓存
 
-服务支持给外部三方应用提供独立的单 URL 缓存清理接口。
-
-### 环境变量
+给第三方应用调用的清缓存接口, 部署在中控上, 一次清全部节点。
 
 ```bash
-CACHE_CLEAR_REMOTE_TOKEN=your-secure-random-token
-```
-
-未配置 `CACHE_CLEAR_REMOTE_TOKEN` 时，接口对外返回 `404`，表示该能力未启用。
-
-### 接口
-
-```bash
-curl -X POST 'http://127.0.0.1:3336/api/cache/clear-url' \
-  -H 'Authorization: Bearer your-secure-random-token' \
+curl -X POST 'https://<中控管理域名>/api/cache/clear-url' \
+  -H 'Authorization: Bearer <CACHE_CLEAR_REMOTE_TOKEN>' \
   -H 'Content-Type: application/json' \
-  -d '{
-    "url": "https://your-domain.com/b2/img/logo.png?v=123",
-    "type": "all"
-  }'
+  -d '{"url": "https://your-domain.com/b2/img/logo.png?v=123", "type": "all"}'
 ```
 
-### 规则
+- `url` 支持完整 URL 或站内路径, 只按路径清理, 忽略 query 与 fragment; `type` 可选 `proxy` / `mirror` / `all` (默认)
+- 全部在线节点清理完 (最多等 3 秒) 后返回, `cleared_items` 是各节点之和; 离线节点重连后补执行
+- 若后台启用了 CDN provider, 会再异步清理对应完整 URL 的 CDN 缓存; 传站内路径时需额外带 `"host": "your-domain.com"` 才会清 CDN
+- 同一路由在每个节点上也可用: 节点会把请求原样转发给中控并补上 host, 老调用方不改地址也能清到全集群
 
-- 仅支持 `POST /api/cache/clear-url`
-- `Authorization` 必须为 `Bearer <CACHE_CLEAR_REMOTE_TOKEN>`
-- `url` 支持完整 URL 或站内路径
-- 内部只按路径清理，自动忽略 query 和 fragment
-- `type` 可选，支持 `proxy`、`mirror`、`all`，默认 `all`
-- 本地缓存清理成功后，若已启用 CDN provider，会异步按 `urls` 类型清理对应完整 URL 的 CDN 缓存；输入为站内路径时使用请求 host 与代理协议头补全 URL，CDN 清理失败只记录日志，不影响本接口响应
-
-### 成功响应
+成功响应:
 
 ```json
 {
@@ -142,7 +143,9 @@ curl -X POST 'http://127.0.0.1:3336/api/cache/clear-url' \
     "input_url": "https://your-domain.com/b2/img/logo.png?v=123",
     "normalized_url": "/b2/img/logo.png",
     "type": "all",
-    "cleared_items": 1
+    "cleared_items": 3,
+    "nodes": 3,
+    "pending_nodes": 0
   },
   "msg": "cache cleared"
 }
