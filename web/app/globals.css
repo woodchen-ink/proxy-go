@@ -67,7 +67,7 @@
     --sidebar-foreground: 0 0% 4%;
     --sidebar-primary: 0 0% 4%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 220 12% 93%;
+    --sidebar-accent: 220 11% 89%;      /* 比侧栏底深一档, 选中 / hover 可辨 */
     --sidebar-accent-foreground: 0 0% 4%;
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 200 75% 53%;
