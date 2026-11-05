@@ -81,6 +81,12 @@ const STATEMENTS = [
 		ok_since INTEGER NOT NULL DEFAULT 0,
 		error TEXT NOT NULL DEFAULT ''
 	)`,
+	// 健康巡检的跨唤醒状态 (DO 被驱逐后内存清空, 去重键与节拍时间必须落盘)
+	`CREATE TABLE IF NOT EXISTS kv (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL,
+		updated_at INTEGER NOT NULL
+	)`,
 ];
 
 export function migrate(sql: SqlStorage): void {

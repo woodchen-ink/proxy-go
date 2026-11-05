@@ -136,16 +136,9 @@ function isZero(v: unknown): boolean {
 export async function writeConfig(env: Env, cfg: ProxyConfig): Promise<number> {
 	validateConfig(cfg);
 	const now = Date.now();
-	const { version: current } = await readConfig(env);
-	const version = Math.max(now, current + 1);
-
 	const stmts: D1PreparedStatement[] = [];
-	const paths = Object.keys(cfg.MAP);
-	if (paths.length > 0) {
-		stmts.push(env.DB.prepare(`DELETE FROM config_maps WHERE path NOT IN (${paths.map(() => '?').join(',')})`).bind(...paths));
-	} else {
-		stmts.push(env.DB.prepare('DELETE FROM config_maps'));
-	}
+	// json_each 只占一个绑定参数 (D1 单语句最多 100 个绑定参数)
+	stmts.push(env.DB.prepare('DELETE FROM config_maps WHERE path NOT IN (SELECT value FROM json_each(?1))').bind(JSON.stringify(Object.keys(cfg.MAP))));
 
 	for (const [path, pc] of Object.entries(cfg.MAP)) {
 		const extra: Record<string, unknown> = {};
@@ -179,8 +172,17 @@ export async function writeConfig(env: Env, cfg: ProxyConfig): Promise<number> {
 		if (key === 'MAP' || key.startsWith('__')) continue;
 		stmts.push(upsertOther(key, JSON.stringify(value)));
 	}
-	stmts.push(upsertOther(VERSION_KEY, String(version)));
+	// 版本号在事务内基于当前值递增, 并发保存也保持单调 (后提交的一定版本更大, 节点不会漏拉)
+	stmts.push(
+		env.DB.prepare(
+			`INSERT INTO config_other (key, value, updated_at)
+			 VALUES (?1, CAST(MAX(?2, COALESCE((SELECT CAST(value AS INTEGER) FROM config_other WHERE key = ?1), 0) + 1) AS TEXT), ?2)
+			 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+		).bind(VERSION_KEY, now),
+	);
+	stmts.push(env.DB.prepare('SELECT value FROM config_other WHERE key = ?1').bind(VERSION_KEY));
 
-	await env.DB.batch(stmts);
-	return version;
+	const results = await env.DB.batch(stmts);
+	const row = results[results.length - 1].results?.[0] as { value?: string } | undefined;
+	return parseInt(row?.value ?? '0', 10) || now;
 }

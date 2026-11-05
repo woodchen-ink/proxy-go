@@ -250,6 +250,8 @@ export class DnsService {
 		}
 
 		const anyOK = result.cf !== 'failed' || result.dnspod !== 'failed';
+		// last_switch_at 记"最近一次尝试": 全部失败也要推进, 否则自动切回每 20s 重试一次并刷告警
+		this.sql.exec('UPDATE dns_bindings SET last_switch_at = ? WHERE id = ?', Date.now(), id);
 		if (anyOK) {
 			// 手动切换即表达新的首选: 目标挪到池首, 否则自动切回会在 10 分钟后把人工决定撤销
 			const pool = kind === 'switch' ? [nodeId, ...b.pool.filter((n) => n !== nodeId)] : b.pool;

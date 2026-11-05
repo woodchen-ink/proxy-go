@@ -99,7 +99,7 @@ func Start(deps Deps) {
 		nodeID:   d1sync.NodeID(),
 		cache:    service.NewCacheService(deps.ProxyCache, deps.MirrorCache),
 		bans:     deps.BanManager,
-		cmdQueue: make(chan inbound, 256),
+		cmdQueue: make(chan inbound, 1024),
 	}
 	c.cursor.Store(readCursor())
 	global.Store(c)
@@ -186,15 +186,18 @@ func (c *Client) session() error {
 		}
 		switch msg.T {
 		case "welcome":
-			// 游标为 0 说明是新节点或丢了游标文件: 只快进不重放, 中控也不会补发
-			if c.cursor.Load() == 0 && msg.LatestSeq > 0 {
+			// 游标为 0 说明是新节点或丢了游标文件: 只快进不重放, 中控也不会补发。
+			// 中控序号比游标还小说明中控指令日志被重建过: 跟随中控, 否则之后的新指令都会被当成"已执行"跳过
+			if cur := c.cursor.Load(); (cur == 0 && msg.LatestSeq > 0) || msg.LatestSeq < cur {
 				c.setCursor(msg.LatestSeq)
 			}
 		case "cmd":
 			select {
 			case c.cmdQueue <- msg:
 			default:
-				log.Printf("[Control] 指令队列已满, 丢弃 seq=%d (重连后会补发)", msg.Seq)
+				// 不能丢: 丢了后面的指令照常执行并推进游标, 这条就永远补不回来。断线让中控按游标重发
+				log.Printf("[Control] 指令队列已满 (seq=%d), 断开重连以按游标补发", msg.Seq)
+				return fmt.Errorf("command queue full")
 			}
 		case "rpc":
 			go c.handleRPC(msg)

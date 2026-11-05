@@ -73,7 +73,7 @@ export async function handleCacheClearURL(request: Request, env: Env, ctx: Execu
 	const normalized = normalizeURL(input);
 	if (!normalized) return respond(400, 'invalid url');
 
-	const cmd = await hubStub(env).issueCommand('cache_clear', { type, scope: 'url', url: normalized }, 'api:clear-url');
+	const cmd = await hubStub(env).issueCommand('cache_clear', { type, scope: 'url', url: normalized }, 'api:clear-url', 3000);
 	const cleared = cmd.acks.reduce((sum, a) => sum + (Number((a.result as { cleared_items?: number } | undefined)?.cleared_items) || 0), 0);
 	console.log(`[RemoteCacheClear] OK type=${type} input=${JSON.stringify(input)} normalized=${normalized} nodes=${cmd.acks.length} cleared=${cleared}`);
 

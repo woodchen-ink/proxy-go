@@ -88,6 +88,7 @@ export async function handleAuthRoutes(request: Request, env: Env, path: string)
 	}
 
 	if (path === '/admin/api/logout' && request.method === 'POST') {
+		if (!isSameOrigin(request)) return fail(403, 'cross-site request rejected');
 		return json({ message: '已退出登录' }, 200, { 'Set-Cookie': cookie(SESSION_COOKIE, '', 0) });
 	}
 	return null;

@@ -102,12 +102,15 @@ export function buildMetrics(src: ClusterSources) {
 	let latencyNs = 0;
 	let latencyReqs = 0;
 
+	// 累计量一律取逐路径累计 (启动时已从 D1 恢复); 进程级 total_bytes / latency_sum_ns 每次重启归零, 不能与历史混算
 	for (const [, s] of liveList) {
 		addCounts(statusCodes, s.status_codes);
 		addCounts(latencyDist, s.latency_distribution);
-		totalBytes += s.total_bytes;
-		latencyNs += s.latency_sum_ns;
-		latencyReqs += Object.values(s.status_codes ?? {}).reduce((a, b) => a + Number(b), 0);
+		for (const r of s.path_stats ?? []) {
+			totalBytes += Number(r.bytes_transferred);
+			latencyNs += Number(r.total_latency_ns);
+			latencyReqs += Number(r.request_count);
+		}
 	}
 	for (const r of src.statusRows) statusCodes[r.status_code] = (statusCodes[r.status_code] ?? 0) + Number(r.count);
 	for (const r of src.latencyRows) latencyDist[r.bucket] = (latencyDist[r.bucket] ?? 0) + Number(r.count);

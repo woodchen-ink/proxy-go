@@ -81,6 +81,7 @@ export interface HubAPI {
 interface Attachment {
 	nodeId: string;
 	connectedAt: number;
+	ready?: boolean; // hello 处理完 (补发已排队) 才接收实时指令, 否则实时指令会插到补发之前
 }
 
 interface Waiter<T> {
@@ -218,6 +219,8 @@ export class Hub extends DurableObject<Env> implements HubAPI {
 
 		const latest = this.latestSeq();
 		const cursor = Number(msg.cursor) || 0;
+		const att = ws.deserializeAttachment() as Attachment;
+		ws.serializeAttachment({ ...att, ready: true } satisfies Attachment);
 		this.cursors.set(nodeId, cursor);
 		this.send(ws, { t: 'welcome', latest_seq: latest, server_time: now } satisfies WelcomeFrame);
 
@@ -269,7 +272,7 @@ export class Hub extends DurableObject<Env> implements HubAPI {
 		const out = new Map<string, WebSocket>();
 		for (const ws of this.ctx.getWebSockets()) {
 			const att = ws.deserializeAttachment() as Attachment | null;
-			if (att && ws.readyState === WebSocket.OPEN) out.set(att.nodeId, ws);
+			if (att?.ready && ws.readyState === WebSocket.OPEN) out.set(att.nodeId, ws);
 		}
 		return out;
 	}
