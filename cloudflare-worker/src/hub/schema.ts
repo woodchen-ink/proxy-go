@@ -87,11 +87,56 @@ const STATEMENTS = [
 		value TEXT NOT NULL,
 		updated_at INTEGER NOT NULL
 	)`,
+	// 节点程序版本 (CI 每个 main 提交登记一次), assets = {arch: {url, sha256, size}}
+	`CREATE TABLE IF NOT EXISTS releases (
+		version TEXT PRIMARY KEY,
+		build_time INTEGER NOT NULL,
+		title TEXT NOT NULL DEFAULT '',
+		assets TEXT NOT NULL,
+		created_at INTEGER NOT NULL
+	)`,
+	// 滚动发布: kind = binary (容器内换程序) | container (Dokploy 重新部署); steps 为逐节点进度
+	`CREATE TABLE IF NOT EXISTS rollouts (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		kind TEXT NOT NULL,
+		version TEXT NOT NULL DEFAULT '',
+		status TEXT NOT NULL,
+		steps TEXT NOT NULL,
+		source TEXT NOT NULL DEFAULT '',
+		message TEXT NOT NULL DEFAULT '',
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	)`,
+	// Dokploy 实例 (一个实例可管多个节点), API Key 以 CRED_KEY 加密
+	`CREATE TABLE IF NOT EXISTS dokploy_servers (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		url TEXT NOT NULL,
+		secret TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	)`,
 ];
+
+// 追加列: 只增不改, 已存在则跳过
+const COLUMNS: [table: string, column: string, ddl: string][] = [
+	['nodes', 'hello_at', 'INTEGER NOT NULL DEFAULT 0'], // 最近一次 hello (重连) 时间, 判断容器是否已重建
+	['nodes', 'dokploy_server_id', 'INTEGER NOT NULL DEFAULT 0'],
+	['nodes', 'dokploy_app_id', "TEXT NOT NULL DEFAULT ''"],
+	['nodes', 'dokploy_app_type', "TEXT NOT NULL DEFAULT 'application'"], // application | compose
+];
+
+function addColumns(sql: SqlStorage): void {
+	for (const [table, column, ddl] of COLUMNS) {
+		const exists = sql.exec(`SELECT 1 FROM pragma_table_info('${table}') WHERE name = ?`, column).toArray().length > 0;
+		if (!exists) sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+	}
+}
 
 export function migrate(sql: SqlStorage): void {
 	for (const stmt of STATEMENTS) sql.exec(stmt);
 	addBindingKind(sql);
+	addColumns(sql);
 }
 
 // addBindingKind v2: 绑定增加 kind (cf_dnspod / edgeone), 唯一键从 hostname 改为 (hostname, kind)。

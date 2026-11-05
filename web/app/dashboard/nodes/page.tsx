@@ -9,27 +9,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useToast } from "@/components/ui/use-toast"
 import { fetchApi } from "@/lib/api-client"
 import { formatAge, formatBps, formatTime } from "@/lib/format"
-
-interface NodeInfo {
-  node_id: string
-  ipv4: string
-  ipv6: string
-  version: string
-  origin_host: string
-  note: string
-  state: "up" | "down"
-  state_since: number
-  last_seen: number
-  online: boolean
-  probe: { ok: number; checked_at: number; error: string } | null
-  live: {
-    requests_per_second: number
-    current_bandwidth_bps: number
-    active_requests: number
-    uptime_sec: number
-    config_version: number
-  } | null
-}
+import { ReleaseCard } from "./components/ReleaseCard"
+import type { NodeInfo } from "./types"
 
 interface CommandInfo {
   seq: number
@@ -62,7 +43,7 @@ const LEVEL_CLASS: Record<string, string> = {
   error: "text-destructive",
 }
 
-// NodesPage 中控视角的节点总览: 在线状态 / 回源主机名登记 / 指令回执 / 事件日志
+// NodesPage 中控视角的节点总览: 在线状态 / 回源主机名登记 / 版本发布 / 指令回执 / 事件日志
 export default function NodesPage() {
   const { toast } = useToast()
   const [nodes, setNodes] = useState<NodeInfo[]>([])
@@ -235,6 +216,8 @@ export default function NodesPage() {
           </Table>
         </CardContent>
       </Card>
+
+      <ReleaseCard nodes={nodes} onChange={load} />
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>

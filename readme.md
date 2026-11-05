@@ -114,6 +114,8 @@ services:
 
 **3. 登录后台**: 打开 `https://<中控管理域名>/admin/`, 用 CZL Connect 登录。
 
+**4. 节点更新 (可选)**: 在 fork 的仓库 Settings → Secrets 里加 `CONTROL_URL` (`https://<中控管理域名>`) 与 `CONTROL_API_TOKEN` (与中控 `wrangler secret put RELEASE_TOKEN` 设的值相同, 不要复用 `API_TOKEN`), 之后每次 push main, CI 会发布节点程序并登记到中控, 在后台「节点」页选版本逐个滚动升级, 或打开「新版本自动升级程序」。基础镜像更新用同一页的「滚动重建容器」, 需先在「Dokploy 设置」里登记 Dokploy 地址、API Key 与每个节点对应的应用。节点必须挂载 `data` 卷, 新程序存在 `data/bin`。
+
 ## Favicon
 
 环境变量 `FAVICON_URL` 指定一个外部地址即可 (`FAVICON_URL=https://example.com/favicon.ico`); 也可以替换镜像内的 `web/public/favicon.ico`。优先级: `FAVICON_URL` > 本地文件 > 404。

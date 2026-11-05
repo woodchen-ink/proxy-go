@@ -1,13 +1,18 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"proxy-go/internal/control"
 	"proxy-go/internal/initapp"
 	"proxy-go/internal/metrics"
+	"proxy-go/internal/upgrade"
 	"proxy-go/pkg/sync"
+	gosync "sync"
 	"syscall"
 	"time"
 
@@ -15,6 +20,14 @@ import (
 )
 
 func main() {
+	// 自更新试运行用: 只打印版本号后退出
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		fmt.Println(control.Version)
+		return
+	}
+	// 同一镜像下有自更新程序时转交过去 (不返回)
+	upgrade.Launch(control.BuildTimeUnix())
+
 	// 加载.env文件（如果存在）
 	if err := godotenv.Load(".env"); err != nil {
 		log.Printf("[Init] .env文件不存在或加载失败: %v", err)
@@ -63,41 +76,48 @@ func main() {
 		Handler: handler,
 	}
 
-	// 优雅关闭
+	// 停服流程: 信号退出与自更新 exec 前共用
+	var stopOnce gosync.Once
+	shutdown := func(drain time.Duration) {
+		stopOnce.Do(func() {
+			log.Println("Shutting down server...")
+			if components.BanManager != nil {
+				components.BanManager.Stop()
+			}
+			metrics.StopMetricsStorage()
+			if collector := metrics.GetCollector(); collector != nil {
+				collector.Stop(5 * time.Second)
+			}
+			if err := sync.StopSyncService(); err != nil {
+				log.Printf("Error stopping sync service: %v", err)
+			}
+			// 自更新时给在途请求一个短暂的收尾窗口, 超时强关
+			if drain > 0 {
+				ctx, cancel := context.WithTimeout(context.Background(), drain)
+				_ = server.Shutdown(ctx)
+				cancel()
+			}
+			if err := server.Close(); err != nil {
+				log.Printf("Error during server shutdown: %v", err)
+			}
+		})
+	}
+	upgrade.SetShutdown(func() { shutdown(5 * time.Second) })
+
 	go func() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
-		log.Println("Shutting down server...")
-
-		// 停止安全管理器
-		if components.BanManager != nil {
-			components.BanManager.Stop()
-		}
-
-		// 停止指标存储服务
-		metrics.StopMetricsStorage()
-
-		// 停止指标收集器后台 goroutine（最多等 5s）
-		if collector := metrics.GetCollector(); collector != nil {
-			collector.Stop(5 * time.Second)
-		}
-
-		// 触发待执行的配置同步（如有）
-
-		// 停止同步服务
-		if err := sync.StopSyncService(); err != nil {
-			log.Printf("Error stopping sync service: %v", err)
-		}
-
-		if err := server.Close(); err != nil {
-			log.Printf("Error during server shutdown: %v\n", err)
-		}
+		shutdown(0)
 	}()
 
 	// 启动服务器
 	log.Println("Starting proxy server on :3336")
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatal("Error starting server:", err)
+	}
+	// 自更新中: 等 exec 替换进程, main 返回会直接结束进程
+	if upgrade.Restarting() {
+		select {}
 	}
 }

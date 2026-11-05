@@ -76,7 +76,9 @@ export interface WelcomeFrame {
 export type CommandType = 'cache_clear' | 'cache_enable' | 'pulse' | 'unban';
 
 // RPC: 现场向在线节点查询本地数据, 等齐或超时后汇总
-export type RpcMethod = 'security_banned' | 'security_stats' | 'security_check' | 'security_history';
+//   upgrade  { version, build_time, assets: {arch: {sha256, size}} } 只发给单个节点 (滚动升级),
+//            节点下载校验后回结果再 exec 新程序; 不进指令日志, 免得重连补发旧版本
+export type RpcMethod = 'security_banned' | 'security_stats' | 'security_check' | 'security_history' | 'upgrade';
 
 // ---------- 快照 ----------
 

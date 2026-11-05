@@ -28,6 +28,7 @@ const RETENTION_MS = 30 * 86400_000;
 
 export interface HealthDeps {
 	isAlive(nodeId: string): boolean;
+	inMaintenance(nodeId: string): boolean; // 滚动发布正在处理该节点
 	event(level: 'info' | 'warning' | 'error', kind: string, subject: string, message: string, notify?: boolean): void;
 }
 
@@ -78,6 +79,8 @@ export class HealthMonitor {
 				if (r.state === 'down') this.markUp(id);
 				continue;
 			}
+			// 发布中的节点断开是预期内的, 不判掉线 (也就不触发故障切换); 发布结束后照常判定
+			if (this.deps.inMaintenance(id)) continue;
 			if (r.state === 'up' && now - Number(r.last_seen) >= DOWN_AFTER_MS) {
 				this.sql.exec("UPDATE nodes SET state = 'down', state_since = ? WHERE node_id = ?", now, id);
 				this.deps.event('warning', 'node_down', id, '节点与中控失联超过 1 分钟', true);

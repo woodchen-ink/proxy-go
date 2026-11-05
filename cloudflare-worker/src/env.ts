@@ -8,6 +8,7 @@
  *   SESSION_SECRET            管理端会话 cookie 的 HMAC 密钥
  *   CRED_KEY                  DNS 平台凭据的 AES-GCM 密钥 (base64, 32 字节)
  *   WECOM_WEBHOOK_URL         企业微信群机器人 (可选, 缺省即不通知)
+ *   RELEASE_TOKEN             CI 登记节点程序版本的专用令牌 (可选, 缺省即不接受登记; 不要与 API_TOKEN 同值)
  */
 import type { HubAPI } from './hub/hub';
 
@@ -22,6 +23,7 @@ export interface Env {
 	SESSION_SECRET?: string;
 	CRED_KEY?: string;
 	WECOM_WEBHOOK_URL?: string;
+	RELEASE_TOKEN?: string;
 }
 
 // hubStub 中控全局唯一的 Durable Object 实例

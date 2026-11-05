@@ -1,12 +1,14 @@
 package control
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"time"
 
 	"proxy-go/internal/metrics"
+	"proxy-go/internal/upgrade"
 )
 
 // runCommands 串行执行指令 (清缓存 / pulse 等可能耗时, 不阻塞读循环与保活)
@@ -107,6 +109,15 @@ func (c *Client) handleRPC(msg inbound) {
 	if sendErr := c.send(res); sendErr != nil {
 		log.Printf("[Control] 回 RPC 结果失败 %s: %v", msg.Method, sendErr)
 	}
+	// 新程序已就绪: 先把结果回给中控, 再停服 exec (进程被替换, 之后的代码不会执行)
+	if msg.Method == "upgrade" && err == nil {
+		go func() {
+			time.Sleep(500 * time.Millisecond)
+			if err := upgrade.Restart(); err != nil {
+				log.Printf("[Control] 切换新程序失败: %v", err)
+			}
+		}()
+	}
 }
 
 func (c *Client) rpc(method string, raw json.RawMessage) (any, error) {
@@ -179,6 +190,22 @@ func (c *Client) rpc(method string, raw json.RawMessage) (any, error) {
 			}
 		}
 		return map[string]any{"history": items, "total": len(items)}, nil
+
+	case "upgrade":
+		// 滚动升级不走指令日志: 指令会在重连时补发, 7 天后重放一次旧版本升级是灾难
+		var req upgrade.Request
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		if req.Version == Version {
+			return nil, fmt.Errorf("already running %s", Version)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+		defer cancel()
+		if err := upgrade.Apply(ctx, req, c.baseURL, c.token, BuildTimeUnix()); err != nil {
+			return nil, err
+		}
+		return map[string]string{"from": Version, "to": req.Version}, nil
 
 	default:
 		return nil, fmt.Errorf("unknown rpc %q", method)

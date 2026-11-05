@@ -13,6 +13,7 @@ import type { CacheStats } from '../hub/protocol';
 import { currentUser, handleAuthRoutes, isSameOrigin } from './auth';
 import { activeProvider, purge, type PurgeRequest } from './cdn';
 import { readConfig, validateProviders, writeConfig, type CDNProvider } from './config';
+import { registerReleaseRoutes } from './release';
 import { buildRefererDaily, buildTimeseries } from './series';
 import { buildMetrics, buildNodeStats, buildPathStats, loadSources } from './stats';
 
@@ -30,6 +31,7 @@ const routes: [string, RegExp, Handler][] = [];
 function route(method: string, pattern: string, h: Handler) {
 	routes.push([method, new RegExp(`^${pattern}$`), h]);
 }
+registerReleaseRoutes(route);
 
 export async function handleAdminAPI(request: Request, env: Env, url: URL): Promise<Response> {
 	try {

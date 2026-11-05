@@ -36,7 +36,9 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          go build -ldflags "-X proxy-go/internal/control.Version=${GITHUB_REF_NAME}" -o proxy-go-${{ matrix.arch }}
+          # 构建时刻而非提交时间: 同一提交的 main 构建与 tag 构建也要能区分 (自更新据此判断镜像是否换过)
+          BUILD_TIME=$(date +%s)
+          go build -ldflags "-X proxy-go/internal/control.Version=${GITHUB_REF_NAME} -X proxy-go/internal/control.BuildTime=${BUILD_TIME}" -o proxy-go-${{ matrix.arch }}
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4

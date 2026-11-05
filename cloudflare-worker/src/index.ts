@@ -3,6 +3,8 @@
  *
  * 路由:
  *   /node/ws                 节点 WebSocket (Bearer API_TOKEN + X-Node-Id) → Hub DO
+ *   /node/releases           CI 登记新版本 (Bearer RELEASE_TOKEN)
+ *   /node/release/<v>/<arch> 节点下载新程序 (Bearer API_TOKEN, 代理 GitHub Release)
  *   /api/cache/clear-url     公开清缓存 (Bearer CACHE_CLEAR_REMOTE_TOKEN)
  *   /admin/api/*             管理 API (OAuth 会话 cookie)
  *   /admin/*                 管理前端静态资源 (Next.js 静态导出, basePath=/admin)
@@ -13,6 +15,7 @@ import { handleAdminAPI } from './admin/router';
 import { handleLegacy } from './legacy';
 import { bearerMatches, json } from './lib/http';
 import { handleCacheClearURL } from './public/cache_clear';
+import { handleNodeRelease } from './public/release';
 
 export { Hub } from './hub/hub';
 
@@ -24,6 +27,16 @@ export default {
 		if (path === '/node/ws') {
 			if (!bearerMatches(request, env.API_TOKEN)) return json({ error: 'Unauthorized' }, 401);
 			return hubStub(env).fetch(request);
+		}
+
+		// 登记版本只认 CI 专用的 RELEASE_TOKEN: 节点都持有 API_TOKEN, 任一节点泄露不能借此给全网推程序
+		if (path === '/node/releases') {
+			if (!bearerMatches(request, env.RELEASE_TOKEN)) return json({ error: 'Unauthorized' }, 401);
+			return handleNodeRelease(request, env, path);
+		}
+		if (path.startsWith('/node/release/')) {
+			if (!bearerMatches(request, env.API_TOKEN)) return json({ error: 'Unauthorized' }, 401);
+			return handleNodeRelease(request, env, path);
 		}
 
 		if (path === '/api/cache/clear-url') return handleCacheClearURL(request, env, ctx);

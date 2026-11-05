@@ -37,7 +37,9 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          go build -ldflags "-X proxy-go/internal/control.Version=${GITHUB_SHA::7}" -o proxy-go-${{ matrix.arch }}
+          # 构建时刻而非提交时间: 同一提交的 main 构建与 tag 构建也要能区分 (自更新据此判断镜像是否换过)
+          BUILD_TIME=$(date +%s)
+          go build -ldflags "-X proxy-go/internal/control.Version=${GITHUB_SHA::7} -X proxy-go/internal/control.BuildTime=${BUILD_TIME}" -o proxy-go-${{ matrix.arch }}
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
@@ -96,32 +98,63 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      # 每个 dokploy 应用有各自的 webhook, 多节点部署需要逐个触发;
-      # 漏掉一个会让该节点长期停在旧镜像上, 与其他节点行为不一致
-      - name: Trigger Dokploy deploy
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  # 发布节点程序供中控滚动升级: 每个 main 提交一个 build-<sha7> Release (只保留最近 20 个),
+  # 然后把版本登记到中控。节点增减都在中控页面里管理, 这里不随节点变化
+  release:
+    needs: [build-backend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create GitHub release
+        id: rel
         env:
-          DOKPLOY_WEBHOOK_URL: ${{ secrets.DOKPLOY_WEBHOOK_URL }}
-          DOKPLOY_WEBHOOK_URL_US: ${{ secrets.DOKPLOY_WEBHOOK_URL_US }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          triggered=0
-          failed=0
-          for hook in "$DOKPLOY_WEBHOOK_URL" "$DOKPLOY_WEBHOOK_URL_US"; do
-            [ -z "$hook" ] && continue
-            # 单个节点触发失败不阻断其余节点, 但要在末尾汇总为失败, 避免静默漏部署
-            if curl -fsSL -X POST "$hook" \
-                 -H "Content-Type: application/json" \
-                 -d "{\"ref\":\"${GITHUB_REF}\",\"sha\":\"${GITHUB_SHA}\"}"; then
-              triggered=$((triggered + 1))
-            else
-              echo "::warning::某个 dokploy webhook 触发失败"
-              failed=$((failed + 1))
-            fi
-          done
-          echo "已触发 $triggered 个节点, 失败 $failed 个"
-          if [ "$triggered" -eq 0 ]; then
-            echo "::error::没有配置任何 dokploy webhook, 所有节点都不会更新"
-            exit 1
+          set -e
+          VERSION=${GITHUB_SHA::7}
+          TAG="build-${VERSION}"
+          mkdir -p dist
+          cp proxy-go-amd64/proxy-go-amd64 dist/proxy-go-linux-amd64
+          cp proxy-go-arm64/proxy-go-arm64 dist/proxy-go-linux-arm64
+          (cd dist && sha256sum proxy-go-linux-* > SHA256SUMS)
+          TITLE=$(git log -1 --format=%s)
+          gh release create "$TAG" dist/* --target "$GITHUB_SHA" --prerelease --title "$TAG" --notes "$TITLE" || gh release upload "$TAG" dist/* --clobber
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Register release with control panel
+        env:
+          CONTROL_URL: ${{ secrets.CONTROL_URL }}
+          CONTROL_API_TOKEN: ${{ secrets.CONTROL_API_TOKEN }}
+          VERSION: ${{ steps.rel.outputs.version }}
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          set -e
+          if [ -z "$CONTROL_URL" ] || [ -z "$CONTROL_API_TOKEN" ]; then
+            echo "::warning::未配置 CONTROL_URL / CONTROL_API_TOKEN, 中控看不到这个版本, 只能手动在 Dokploy 更新"
+            exit 0
           fi
-          [ "$failed" -gt 0 ] && exit 1
-          exit 0
+          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          asset() {
+            local f="dist/proxy-go-linux-$1"
+            jq -n --arg url "$BASE/proxy-go-linux-$1" --arg sha "$(sha256sum "$f" | cut -d' ' -f1)" --argjson size "$(stat -c %s "$f")" '{url: $url, sha256: $sha, size: $size}'
+          }
+          BODY=$(jq -n --arg version "$VERSION" --argjson build_time "$(date +%s)" --arg title "$(git log -1 --format=%s)" --argjson amd64 "$(asset amd64)" --argjson arm64 "$(asset arm64)" '{version: $version, build_time: $build_time, title: $title, assets: {amd64: $amd64, arm64: $arm64}}')
+          curl -fsS -X POST "${CONTROL_URL%/}/node/releases" -H "Authorization: Bearer $CONTROL_API_TOKEN" -H "Content-Type: application/json" -d "$BODY"
+
+      - name: Prune old releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release list --limit 200 --json tagName,createdAt --jq '[.[] | select(.tagName | startswith("build-"))] | sort_by(.createdAt) | reverse | .[20:] | .[].tagName' |
+          while read -r tag; do
+            gh release delete "$tag" --yes --cleanup-tag || true
+          done

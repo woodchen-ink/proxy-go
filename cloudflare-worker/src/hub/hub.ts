@@ -15,6 +15,9 @@ import { notifyWecom, type NoticeLevel } from '../lib/wecom';
 import { migrate } from './schema';
 import { HealthMonitor } from './health';
 import { DnsService } from './dns_service';
+import { ReleaseStore, type Release } from './release_store';
+import { RolloutService } from './rollout';
+import { releaseOp } from './release_ops';
 import type {
 	CommandFrame,
 	CommandType,
@@ -76,6 +79,9 @@ export interface HubAPI {
 	updateNode(nodeId: string, patch: { origin_host?: string; note?: string }): Promise<void>;
 	removeNode(nodeId: string): Promise<void>;
 	dnsOp(op: string, args?: Record<string, unknown>): Promise<unknown>;
+	releaseOp(op: string, args?: Record<string, unknown>): Promise<unknown>;
+	registerRelease(input: Release): Promise<Release>;
+	getRelease(version: string): Promise<Release | null>;
 }
 
 interface Attachment {
@@ -99,6 +105,8 @@ export class Hub extends DurableObject<Env> implements HubAPI {
 	private rpcWaiters = new Map<string, Waiter<RpcReply>>();
 	readonly health: HealthMonitor;
 	readonly dns: DnsService;
+	readonly releases: ReleaseStore;
+	readonly rollouts: RolloutService;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -108,6 +116,13 @@ export class Hub extends DurableObject<Env> implements HubAPI {
 		this.dns = new DnsService(this.sql, env, (lvl, kind, subject, msg, notify) => this.recordEvent(lvl, kind, subject, msg, notify));
 		this.health = new HealthMonitor(this.sql, this.dns, {
 			isAlive: (id) => this.isAlive(id),
+			inMaintenance: (id) => this.rollouts?.activeNode() === id,
+			event: (lvl, kind, subject, msg, notify) => this.recordEvent(lvl, kind, subject, msg, notify),
+		});
+		this.releases = new ReleaseStore(this.sql, env.CRED_KEY);
+		this.rollouts = new RolloutService(this.sql, this.releases, {
+			isAlive: (id) => this.isAlive(id),
+			rpcNode: (id, method, params, timeoutMs) => this.rpcNode(id, method, params, timeoutMs),
 			event: (lvl, kind, subject, msg, notify) => this.recordEvent(lvl, kind, subject, msg, notify),
 		});
 	}
@@ -191,8 +206,8 @@ export class Hub extends DurableObject<Env> implements HubAPI {
 		const existing = this.sql.exec('SELECT state FROM nodes WHERE node_id = ?', nodeId).toArray()[0];
 		if (!existing) {
 			this.sql.exec(
-				`INSERT INTO nodes (node_id, ipv4, ipv6, version, hostname, first_seen, last_seen, state, state_since)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, 'up', ?)`,
+				`INSERT INTO nodes (node_id, ipv4, ipv6, version, hostname, first_seen, last_seen, state, state_since, hello_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, 'up', ?, ?)`,
 				nodeId,
 				msg.ipv4 ?? '',
 				msg.ipv6 ?? '',
@@ -201,16 +216,18 @@ export class Hub extends DurableObject<Env> implements HubAPI {
 				now,
 				now,
 				now,
+				now,
 			);
 			this.recordEvent('info', 'node_join', nodeId, `新节点接入 (${msg.version || 'unknown'}, ${msg.ipv4 || msg.ipv6 || '-'})`, true);
 		} else {
 			this.sql.exec(
 				`UPDATE nodes SET ipv4 = COALESCE(NULLIF(?, ''), ipv4), ipv6 = COALESCE(NULLIF(?, ''), ipv6),
-				 version = ?, hostname = ?, last_seen = ? WHERE node_id = ?`,
+				 version = ?, hostname = ?, last_seen = ?, hello_at = ? WHERE node_id = ?`,
 				msg.ipv4 ?? '',
 				msg.ipv6 ?? '',
 				msg.version ?? '',
 				msg.hostname ?? '',
+				now,
 				now,
 				nodeId,
 			);
@@ -353,6 +370,19 @@ export class Hub extends DurableObject<Env> implements HubAPI {
 		return { replies: [...waiter.got.values()], missing: online.filter((n) => !waiter.got.has(n)) };
 	}
 
+	// rpcNode 只问一个节点 (滚动升级); 不在线或超时返回 null
+	async rpcNode(nodeId: string, method: RpcMethod, params: Record<string, unknown>, timeoutMs = 5000): Promise<RpcReply | null> {
+		const ws = this.socketsByNode().get(nodeId);
+		if (!ws || !this.isAlive(nodeId)) return null;
+		const id = crypto.randomUUID();
+		const waiter = this.makeWaiter<RpcReply>([nodeId]);
+		this.rpcWaiters.set(id, waiter);
+		this.send(ws, { t: 'rpc', id, method, params });
+		await this.waitFor(waiter, timeoutMs);
+		this.rpcWaiters.delete(id);
+		return waiter.got.get(nodeId) ?? null;
+	}
+
 	async listCommands(limit = 50): Promise<unknown[]> {
 		const cmds = this.sql.exec('SELECT * FROM commands ORDER BY seq DESC LIMIT ?', Math.min(limit, 200)).toArray();
 		if (cmds.length === 0) return [];
@@ -430,6 +460,29 @@ export class Hub extends DurableObject<Env> implements HubAPI {
 		}
 	}
 
+	// ============ 发布 ============
+
+	async releaseOp(op: string, args: Record<string, unknown> = {}): Promise<unknown> {
+		return releaseOp(
+			{ sql: this.sql, store: this.releases, rollouts: this.rollouts, kick: () => this.ctx.waitUntil(this.rollouts.tick()) },
+			op,
+			args,
+		);
+	}
+
+	async registerRelease(input: Release): Promise<Release> {
+		const rel = this.releases.register(input);
+		this.recordEvent('info', 'release', rel.version, rel.title || '新版本已登记');
+		this.rollouts.onRelease(rel.version);
+		this.ctx.waitUntil(this.rollouts.tick());
+		await this.ensureAlarm();
+		return rel;
+	}
+
+	async getRelease(version: string): Promise<Release | null> {
+		return this.releases.get(version);
+	}
+
 	// ============ 告警巡检 ============
 
 	async alarm(): Promise<void> {
@@ -437,6 +490,11 @@ export class Hub extends DurableObject<Env> implements HubAPI {
 			await this.health.tick();
 		} catch (e) {
 			console.error('health tick failed:', e);
+		}
+		try {
+			await this.rollouts.tick();
+		} catch (e) {
+			console.error('rollout tick failed:', e);
 		}
 		await this.ctx.storage.setAlarm(Date.now() + ALARM_INTERVAL_MS);
 	}
@@ -491,4 +549,6 @@ const EVENT_TITLES: Record<string, string> = {
 	switch: '手动切换节点',
 	switch_failed: '切换节点失败',
 	drift: '解析与配置不一致',
+	rollout_failed: '滚动发布失败, 已停止',
+	rollout_done: '滚动发布完成',
 };

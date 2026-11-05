@@ -22,11 +22,22 @@ import (
 	"proxy-go/internal/metrics"
 	"proxy-go/internal/security"
 	"proxy-go/internal/service"
+	"proxy-go/internal/upgrade"
 	d1sync "proxy-go/pkg/sync"
 )
 
 // Version 由构建注入 (-ldflags "-X proxy-go/internal/control.Version=v1.2.3"), 上报给中控展示
 var Version = "dev"
+
+// BuildTime 构建对应提交的 unix 秒 (-ldflags "-X proxy-go/internal/control.BuildTime=..."),
+// 自更新据此区分镜像程序与 data/bin 程序; 本地构建为空
+var BuildTime = ""
+
+// BuildTimeUnix BuildTime 解析为整数, 未注入或格式不对返回 0
+func BuildTimeUnix() int64 {
+	n, _ := strconv.ParseInt(strings.TrimSpace(BuildTime), 10, 64)
+	return n
+}
 
 const (
 	cursorFile       = "data/control_cursor"
@@ -186,6 +197,8 @@ func (c *Client) session() error {
 		}
 		switch msg.T {
 		case "welcome":
+			// 自更新程序首次连上中控即视为可用, 之后容器重启不再按崩溃计数回退
+			upgrade.MarkHealthy()
 			// 游标为 0 说明是新节点或丢了游标文件: 只快进不重放, 中控也不会补发。
 			// 中控序号比游标还小说明中控指令日志被重建过: 跟随中控, 否则之后的新指令都会被当成"已执行"跳过
 			if cur := c.cursor.Load(); (cur == 0 && msg.LatestSeq > 0) || msg.LatestSeq < cur {
