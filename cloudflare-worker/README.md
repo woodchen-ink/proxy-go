@@ -1,8 +1,10 @@
 # Proxy-Go Sync Worker
 
-Cloudflare Worker, 用 D1 数据库存放 proxy-go 的配置、路径统计、IP 封禁记录和指标。
+proxy-go 的中控: 管理后台 (Next.js 静态导出, 来自 `../web/out`)、管理 API、节点 WebSocket 通道 (Hub Durable Object)、DNS 绑定与故障切换, 以及节点 D1 读写的 REST 旧协议。架构与约束见仓库根 `CLAUDE.md` 的「中控」一节。
 
-**架构**: 自 v3 起, 所有 schema / migration 定义由 Go 端 (`pkg/sync/migrations.go`) 持有。worker 本身只是"D1 的薄壳代理 + 业务批量 endpoint", 一次部署后通常不再变动; 加表加索引只发版 Go, worker 不需要重新 deploy。
+**部署前先构建前端** (`cd ../web && npm run build`), 否则静态资源目录为空。中控密钥用 `wrangler secret put` 设置: `CACHE_CLEAR_REMOTE_TOKEN` / `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET` / `SESSION_SECRET` / `CRED_KEY` / `WECOM_WEBHOOK_URL`。自定义域名在 `wrangler.toml` 的 `routes` 里配置。
+
+**schema**: D1 的表由 Go 端 (`pkg/sync/migrations.go`) 持有并在节点启动时推送; 中控自己的状态 (节点 / 指令 / DNS) 在 DO 内置 SQLite, 由 `src/hub/schema.ts` 维护。
 
 ## 🚀 一键部署（推荐，无需下载代码）
 
