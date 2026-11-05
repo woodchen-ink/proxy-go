@@ -956,12 +956,14 @@ func (c *Collector) updateMetricsBatch(batch []RequestMetric) {
 		}
 
 		// 更新最近请求记录(使用完整路径), Referer 仅在请求头存在时填入
-		var referer string
+		var referer, host string
 		if m.Request != nil {
 			referer = m.Request.Header.Get("Referer")
+			host = m.Request.Host
 		}
 		c.recentRequests.Push(models.RequestLog{
 			Time:      time.Now(),
+			Host:      host,
 			Path:      m.FullPath,
 			Status:    m.Status,
 			Latency:   int64(m.Latency),

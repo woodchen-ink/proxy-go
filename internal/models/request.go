@@ -8,6 +8,7 @@ import (
 // RequestLog 请求日志
 type RequestLog struct {
 	Time      time.Time `json:"Time"`
+	Host      string    `json:"Host"` // 访问域名, 来自请求 Host, 前端据此拼可点击的完整 URL
 	Path      string    `json:"Path"`
 	Status    int       `json:"Status"`
 	Latency   int64     `json:"Latency"`

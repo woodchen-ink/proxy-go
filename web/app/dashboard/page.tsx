@@ -33,6 +33,7 @@ interface Metrics {
   status_code_stats: Record<string, number>
   recent_requests: Array<{
     Time: string
+    Host?: string // 旧版节点不带, 此时路径不出链接 (相对路径会落到中控域名)
     Path: string
     Status: number
     Latency: number
@@ -304,14 +305,19 @@ export default function DashboardPage() {
                     <tr key={i} className="border-b hover:bg-accent/30">
                       <td className="p-2 whitespace-nowrap">{formatDate(req.Time)}</td>
                       <td className="max-w-xs truncate p-2">
-                        <a
-                          href={req.Path}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="hover:underline"
-                        >
-                          {req.Path}
-                        </a>
+                        {req.Host ? (
+                          <a
+                            href={`https://${req.Host}${req.Path}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="hover:underline"
+                            title={`https://${req.Host}${req.Path}`}
+                          >
+                            {req.Path}
+                          </a>
+                        ) : (
+                          <span title={req.Path}>{req.Path}</span>
+                        )}
                       </td>
                       <td className="max-w-[14rem] truncate p-2">
                         {req.Referer ? (

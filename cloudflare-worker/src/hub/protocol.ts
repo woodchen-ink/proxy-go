@@ -114,6 +114,7 @@ export interface RawPathStat {
 
 export interface RequestLog {
 	Time: string;
+	Host?: string; // 旧版节点不带
 	Path: string;
 	Status: number;
 	Latency: number;
