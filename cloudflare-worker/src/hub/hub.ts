@@ -116,6 +116,7 @@ export class Hub extends DurableObject<Env> implements HubAPI {
 		this.dns = new DnsService(this.sql, env, (lvl, kind, subject, msg, notify) => this.recordEvent(lvl, kind, subject, msg, notify));
 		this.health = new HealthMonitor(this.sql, this.dns, {
 			isAlive: (id) => this.isAlive(id),
+			lastActivityAt: (id) => this.lastActivityAt(id),
 			inMaintenance: (id) => this.rollouts?.activeNode() === id,
 			event: (lvl, kind, subject, msg, notify) => this.recordEvent(lvl, kind, subject, msg, notify),
 		});
@@ -297,6 +298,12 @@ export class Hub extends DurableObject<Env> implements HubAPI {
 	private lastActivity(nodeId: string, ws: WebSocket): number {
 		const ping = this.ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime() ?? 0;
 		return Math.max(ping, this.lastMessageAt.get(nodeId) ?? 0);
+	}
+
+	// lastActivityAt 节点最近一次真实活动 (ping 自动应答或消息) 的时间; 无连接或刚冷启动无记录时为 0
+	lastActivityAt(nodeId: string): number {
+		const ws = this.socketsByNode().get(nodeId);
+		return ws ? this.lastActivity(nodeId, ws) : 0;
 	}
 
 	isAlive(nodeId: string): boolean {

@@ -2,11 +2,15 @@
  * 健康巡检 (Hub alarm 每 20s 调一次 tick)
  *
  * 节点状态: 以落盘的 nodes.last_seen 计失联时长, ≥ 60s 判 down, 重新 hello 即 up。
+ * last_seen 记的是节点最近一次真实活动 (ping / 消息) 的时间, 不是"巡检时还算在线"的时间:
+ * 半开连接 (节点宕机没发 close) 在在线窗口内仍算 alive, 若按巡检时刻刷新, 失联计时会被推迟一整个窗口。
  * 状态全部落 DO SQLite: DO 会被驱逐后由 alarm 唤醒, 内存里的计时与去重键随时可能清空;
  * 中控发版时节点几秒内重连, last_seen 距今远小于 60s, 不会误报掉线。
  *
  * 故障切换 (每个绑定独立):
- *   - 当前节点 down ≥ 60s, 且对其回源主机名的两次探测都失败 → 切到池里第一个 up 且探测通过的节点
+ *   - 当前节点失联 ≥ 60s (从最后活动算, 判 down 的同一节拍即可切), 且对其回源主机名的两次探测都失败
+ *     → 切到池里第一个 up 且探测通过的节点
+ *   - 探测正常时不切, 但每分钟复探, 进程随后真挂了照样能切
  *   - 节点没有回源主机名时无法主动探测 (Worker 不能直连裸 IP), 只凭 WS 失联判断
  *   - 只是 WS 断了但回源探测正常 (中控到节点的链路问题, 用户流量不受影响) → 不切, 记一次事件
  *   - 没有可切的健康节点 → 不动解析 (删空或指向坏节点都更糟), 记一次事件
@@ -18,7 +22,7 @@ import { probeTwice, type ProbeResult } from './probe';
 
 const DOWN_AFTER_MS = 60_000;
 const CHECKS_PER_TICK = 2; // 免费计划单次调用 50 个子请求, 每个绑定巡检约 3 个, 分摊到多个节拍
-const FAILOVER_AFTER_DOWN_MS = 60_000;
+const FAILOVER_AFTER_LOST_MS = 60_000;
 const FAILBACK_STABLE_MS = 10 * 60_000;
 const CHECK_INTERVAL_MS = 10 * 60_000;
 const PRUNE_INTERVAL_MS = 3600_000;
@@ -28,6 +32,7 @@ const RETENTION_MS = 30 * 86400_000;
 
 export interface HealthDeps {
 	isAlive(nodeId: string): boolean;
+	lastActivityAt(nodeId: string): number; // 最近真实活动时间, 未知为 0
 	inMaintenance(nodeId: string): boolean; // 滚动发布正在处理该节点
 	event(level: 'info' | 'warning' | 'error', kind: string, subject: string, message: string, notify?: boolean): void;
 }
@@ -75,7 +80,9 @@ export class HealthMonitor {
 		for (const r of this.sql.exec('SELECT node_id, state, last_seen FROM nodes').toArray()) {
 			const id = String(r.node_id);
 			if (this.deps.isAlive(id)) {
-				this.sql.exec('UPDATE nodes SET last_seen = ? WHERE node_id = ?', now, id);
+				// 冷启动后没有活动记录的新连接按当前时刻记; last_seen 只前进不回退
+				const seen = Math.max(Number(r.last_seen) || 0, this.deps.lastActivityAt(id) || now);
+				this.sql.exec('UPDATE nodes SET last_seen = ? WHERE node_id = ?', seen, id);
 				if (r.state === 'down') this.markUp(id);
 				continue;
 			}
@@ -88,9 +95,9 @@ export class HealthMonitor {
 		}
 	}
 
-	private nodeState(nodeId: string): { state: string; since: number } | null {
-		const r = this.sql.exec('SELECT state, state_since FROM nodes WHERE node_id = ?', nodeId).toArray()[0];
-		return r ? { state: String(r.state), since: Number(r.state_since) } : null;
+	private nodeState(nodeId: string): { state: string; since: number; lastSeen: number } | null {
+		const r = this.sql.exec('SELECT state, state_since, last_seen FROM nodes WHERE node_id = ?', nodeId).toArray()[0];
+		return r ? { state: String(r.state), since: Number(r.state_since), lastSeen: Number(r.last_seen) } : null;
 	}
 
 	private async probe(nodeId: string): Promise<ProbeResult> {
@@ -119,12 +126,19 @@ export class HealthMonitor {
 			if (!active) continue;
 
 			// ---- 故障切换 ----
-			if (b.auto_failover && active.state === 'down' && now - active.since >= FAILOVER_AFTER_DOWN_MS) {
+			// 失联时长从最后活动算, 不再从判 down 的时刻另起 60s (两段叠加会拖到 2~3 分钟)
+			if (b.auto_failover && active.state === 'down' && now - active.lastSeen >= FAILOVER_AFTER_LOST_MS) {
 				const roundKey = `notice:${b.id}:${b.active_node}:${active.since}`;
-				// 回合状态: 空 = 首次处理; retry:<次数>:<时间> = 上次没切成, 间隔后重试; 其余为终态
+				// 回合状态: 空 = 首次处理; retry:<次数>:<时间> = 上次没切成, 间隔后重试;
+				// probe_ok:<时间> = 回源正常未切, 间隔后复探; 其余为终态
 				const state = this.getKV(roundKey);
 				let attempt = 0;
-				if (state) {
+				let probeOkBefore = false;
+				if (state?.startsWith('probe_ok')) {
+					const at = Number(state.split(':')[1] ?? 0);
+					if (now - at < RETRY_INTERVAL_MS) continue;
+					probeOkBefore = true;
+				} else if (state) {
 					if (!state.startsWith('retry:')) continue;
 					const [, n, at] = state.split(':');
 					attempt = Number(n);
@@ -138,8 +152,8 @@ export class HealthMonitor {
 
 				const activeProbe = await this.probe(b.active_node);
 				if (activeProbe.ok) {
-					this.setKV(roundKey, 'probe_ok');
-					this.deps.event('warning', 'node_down', b.hostname, `${b.active_node} 与中控失联, 但回源探测正常, 未切换`, false);
+					this.setKV(roundKey, `probe_ok:${now}`);
+					if (!probeOkBefore) this.deps.event('warning', 'node_down', b.hostname, `${b.active_node} 与中控失联, 但回源探测正常, 暂不切换, 每分钟复探`, false);
 					continue;
 				}
 
