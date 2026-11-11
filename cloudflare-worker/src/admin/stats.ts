@@ -94,7 +94,8 @@ function addCounts(into: Record<string, number>, from: Record<string, number> | 
 
 // ---------- /admin/api/metrics ----------
 
-export function buildMetrics(src: ClusterSources) {
+// nodeFilter 非空时最近请求只取该节点 (先过滤再截 100 条, 否则繁忙节点会挤掉其他节点)
+export function buildMetrics(src: ClusterSources, nodeFilter = '') {
 	const liveList = Object.entries(src.live);
 	const statusCodes: Record<string, number> = {};
 	const latencyDist: Record<string, number> = {};
@@ -153,7 +154,7 @@ export function buildMetrics(src: ClusterSources) {
 		maxUptime = Math.max(maxUptime, s.uptime_sec);
 		if (s.min_latency_ns > 0) minLat = Math.min(minLat, s.min_latency_ns);
 		maxLat = Math.max(maxLat, s.max_latency_ns);
-		for (const r of s.recent_requests ?? []) recent.push({ ...r, node_id: id });
+		if (!nodeFilter || nodeFilter === id) for (const r of s.recent_requests ?? []) recent.push({ ...r, node_id: id });
 		for (const raw of (s.top_referers ?? []) as Record<string, unknown>[]) {
 			const key = String(raw.path ?? '');
 			const reqs = Number(raw.request_count ?? 0);

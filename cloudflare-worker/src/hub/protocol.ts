@@ -125,6 +125,22 @@ export interface RequestLog {
 	[key: string]: unknown;
 }
 
+// NodeSeriesPoint 节点整体的一个时间桶 (原始量), 与 Go metrics.NodeSeriesPoint 对齐
+export interface NodeSeriesPoint {
+	ts: number; // 桶起点 unix 秒
+	requests: number;
+	bytes: number;
+	origin_bytes: number;
+	errors: number;
+	cache_hits: number;
+	cache_misses: number;
+	latency_ns: number;
+	big_bytes: number;
+	big_ns: number;
+	big_count: number;
+	speed: number[]; // <1 / 1-5 / 5-20 / 20-50 / >=50 MB/s 各档请求数
+}
+
 export interface NodeSnapshot {
 	at: number; // 节点生成快照的 unix 毫秒
 	uptime_sec: number;
@@ -144,6 +160,7 @@ export interface NodeSnapshot {
 	path_stats: RawPathStat[];
 	top_referers: unknown[];
 	recent_requests: RequestLog[];
+	minute_series?: NodeSeriesPoint[]; // 最近 60 分钟的分钟桶; 旧版节点没有
 	cache: { proxy?: CacheStats; mirror?: CacheStats };
 	config_version: number;
 }

@@ -7,6 +7,7 @@
  */
 
 import * as db from './db';
+import { batchUpsertNodeTimeseries, pruneNodeTimeseries, type NodeTimeseriesUpload } from './node_timeseries';
 import type { Env } from './env';
 
 export async function handleLegacy(request: Request, env: Env): Promise<Response> {
@@ -169,6 +170,7 @@ export async function handleLegacy(request: Request, env: Env): Promise<Response
 					latency?: db.LatencyMetric[];
 					timeseries?: db.PathTimeseriesPoint[];
 					referer_daily?: db.RefererDailyPoint[];
+					node_timeseries?: NodeTimeseriesUpload[];
 					cursors?: {
 						config_version?: number;
 						reset_seen?: number;
@@ -197,6 +199,15 @@ export async function handleLegacy(request: Request, env: Env): Promise<Response
 				if (body.referer_daily?.length) {
 					await db.batchUpsertRefererDaily(env.DB, body.referer_daily);
 					written.referer_daily = body.referer_daily.length;
+				}
+				// 新表由节点迁移 0008 建立; 写失败只记日志, 不拖垮其余统计的上报
+				if (body.node_timeseries?.length) {
+					try {
+						await batchUpsertNodeTimeseries(env.DB, body.node_timeseries);
+						written.node_timeseries = body.node_timeseries.length;
+					} catch (e) {
+						console.error('node_timeseries upsert failed:', e);
+					}
 				}
 
 				// 心跳下行: 节点上行捎游标, 这里只回传比游标新的状态。
@@ -379,7 +390,7 @@ export async function handleLegacy(request: Request, env: Env): Promise<Response
 						corsHeaders
 					);
 				}
-				const deleted = await db.pruneOldTimeseries(env.DB, cutoff);
+				const deleted = (await db.pruneOldTimeseries(env.DB, cutoff)) + (await pruneNodeTimeseries(env.DB, cutoff));
 				return jsonResponse({ success: true, deleted }, 200, corsHeaders);
 			}
 

@@ -16,6 +16,7 @@ import { readConfig, validateProviders, writeConfig, type CDNProvider } from './
 import { registerReleaseRoutes } from './release';
 import { buildRefererDaily, buildTimeseries } from './series';
 import { buildMetrics, buildNodeStats, buildPathStats, loadSources } from './stats';
+import { buildNodesOverview, buildNodesSeries, type SeriesRange } from './nodes_view';
 
 type Handler = (ctx: Ctx) => Promise<Response>;
 
@@ -65,7 +66,22 @@ async function sources(env: Env) {
 	return loadSources(env, live, nodes);
 }
 
-route('GET', '/admin/api/metrics', async ({ env }) => json(buildMetrics(await sources(env))));
+route('GET', '/admin/api/metrics', async ({ env, url }) => json(buildMetrics(await sources(env), url.searchParams.get('node') ?? '')));
+
+// 节点维度: 每节点承载流量 / 回源 / 命中 / 下载速度, 与按节点拆开的序列
+route('GET', '/admin/api/nodes/overview', async ({ env }) => {
+	const hub = hubStub(env);
+	const [live, nodes] = await Promise.all([hub.liveSnapshots(), hub.nodeStatuses()]);
+	return json(await buildNodesOverview(env, live, nodes));
+});
+
+route('GET', '/admin/api/nodes/series', async ({ env, url }) => {
+	const raw = url.searchParams.get('range');
+	const range: SeriesRange = raw === '1h' || raw === '30d' ? raw : '24h';
+	const hub = hubStub(env);
+	const [live, nodes] = await Promise.all([hub.liveSnapshots(), hub.nodeStatuses()]);
+	return json(await buildNodesSeries(env, live, nodes, range));
+});
 
 route('GET', '/admin/api/path-stats', async ({ env }) => {
 	const [src, { config }] = await Promise.all([sources(env), readConfig(env)]);
