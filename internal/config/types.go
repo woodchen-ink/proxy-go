@@ -123,14 +123,17 @@ type RefererBanConfig struct {
 	Mode       string   `json:"Mode"`
 	Hosts      []string `json:"Hosts"`
 	BlockEmpty bool     `json:"BlockEmpty"`
-	// NodeOverrides 按节点覆盖: 当前节点出现在某条的 Nodes 里时, 用该条整体替换上面的默认规则 (按顺序先命中先用);
-	// 都不命中时用默认规则。覆盖是"替换"不是"叠加", 便于对个别节点放宽或收紧而不影响其他节点
+	// NodeOverrides 例外规则 (JSON 名沿用最初的"按节点覆盖"): 每条用子路径 (Paths) 和 / 或节点 (Nodes) 限定范围,
+	// 请求落在范围内时整体替换上面的默认规则, 按顺序先命中先用; 两者都为空的条目没有范围, 忽略
 	NodeOverrides []RefererNodeOverride `json:"NodeOverrides,omitempty"`
 }
 
-// RefererNodeOverride 只对 Nodes 中的节点生效的一套 Referer 规则, 字段语义同 RefererBanConfig
+// RefererNodeOverride 一条例外规则, 规则字段语义同 RefererBanConfig
+//   - Paths: 请求路径模式, 末尾 * 为前缀匹配 (如 "/b2/random-video*"), 否则匹配该路径及其子路径; 空 = 不限路径
+//   - Nodes: 只在这些节点上生效; 空 = 全部节点
 type RefererNodeOverride struct {
 	Nodes      []string `json:"Nodes"`
+	Paths      []string `json:"Paths,omitempty"`
 	Enabled    bool     `json:"Enabled"`
 	Mode       string   `json:"Mode"`
 	Hosts      []string `json:"Hosts"`
@@ -142,19 +145,48 @@ func (c *RefererBanConfig) IsWhitelist() bool {
 	return c != nil && c.Mode == RefererModeWhitelist
 }
 
-// ForNode 返回 nodeID 节点上实际生效的规则; c 为 nil 时返回 nil
-func (c *RefererBanConfig) ForNode(nodeID string) *RefererBanConfig {
+// HasScope 有子路径或节点限定的条目才有效
+func (o *RefererNodeOverride) HasScope() bool {
+	return len(nonEmpty(o.Paths)) > 0 || len(nonEmpty(o.Nodes)) > 0
+}
+
+// AppliesToNode 节点限定为空或包含 nodeID
+func (o *RefererNodeOverride) AppliesToNode(nodeID string) bool {
+	nodes := nonEmpty(o.Nodes)
+	if len(nodes) == 0 {
+		return true
+	}
+	for _, n := range nodes {
+		if n == nodeID && nodeID != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// RulesForNode 本节点上生效的例外规则 (保持顺序)
+func (c *RefererBanConfig) RulesForNode(nodeID string) []RefererNodeOverride {
 	if c == nil {
 		return nil
 	}
+	out := make([]RefererNodeOverride, 0, len(c.NodeOverrides))
 	for _, o := range c.NodeOverrides {
-		for _, n := range o.Nodes {
-			if strings.TrimSpace(n) == nodeID && nodeID != "" {
-				return &RefererBanConfig{Enabled: o.Enabled, Mode: o.Mode, Hosts: o.Hosts, BlockEmpty: o.BlockEmpty}
-			}
+		if o.HasScope() && o.AppliesToNode(nodeID) {
+			o.Paths = nonEmpty(o.Paths)
+			out = append(out, o)
 		}
 	}
-	return c
+	return out
+}
+
+func nonEmpty(list []string) []string {
+	out := make([]string, 0, len(list))
+	for _, s := range list {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 const (

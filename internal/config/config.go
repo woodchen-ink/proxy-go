@@ -223,6 +223,9 @@ func normalizeNodeOverrides(list []RefererNodeOverride) {
 		if list[i].Nodes == nil {
 			list[i].Nodes = []string{}
 		}
+		if list[i].Paths == nil {
+			list[i].Paths = []string{}
+		}
 		if list[i].Hosts == nil {
 			list[i].Hosts = []string{}
 		}

@@ -172,15 +172,10 @@ func initServices(components *AppComponents) error {
 	// SecurityMiddleware 始终创建: 即使 IPBan 未启用, 也要承载 Referer 黑名单等其他全局规则
 	components.SecurityMiddleware = middleware.NewSecurityMiddleware(components.BanManager)
 	// 用启动时的配置初始化 Referer matcher; 后续热更新由 config 回调刷新
-	// 全局规则恒为黑名单; 按节点覆盖时取本节点那一套
+	// 全局规则恒为黑名单 (例外规则同样按黑名单编译), 子路径 / 节点例外按本节点筛选
 	config.SetNodeIDResolver(sync.NodeID)
 	applyReferer := func(cfg *config.Config) {
-		rb := cfg.Security.RefererBan.ForNode(config.CurrentNodeID())
-		if rb.Enabled {
-			components.SecurityMiddleware.SetRefererMatcher(security.Compile(rb.Hosts, rb.BlockEmpty))
-		} else {
-			components.SecurityMiddleware.SetRefererMatcher(security.Compile(nil, false))
-		}
+		components.SecurityMiddleware.SetRefererPolicy(handler.BuildRefererPolicy(&cfg.Security.RefererBan, config.CurrentNodeID(), false))
 	}
 	applyReferer(components.Config)
 	config.RegisterUpdateCallback(applyReferer)
@@ -196,7 +191,6 @@ func initServices(components *AppComponents) error {
 	}
 	applyTrusted(components.Config)
 	config.RegisterUpdateCallback(applyTrusted)
-
 
 	log.Printf("[Init] 应用服务初始化完成")
 	return nil

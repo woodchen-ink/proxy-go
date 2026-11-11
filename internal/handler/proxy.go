@@ -60,7 +60,7 @@ type ProxyHandler struct {
 
 	// pathRefererMatchers 按"路径前缀"持有路径级 Referer 黑名单 matcher;
 	// 配置热更新时整体替换 (build 出新的 map 再 Store), 读侧无锁。
-	pathRefererMatchers atomic.Pointer[map[string]*security.RefererMatcher]
+	pathRefererMatchers atomic.Pointer[map[string]*security.RefererPolicy]
 
 	// pathRefererRedirects 按"路径前缀"持有路径级 Referer 重定向规则 (有序);
 	// 与 pathRefererMatchers 同款生命周期, 配置热更新时整体替换, 读侧无锁。
@@ -73,24 +73,13 @@ type refererRedirectEntry struct {
 	target  string
 }
 
-// buildPathRefererMatchers 由 PathConfig 构建路径级 matcher; 只为本节点上生效 (含按节点覆盖) 且启用的路径建立条目
-// Mode 为 "whitelist" 时走白名单语义 (只有命中 Hosts 才放行), 否则 (含空字符串, 兼容历史配置) 走黑名单语义
-func buildPathRefererMatchers(pathMap map[string]config.PathConfig) map[string]*security.RefererMatcher {
-	out := make(map[string]*security.RefererMatcher)
+// buildPathRefererMatchers 为每个路径映射构建本节点上的 Referer 策略 (默认规则 + 子路径 / 节点例外); 无规则的路径不建条目
+func buildPathRefererMatchers(pathMap map[string]config.PathConfig) map[string]*security.RefererPolicy {
+	out := make(map[string]*security.RefererPolicy)
 	nodeID := config.CurrentNodeID()
 	for prefix, cfg := range pathMap {
-		rb := cfg.RefererBan.ForNode(nodeID)
-		if rb == nil || !rb.Enabled {
-			continue
-		}
-		var m *security.RefererMatcher
-		if rb.IsWhitelist() {
-			m = security.CompileWhitelist(rb.Hosts, rb.BlockEmpty)
-		} else {
-			m = security.Compile(rb.Hosts, rb.BlockEmpty)
-		}
-		if m.HasRules() {
-			out[prefix] = m
+		if p := BuildRefererPolicy(cfg.RefererBan, nodeID, true); p != nil {
+			out[prefix] = p
 		}
 	}
 	return out
@@ -304,7 +293,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 路径级 Referer 黑名单 (与全局规则叠加, 任一命中即拒); 在缓存检查之前, 防止已缓存内容被盗链方拿到
 	if matchers := h.pathRefererMatchers.Load(); matchers != nil {
-		if m, ok := (*matchers)[matchResult.MatchedPrefix]; ok && m.IsBlocked(referer) {
+		if m, ok := (*matchers)[matchResult.MatchedPrefix]; ok && m.IsBlocked(r.URL.Path, referer) {
 			http.Error(w, "Forbidden: referer not allowed", http.StatusForbidden)
 			collector.RecordRequest(r.URL.Path, matchResult.MatchedPrefix, http.StatusForbidden, time.Since(start), 0, security.ClientIP(r), r)
 			return

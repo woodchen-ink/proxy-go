@@ -11,8 +11,8 @@ import (
 
 // SecurityMiddleware 安全中间件
 type SecurityMiddleware struct {
-	banManager     *security.IPBanManager
-	refererMatcher atomic.Pointer[security.RefererMatcher] // 全局 Referer 黑名单, 热更新时整体替换
+	banManager    *security.IPBanManager
+	refererPolicy atomic.Pointer[security.RefererPolicy] // 全局 Referer 黑名单 (含子路径 / 节点例外), 热更新时整体替换
 }
 
 // NewSecurityMiddleware 创建安全中间件
@@ -22,9 +22,9 @@ func NewSecurityMiddleware(banManager *security.IPBanManager) *SecurityMiddlewar
 	}
 }
 
-// SetRefererMatcher 由 config 热更新回调调用; 传 nil 表示禁用 Referer 黑名单
-func (sm *SecurityMiddleware) SetRefererMatcher(m *security.RefererMatcher) {
-	sm.refererMatcher.Store(m)
+// SetRefererPolicy 由 config 热更新回调调用; 传 nil 表示禁用全局 Referer 检查
+func (sm *SecurityMiddleware) SetRefererPolicy(p *security.RefererPolicy) {
+	sm.refererPolicy.Store(p)
 }
 
 // isAdminPath 判断是否是管理后台路径
@@ -58,7 +58,7 @@ func (sm *SecurityMiddleware) IPBanMiddleware(next http.Handler) http.Handler {
 		}
 
 		// 全局 Referer 黑名单
-		if m := sm.refererMatcher.Load(); m.HasRules() && m.IsBlocked(r.Header.Get("Referer")) {
+		if p := sm.refererPolicy.Load(); p != nil && p.IsBlocked(r.URL.Path, r.Header.Get("Referer")) {
 			http.Error(w, "Forbidden: referer not allowed", http.StatusForbidden)
 			return
 		}

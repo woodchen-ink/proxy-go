@@ -2,27 +2,26 @@ package config
 
 import "testing"
 
-func TestRefererBanForNode(t *testing.T) {
-	base := &RefererBanConfig{
-		Enabled: true, Mode: RefererModeBlacklist, Hosts: []string{"bad.com"},
+func TestRefererRulesForNode(t *testing.T) {
+	rb := &RefererBanConfig{
+		Enabled: true, Hosts: []string{"bad.com"},
 		NodeOverrides: []RefererNodeOverride{
-			{Nodes: []string{"CN-1.1.1.1", " HK-2.2.2.2 "}, Enabled: true, Mode: RefererModeWhitelist, Hosts: []string{"my.com"}, BlockEmpty: true},
-			{Nodes: []string{"HK-2.2.2.2"}, Enabled: false},
+			{Paths: []string{"/b2/random-video*"}, Enabled: true, Mode: RefererModeWhitelist, Hosts: []string{"my.com"}},
+			{Nodes: []string{"jp-1", " jp-2 "}, Enabled: false},
+			{Nodes: []string{}, Paths: []string{" "}}, // 没有范围, 忽略
 		},
 	}
-
-	if got := base.ForNode("US-3.3.3.3"); got != base {
-		t.Fatalf("未命中覆盖应返回默认规则")
+	if got := rb.RulesForNode("us-1"); len(got) != 1 || got[0].Paths[0] != "/b2/random-video*" {
+		t.Fatalf("us-1 只应命中按路径的例外: %+v", got)
 	}
-	if got := base.ForNode(""); got != base {
-		t.Fatalf("节点 ID 未知时应走默认规则")
+	if got := rb.RulesForNode("jp-2"); len(got) != 2 {
+		t.Fatalf("jp-2 应命中路径例外 + 节点例外 (Nodes 两侧空白忽略): %+v", got)
 	}
-	got := base.ForNode("HK-2.2.2.2") // 两条都含 HK, 先命中先用; Nodes 两侧空白忽略
-	if !got.IsWhitelist() || !got.BlockEmpty || got.Hosts[0] != "my.com" || len(got.NodeOverrides) != 0 {
-		t.Fatalf("应命中第一条覆盖: %+v", got)
+	if got := rb.RulesForNode(""); len(got) != 1 {
+		t.Fatalf("节点 ID 未知时只有不限节点的例外生效: %+v", got)
 	}
 	var nilCfg *RefererBanConfig
-	if nilCfg.ForNode("CN-1.1.1.1") != nil {
-		t.Fatalf("nil 配置应返回 nil")
+	if nilCfg.RulesForNode("x") != nil {
+		t.Fatal("nil 配置应返回 nil")
 	}
 }
