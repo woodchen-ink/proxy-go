@@ -2,7 +2,6 @@
 
 import { useCallback, useMemo, useRef, useState } from "react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/ui/use-toast"
 import { usePolling } from "@/hooks/use-polling"
@@ -143,15 +142,7 @@ export default function DashboardPage() {
           </TabsList>
 
           <TabsContent value="overview" className="mt-0 space-y-5">
-            {metrics ? (
-              <MetricTiles m={metrics} />
-            ) : (
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                {Array.from({ length: 8 }, (_, i) => (
-                  <Skeleton key={i} className="h-24 rounded-xl" />
-                ))}
-              </div>
-            )}
+            <MetricTiles m={metrics} overview={overview} />
             <NodeCompareTable data={overview} error={overviewError} window={statWindow} onWindowChange={setStatWindow} onSelect={setSelectedNode} />
             <PathStatsList />
           </TabsContent>

@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { fetchApi } from "@/lib/api-client"
+import NodeCacheTable, { type NodeCacheRow } from "./NodeCacheTable"
 import {
   HardDrive,
   Database,
@@ -38,6 +39,7 @@ interface CacheStats {
 interface CacheData {
   proxy: CacheStats
   mirror: CacheStats
+  nodes?: NodeCacheRow[]
 }
 
 // formatBytes 字节数 → 友好单位
@@ -57,8 +59,8 @@ function sum(stats: CacheData | null, key: keyof CacheStats): number {
   return (Number(stats?.proxy[key]) || 0) + (Number(stats?.mirror[key]) || 0)
 }
 
-// CacheStatsTiles 首页"缓存"tab 的只读统计区: 规模概览 + 智能缓存汇总 + proxy/mirror 分项。
-// 自带 5s 轮询拉取 /admin/api/cache/stats, 与首页 metrics 数据流互相独立。
+// CacheStatsTiles 首页"缓存"tab 的只读统计区: 规模概览 + 各节点明细 + 智能缓存汇总 + proxy/mirror 分项。
+// 自带 15s 轮询拉取 /admin/api/cache/stats, 与首页 metrics 数据流互相独立。
 export default function CacheStatsTiles() {
   const [stats, setStats] = useState<CacheData | null>(null)
 
@@ -118,6 +120,8 @@ export default function CacheStatsTiles() {
             </div>
           </CardContent>
         </Card>
+
+        <NodeCacheTable rows={stats?.nodes ?? []} />
 
         {/* 智能缓存汇总 */}
         <Card>
