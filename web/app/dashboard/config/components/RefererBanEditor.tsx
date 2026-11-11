@@ -66,8 +66,8 @@ export default function RefererBanEditor({ config, onUpdate, emptyHint, allowWhi
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <Label>启用 Referer {isWhitelist ? "白名单" : "黑名单"}</Label>
-          <p className="text-sm text-muted-foreground">
+          <Label className="font-semibold">Referer {isWhitelist ? "白名单" : "黑名单"}</Label>
+          <p className="text-sm text-foreground-muted">
             {isWhitelist
               ? "仅放行命中名单的 Referer, 其余一律 403, 在缓存检查之前拦截"
               : "Referer host 命中名单时直接 403, 在缓存检查之前拦截"}
@@ -85,7 +85,7 @@ export default function RefererBanEditor({ config, onUpdate, emptyHint, allowWhi
             <div className="flex items-center justify-between">
               <div>
                 <Label>白名单模式</Label>
-                <p className="text-sm text-muted-foreground">
+                <p className="text-sm text-foreground-muted">
                   开启后语义反转: 只有命中下方 host 名单的 Referer 才放行, 用于资源仅供自己站点引用的强隔离场景
                 </p>
               </div>
@@ -101,7 +101,7 @@ export default function RefererBanEditor({ config, onUpdate, emptyHint, allowWhi
           <div className="flex items-center justify-between">
             <div>
               <Label>同时拦截空 Referer</Label>
-              <p className="text-sm text-muted-foreground">
+              <p className="text-sm text-foreground-muted">
                 默认放行 (避免误伤 curl / 直接访问 / Telegram 预览). 仅在资源仅供站内引用时开启
               </p>
             </div>
@@ -133,7 +133,7 @@ export default function RefererBanEditor({ config, onUpdate, emptyHint, allowWhi
                 添加
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-foreground-muted">
               {isWhitelist
                 ? "匹配按 host 后缀语义 (example.com 同时放行 foo.example.com / a.b.example.com), 但不会误放 evilexample.com; 名单为空时拒绝所有带 Referer 的请求"
                 : "匹配按 host 后缀语义 (bad.com 同时拦截 foo.bad.com / a.b.bad.com), 但不会误伤 evilbad.com"}
@@ -147,7 +147,7 @@ export default function RefererBanEditor({ config, onUpdate, emptyHint, allowWhi
                     <button
                       type="button"
                       onClick={() => removeHost(h)}
-                      className="ml-1 text-muted-foreground hover:text-destructive"
+                      className="ml-1 text-foreground-muted hover:text-destructive"
                       aria-label={`移除 ${h}`}
                     >
                       <Trash2 className="h-3 w-3" />
@@ -156,7 +156,7 @@ export default function RefererBanEditor({ config, onUpdate, emptyHint, allowWhi
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">
+              <p className="text-sm text-foreground-muted">
                 {isWhitelist
                   ? (emptyHint ?? "尚未添加任何 host, 开启白名单后将拒绝所有带 Referer 的请求")
                   : (emptyHint ?? "尚未添加任何 host")}

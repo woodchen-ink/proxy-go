@@ -83,8 +83,8 @@ export default function RefererRedirectEditor({ config, onUpdate }: RefererRedir
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <Label>启用 Referer 重定向</Label>
-          <p className="text-sm text-muted-foreground">
+          <Label className="font-semibold">Referer 重定向</Label>
+          <p className="text-sm text-foreground-muted">
             Referer host 命中规则时 302 分流到另一个目标前缀 (换 host 去前缀, 保留子路径与 query),
             在缓存检查之前生效, 优先于黑名单
           </p>
@@ -106,7 +106,7 @@ export default function RefererRedirectEditor({ config, onUpdate }: RefererRedir
                   <button
                     type="button"
                     onClick={() => removeRule(idx)}
-                    className="text-muted-foreground hover:text-destructive"
+                    className="text-foreground-muted hover:text-destructive"
                     aria-label={`删除规则 ${idx + 1}`}
                   >
                     <Trash2 className="h-4 w-4" />
@@ -114,7 +114,7 @@ export default function RefererRedirectEditor({ config, onUpdate }: RefererRedir
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label className="text-xs text-muted-foreground">目标前缀</Label>
+                  <Label className="text-xs text-foreground-muted">目标前缀</Label>
                   <Input
                     value={rule.Target}
                     placeholder="https://cdn2.example.com"
@@ -123,7 +123,7 @@ export default function RefererRedirectEditor({ config, onUpdate }: RefererRedir
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label className="text-xs text-muted-foreground">命中的 host</Label>
+                  <Label className="text-xs text-foreground-muted">命中的 host</Label>
                   <div className="flex gap-2">
                     <Input
                       value={draftHosts[idx] ?? ""}
@@ -150,7 +150,7 @@ export default function RefererRedirectEditor({ config, onUpdate }: RefererRedir
                           <button
                             type="button"
                             onClick={() => removeHost(idx, h)}
-                            className="ml-1 text-muted-foreground hover:text-destructive"
+                            className="ml-1 text-foreground-muted hover:text-destructive"
                             aria-label={`移除 ${h}`}
                           >
                             <Trash2 className="h-3 w-3" />
@@ -159,7 +159,7 @@ export default function RefererRedirectEditor({ config, onUpdate }: RefererRedir
                       ))}
                     </div>
                   ) : (
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-xs text-foreground-muted">
                       尚未添加 host, 该规则不会生效
                     </p>
                   )}
@@ -172,7 +172,7 @@ export default function RefererRedirectEditor({ config, onUpdate }: RefererRedir
             <Plus className="h-4 w-4" />
             添加规则
           </Button>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-foreground-muted">
             多组规则按顺序匹配, 第一条命中的决定目标。host 走后缀语义 (site.com 同时命中 a.site.com),
             空 Referer 不分流
           </p>

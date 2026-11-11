@@ -2,11 +2,12 @@
 
 import React, { useEffect, useState, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card } from "@/components/ui/card"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/components/ui/use-toast"
 import { fetchApi } from "@/lib/api-client"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Download, RefreshCw, Plus, Circle, CheckCircle2, Edit, Trash2, Database, FileText, Eraser } from "lucide-react"
+import { Download, RefreshCw } from "lucide-react"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,80 +18,26 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Switch } from "@/components/ui/switch"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { Label } from "@/components/ui/label"
-import { Badge } from "@/components/ui/badge"
 import PathCacheConfigDialog from "./components/PathCacheConfigDialog"
 import SecurityConfigPanel from "./components/SecurityConfigPanel"
 import ExtensionRuleDialog from "./components/ExtensionRuleDialog"
 import CacheManagement from "./components/CacheManagement"
 import CDNCacheManagement from "./components/CDNCacheManagement"
-import RefererBanEditor from "./components/RefererBanEditor"
-import RefererRedirectEditor, { RefererRedirectConfig } from "./components/RefererRedirectEditor"
+import PathList from "./components/PathList"
+import PathDetail from "./components/PathDetail"
+import PathForm, { type PathFormValue } from "./components/PathForm"
 import { convertToBytes, convertBytesToUnit, getMappingTargets, targetsToText, parseTargetsText, buildTargetFields } from "./utils"
 
-interface ExtRuleConfig {
-  Extensions: string;
-  Target: string;
-  SizeThreshold: number;
-  MaxSize: number;
-  RedirectMode?: boolean;
-  Domains?: string;
-}
-
-interface CacheConfig {
-  max_age: number;
-  cleanup_tick: number;
-  max_cache_size: number;
-}
-
-interface PathMapping {
-  DefaultTarget: string
-  DefaultTargets?: string[]   // 有序回源列表 (主源在前); 多源时失败自动按序回落
-  ExtensionMap?: ExtRuleConfig[]
-  SizeThreshold?: number
-  MaxSize?: number
-  RedirectMode?: boolean
-  Enabled?: boolean
-  CacheConfig?: CacheConfig
-  CFImageOpt?: boolean
-  RefererBan?: RefererBanConfig
-  RefererRedirect?: RefererRedirectConfig
-}
-
-interface CompressionConfig {
-  Enabled: boolean
-  Level: number
-}
-
-interface RefererBanConfig {
-  Enabled: boolean
-  Mode?: "blacklist" | "whitelist"
-  Hosts: string[]
-  BlockEmpty: boolean
-}
-
-interface SecurityConfig {
-  IPBan: {
-    Enabled: boolean
-    ErrorThreshold: number
-    WindowMinutes: number
-    BanDurationMinutes: number
-    CleanupIntervalMinutes: number
-  }
-  RefererBan?: RefererBanConfig
-}
-
-interface Config {
-  MAP: Record<string, PathMapping | string>
-  Compression: {
-    Gzip: CompressionConfig
-    Brotli: CompressionConfig
-  }
-  Security: SecurityConfig
-}
+import {
+  type CacheConfig,
+  type Config,
+  type ExtRuleConfig,
+  type PathMapping,
+  type RefererBanConfig,
+  type RefererRedirectConfig,
+  type SecurityConfig,
+  toMapping,
+} from "./types"
 
 export default function ConfigPage() {
   const [config, setConfig] = useState<Config | null>(null)
@@ -107,17 +54,8 @@ export default function ConfigPage() {
   // 缓存配置对话框
   const [cacheDialogOpen, setCacheDialogOpen] = useState(false)
 
-  // 编辑状态
-  const [isEditingPath, setIsEditingPath] = useState(false)
-  const [editedTarget, setEditedTarget] = useState("")
-  const [editedRedirectMode, setEditedRedirectMode] = useState(false)
-  const [editedPath, setEditedPath] = useState("")
-
-  // 添加路径状态
-  const [isAddingPath, setIsAddingPath] = useState(false)
-  const [newPath, setNewPath] = useState("")
-  const [newTarget, setNewTarget] = useState("")
-  const [newRedirectMode, setNewRedirectMode] = useState(false)
+  // 新增 / 编辑路径共用一份表单状态; null 表示展示详情
+  const [pathForm, setPathForm] = useState<{ mode: "add" | "edit"; value: PathFormValue } | null>(null)
 
   // 扩展名规则相关
   const [extensionRuleDialogOpen, setExtensionRuleDialogOpen] = useState(false)
@@ -370,115 +308,57 @@ export default function ConfigPage() {
 
   const handleSelectPath = (path: string) => {
     setSelectedPath(path)
-    setIsAddingPath(false)
-    setIsEditingPath(false)
+    setPathForm(null)
   }
 
   const handleStartAddPath = () => {
-    setIsAddingPath(true)
-    setSelectedPath(null)
-    setNewPath("")
-    setNewTarget("")
-    setNewRedirectMode(false)
-  }
-
-  const handleAddPath = () => {
-    const targets = parseTargetsText(newTarget)
-    if (!config || !newPath || targets.length === 0) {
-      toast({
-        title: "错误",
-        description: "路径和至少一个回源目标不能为空",
-        variant: "destructive",
-      })
-      return
-    }
-
-    if (config.MAP[newPath]) {
-      toast({
-        title: "错误",
-        description: "路径已存在",
-        variant: "destructive",
-      })
-      return
-    }
-
-    const newConfig = { ...config }
-    newConfig.MAP[newPath] = {
-      ...buildTargetFields(targets),
-      RedirectMode: newRedirectMode,
-      Enabled: true,
-      ExtensionMap: []
-    }
-    updateConfig(newConfig)
-    setSelectedPath(newPath)
-    setIsAddingPath(false)
-    setNewPath("")
-    setNewTarget("")
-    setNewRedirectMode(false)
+    setPathForm({ mode: "add", value: { path: "", targets: "", redirect: false } })
   }
 
   const handleStartEditPath = () => {
     if (!selectedPath || !config) return
-    const mapping = config.MAP[selectedPath]
-    if (typeof mapping === 'string') {
-      setEditedTarget(mapping)
-      setEditedRedirectMode(false)
-    } else {
-      // 多行编辑: 一行一个回源, 第一行为主源
-      setEditedTarget(targetsToText(getMappingTargets(mapping)))
-      setEditedRedirectMode(mapping.RedirectMode || false)
-    }
-    setEditedPath(selectedPath)
-    setIsEditingPath(true)
+    const mapping = toMapping(config.MAP[selectedPath])
+    // 多行编辑: 一行一个回源, 第一行为主源
+    setPathForm({
+      mode: "edit",
+      value: { path: selectedPath, targets: targetsToText(getMappingTargets(mapping)), redirect: mapping.RedirectMode || false },
+    })
   }
 
-  const handleSaveEditPath = () => {
-    const targets = parseTargetsText(editedTarget)
-    if (!selectedPath || !config || targets.length === 0) {
-      toast({
-        title: "错误",
-        description: "至少需要一个回源目标",
-        variant: "destructive",
-      })
+  // pathFormError 实时校验路径; 编辑时允许保持原路径
+  const pathFormError = (() => {
+    if (!pathForm) return null
+    const p = pathForm.value.path.trim()
+    if (!p) return "路径不能为空"
+    if (!p.startsWith("/")) return "路径必须以 / 开头"
+    const original = pathForm.mode === "edit" ? selectedPath : null
+    if (p !== original && config?.MAP[p] !== undefined) return `路径 ${p} 已存在`
+    return null
+  })()
+
+  const handleSubmitPathForm = () => {
+    if (!config || !pathForm || pathFormError) return
+    const targets = parseTargetsText(pathForm.value.targets)
+    if (targets.length === 0) {
+      toast({ title: "错误", description: "至少需要一个回源目标", variant: "destructive" })
       return
     }
+    const nextPath = pathForm.value.path.trim()
+    const redirect = pathForm.value.redirect
+    const map = { ...config.MAP }
 
-    const trimmedPath = editedPath.trim()
-    if (!trimmedPath || !trimmedPath.startsWith('/')) {
-      toast({
-        title: "错误",
-        description: "路径必须以 / 开头",
-        variant: "destructive",
-      })
-      return
-    }
-
-    const newConfig = { ...config, MAP: { ...config.MAP } }
-    const mapping = newConfig.MAP[selectedPath]
-
-    const newPathMapping = typeof mapping === 'string'
-      ? { ...buildTargetFields(targets), RedirectMode: editedRedirectMode, Enabled: true }
-      : { ...mapping, ...buildTargetFields(targets), RedirectMode: editedRedirectMode }
-
-    // 路径重命名：删除旧键，设置新键
-    if (trimmedPath !== selectedPath) {
-      if (newConfig.MAP[trimmedPath]) {
-        toast({
-          title: "错误",
-          description: `路径 ${trimmedPath} 已存在`,
-          variant: "destructive",
-        })
-        return
-      }
-      delete newConfig.MAP[selectedPath]
-      newConfig.MAP[trimmedPath] = newPathMapping
-      setSelectedPath(trimmedPath)
+    if (pathForm.mode === "add") {
+      map[nextPath] = { ...buildTargetFields(targets), RedirectMode: redirect, Enabled: true, ExtensionMap: [] }
     } else {
-      newConfig.MAP[selectedPath] = newPathMapping
+      if (!selectedPath) return
+      const updated: PathMapping = { ...toMapping(map[selectedPath]), ...buildTargetFields(targets), RedirectMode: redirect }
+      // 重命名: 删旧键设新键
+      if (nextPath !== selectedPath) delete map[selectedPath]
+      map[nextPath] = updated
     }
-
-    updateConfig(newConfig)
-    setIsEditingPath(false)
+    updateConfig({ ...config, MAP: map })
+    setSelectedPath(nextPath)
+    setPathForm(null)
   }
 
   const handleDeletePath = () => {
@@ -776,518 +656,118 @@ export default function ConfigPage() {
     setDeletingExtensionRule(null)
   }
 
-  if (loading) {
-    return (
-      <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
-        <div className="text-center">
-          <div className="text-lg font-medium">加载中...</div>
-          <div className="text-sm text-muted-foreground mt-1">正在获取配置数据</div>
-        </div>
-      </div>
-    )
-  }
-
-  // 获取当前选中的映射配置
-  const selectedMapping = selectedPath && config ? config.MAP[selectedPath] : null
-  const selectedMappingObj: PathMapping | null = selectedMapping
-    ? (typeof selectedMapping === 'string'
-        ? { DefaultTarget: selectedMapping, Enabled: true }
-        : selectedMapping)
-    : null
-  const isSystemPath = selectedMappingObj?.DefaultTarget === 'mirror'
-
-  // 编辑路径时的实时校验（仅在 isEditingPath 时使用）
-  const editedPathTrimmed = editedPath.trim()
-  const editedPathError = !isEditingPath
-    ? null
-    : !editedPathTrimmed
-      ? '路径不能为空'
-      : !editedPathTrimmed.startsWith('/')
-        ? '路径必须以 / 开头'
-        : (editedPathTrimmed !== selectedPath && config?.MAP[editedPathTrimmed] !== undefined)
-          ? `路径 ${editedPathTrimmed} 已存在`
-          : null
+  const selectedMappingObj: PathMapping | null =
+    selectedPath && config && config.MAP[selectedPath] !== undefined ? toMapping(config.MAP[selectedPath]) : null
+  const isSystemPath = selectedMappingObj?.DefaultTarget === "mirror"
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Proxy Go配置</CardTitle>
-          <div className="flex space-x-2">
-            <Button onClick={exportConfig} variant="outline">
-              <Download className="w-4 h-4 mr-2" />
-              导出配置
-            </Button>
-            <Button onClick={pullConfigFromD1} variant="outline">
-              <RefreshCw className="w-4 h-4 mr-2" />
-              从 D1 拉取配置
-            </Button>
-            {saving && (
-              <div className="flex items-center text-sm text-muted-foreground">
-                <span className="animate-pulse mr-2">●</span>
-                正在自动保存...
-              </div>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent>
-          <Tabs defaultValue="paths" className="space-y-4">
-            <TabsList>
-              <TabsTrigger value="paths">路径映射</TabsTrigger>
-              <TabsTrigger value="cache">缓存管理</TabsTrigger>
-              <TabsTrigger value="cdn">CDN 缓存</TabsTrigger>
-              <TabsTrigger value="security">安全策略</TabsTrigger>
-            </TabsList>
+    // 外壳 main 是滚动容器; 配置页锁定在一屏内, 两栏各自内部滚动 (扣除主区上下内边距与移动端顶栏)
+    <div className="flex h-[calc(100svh-6rem)] flex-col gap-4 md:h-[calc(100svh-3rem)]">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
+        <div className="flex items-baseline gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight">配置</h1>
+          {saving && <span className="text-sm text-foreground-subtle">正在保存…</span>}
+        </div>
+        <div className="flex gap-2">
+          <Button onClick={exportConfig} variant="outline" size="sm">
+            <Download className="h-4 w-4" />
+            导出
+          </Button>
+          <Button onClick={pullConfigFromD1} variant="outline" size="sm">
+            <RefreshCw className="h-4 w-4" />
+            从 D1 拉取
+          </Button>
+        </div>
+      </div>
 
-            <TabsContent value="paths" className="space-y-0">
-              {/* 左右分栏布局 */}
-              <div className="flex gap-4 h-[calc(100vh-16rem)]">
-                {/* 左侧路径列表 */}
-                <div className="w-64 flex-shrink-0 border-r pr-4 overflow-y-auto">
-                  <div className="space-y-2">
-                    {config && Object.keys(config.MAP).map((path) => {
-                      const mapping = config.MAP[path]
-                      const mappingObj: PathMapping = typeof mapping === 'string'
-                        ? { DefaultTarget: mapping, Enabled: true }
-                        : mapping
-                      const isEnabled = mappingObj.Enabled !== false
-                      const isSelected = selectedPath === path
+      <Tabs defaultValue="paths" className="flex min-h-0 flex-1 flex-col gap-4">
+        <TabsList className="self-start">
+          <TabsTrigger value="paths">路径映射</TabsTrigger>
+          <TabsTrigger value="cache">缓存管理</TabsTrigger>
+          <TabsTrigger value="cdn">CDN 缓存</TabsTrigger>
+          <TabsTrigger value="security">安全策略</TabsTrigger>
+        </TabsList>
 
-                      return (
-                        <button
-                          key={path}
-                          onClick={() => handleSelectPath(path)}
-                          className={`w-full text-left px-3 py-2 rounded-md transition-colors ${
-                            isSelected
-                              ? 'bg-accent text-accent-foreground font-medium'
-                              : 'text-foreground hover:bg-accent'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2">
-                            {isEnabled ? (
-                              <CheckCircle2 className="w-4 h-4 text-success flex-shrink-0" />
-                            ) : (
-                              <Circle className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                            )}
-                            <span className="font-mono text-sm truncate">{path}</span>
-                          </div>
-                        </button>
-                      )
-                    })}
-
-                    {/* 新增路径按钮 */}
-                    <Button
-                      onClick={handleStartAddPath}
-                      variant="outline"
-                      className="w-full justify-start"
-                      size="sm"
-                      disabled={saving}
-                    >
-                      <Plus className="w-4 h-4 mr-2" />
-                      新增路径
-                    </Button>
-                  </div>
+        <TabsContent value="paths" className="mt-0 min-h-0 flex-1 data-[state=inactive]:hidden">
+          <Card className="grid h-full grid-rows-[minmax(0,12rem)_minmax(0,1fr)] overflow-hidden md:grid-cols-[15rem_minmax(0,1fr)] md:grid-rows-1">
+            <div className="flex min-h-0 flex-col border-b bg-muted md:border-b-0 md:border-r">
+              {loading ? (
+                <div className="space-y-2 p-3">
+                  {Array.from({ length: 8 }, (_, i) => (
+                    <Skeleton key={i} className="h-7 w-full" />
+                  ))}
                 </div>
+              ) : (
+                <PathList
+                  map={config?.MAP ?? {}}
+                  selected={selectedPath}
+                  adding={pathForm?.mode === "add"}
+                  disabled={saving}
+                  onSelect={handleSelectPath}
+                  onAdd={handleStartAddPath}
+                />
+              )}
+            </div>
 
-                {/* 右侧配置内容 */}
-                <div className="flex-1 overflow-y-auto">
-                  {isAddingPath ? (
-                    <Card>
-                      <CardHeader>
-                        <CardTitle>新增路径</CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="new-path">路径</Label>
-                          <Input
-                            id="new-path"
-                            value={newPath}
-                            onChange={(e) => setNewPath(e.target.value)}
-                            placeholder="/example"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="new-target">回源目标</Label>
-                          <Textarea
-                            id="new-target"
-                            value={newTarget}
-                            onChange={(e) => setNewTarget(e.target.value)}
-                            placeholder={"https://primary.example.com\nhttps://backup1.example.com"}
-                            rows={3}
-                            className="font-mono text-sm"
-                          />
-                          <p className="text-xs text-muted-foreground">
-                            一行一个回源地址，第一行为主源。多个源时，请求失败 (连接错误 / 404 / 5xx) 会自动按顺序回落到下一个源。
-                          </p>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <Switch
-                            id="new-redirect"
-                            checked={newRedirectMode}
-                            onCheckedChange={setNewRedirectMode}
-                          />
-                          <Label htmlFor="new-redirect">使用302重定向模式</Label>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button onClick={handleAddPath} disabled={saving}>保存</Button>
-                          <Button variant="outline" onClick={() => setIsAddingPath(false)} disabled={saving}>取消</Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ) : selectedPath && selectedMappingObj ? (
-                    <div className="space-y-4">
-                      {/* 基本设置 */}
-                      <Card>
-                        <CardHeader className="flex flex-row items-center justify-between">
-                          <CardTitle className="text-lg">基本设置</CardTitle>
-                          <div className="flex gap-2">
-                            {!isEditingPath && (
-                              <Button variant="outline" size="sm" onClick={handleStartEditPath} disabled={saving}>
-                                <Edit className="w-4 h-4 mr-2" />
-                                编辑
-                              </Button>
-                            )}
-                            {!isSystemPath && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={handleDeletePath}
-                                className="text-destructive hover:text-destructive"
-                                disabled={saving}
-                              >
-                                <Trash2 className="w-4 h-4 mr-2" />
-                                删除
-                              </Button>
-                            )}
-                          </div>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                          {isEditingPath ? (
-                            <div className="space-y-2">
-                              <Label htmlFor="edit-path">当前路径</Label>
-                              <Input
-                                id="edit-path"
-                                value={editedPath}
-                                onChange={(e) => setEditedPath(e.target.value)}
-                                className={`font-mono ${editedPathError ? 'border-destructive focus-visible:ring-destructive' : ''}`}
-                                aria-invalid={editedPathError !== null}
-                              />
-                              {editedPathError && (
-                                <p className="text-xs text-destructive">{editedPathError}</p>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="flex items-center justify-between">
-                              <Label>当前路径</Label>
-                              <span className="font-mono font-semibold">{selectedPath}</span>
-                            </div>
-                          )}
-
-                          <div className="flex items-center justify-between">
-                            <Label>启用状态</Label>
-                            <div className="flex items-center gap-2">
-                              <Switch
-                                checked={selectedMappingObj.Enabled !== false}
-                                onCheckedChange={(checked) => handleToggleEnabled(selectedPath, checked)}
-                              />
-                              <span className="text-sm text-muted-foreground">
-                                {selectedMappingObj.Enabled !== false ? "已启用" : "已禁用"}
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="space-y-1">
-                            <div className="flex items-center justify-between">
-                              <Label>Cloudflare Images 优化</Label>
-                              <div className="flex items-center gap-2">
-                                <Switch
-                                  checked={!!selectedMappingObj.CFImageOpt}
-                                  onCheckedChange={(checked) => handleToggleCFImageOpt(selectedPath, checked)}
-                                />
-                                <span className="text-sm text-muted-foreground">
-                                  {selectedMappingObj.CFImageOpt ? "已开启" : "已关闭"}
-                                </span>
-                              </div>
-                            </div>
-                            <p className="text-xs text-muted-foreground">
-                              开启后, 图片请求按 Accept 中的格式 (avif/webp/...) + 浏览器类型分桶缓存,
-                              用于源站会按设备返回不同图片格式的场景 (如 Cloudflare Images)。
-                              关闭时所有设备共享同一份原文件缓存, 命中率更高, 默认关闭。
-                            </p>
-                          </div>
-
-                          {isEditingPath ? (
-                            <>
-                              <div className="space-y-2">
-                                <Label htmlFor="edit-target">回源目标</Label>
-                                <Textarea
-                                  id="edit-target"
-                                  value={editedTarget}
-                                  onChange={(e) => setEditedTarget(e.target.value)}
-                                  rows={3}
-                                  className="font-mono text-sm"
-                                />
-                                <p className="text-xs text-muted-foreground">
-                                  一行一个回源地址，第一行为主源。多源时失败自动按顺序回落到下一个源。
-                                </p>
-                              </div>
-                              <div className="flex items-center space-x-2">
-                                <Switch
-                                  id="edit-redirect"
-                                  checked={editedRedirectMode}
-                                  onCheckedChange={setEditedRedirectMode}
-                                />
-                                <Label htmlFor="edit-redirect">使用302重定向模式</Label>
-                              </div>
-                              <div className="flex gap-2">
-                                <Button onClick={handleSaveEditPath} disabled={saving || editedPathError !== null}>保存</Button>
-                                <Button variant="outline" onClick={() => setIsEditingPath(false)} disabled={saving}>取消</Button>
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              {(() => {
-                                const targets = getMappingTargets(selectedMappingObj)
-                                if (targets.length <= 1) {
-                                  return (
-                                    <div className="flex items-start justify-between">
-                                      <Label>回源目标</Label>
-                                      <span className="text-sm text-muted-foreground break-all max-w-md text-right">
-                                        {targets[0] ?? selectedMappingObj.DefaultTarget}
-                                      </span>
-                                    </div>
-                                  )
-                                }
-                                return (
-                                  <div className="space-y-2">
-                                    <div className="flex items-center justify-between">
-                                      <Label>回源目标</Label>
-                                      <Badge variant="secondary">{targets.length} 个源 · 自动回落</Badge>
-                                    </div>
-                                    <ol className="space-y-1">
-                                      {targets.map((t, i) => (
-                                        <li key={i} className="flex items-center gap-2 text-sm">
-                                          <Badge variant={i === 0 ? "default" : "outline"} className="shrink-0 font-mono text-xs">
-                                            {i === 0 ? "主源" : `备源 ${i}`}
-                                          </Badge>
-                                          <span className="text-muted-foreground break-all">{t}</span>
-                                        </li>
-                                      ))}
-                                    </ol>
-                                  </div>
-                                )
-                              })()}
-                              {selectedMappingObj.RedirectMode && (
-                                <div className="flex items-center gap-2">
-                                  <Badge variant="outline">302重定向模式</Badge>
-                                </div>
-                              )}
-                            </>
-                          )}
-                        </CardContent>
-                      </Card>
-
-                      {/* 缓存配置 */}
-                      <Card>
-                        <CardHeader className="flex flex-row items-center justify-between">
-                          <CardTitle className="text-lg">缓存配置</CardTitle>
-                          <div className="flex flex-wrap gap-2">
-                            <Button variant="outline" size="sm" onClick={() => setCacheDialogOpen(true)}>
-                              <Database className="w-4 h-4 mr-2" />
-                              配置缓存
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleClearPathCache(selectedPath)}
-                              className="text-warning hover:text-warning hover:bg-warning/10"
-                            >
-                              <Eraser className="w-4 h-4 mr-2" />
-                              清理本地缓存
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleClearPathCDNCache(selectedPath)}
-                              className="text-warning hover:text-warning hover:bg-warning/10"
-                            >
-                              <Eraser className="w-4 h-4 mr-2" />
-                              清理 CDN 缓存
-                            </Button>
-                          </div>
-                        </CardHeader>
-                        <CardContent>
-                          {selectedMappingObj.CacheConfig ? (
-                            <div className="space-y-2 text-sm">
-                              <div className="flex justify-between">
-                                <span className="text-muted-foreground">最大缓存时间:</span>
-                                <span>{selectedMappingObj.CacheConfig.max_age} 分钟</span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-muted-foreground">清理间隔:</span>
-                                <span>{selectedMappingObj.CacheConfig.cleanup_tick} 分钟</span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-muted-foreground">最大缓存大小:</span>
-                                <span>{selectedMappingObj.CacheConfig.max_cache_size} GB</span>
-                              </div>
-                            </div>
-                          ) : (
-                            <p className="text-sm text-muted-foreground">使用全局缓存配置</p>
-                          )}
-                        </CardContent>
-                      </Card>
-
-                      {/* 引用来源黑/白名单 (路径级, 黑名单模式与全局叠加; 白名单模式为路径独占语义) */}
-                      <Card>
-                        <CardHeader>
-                          <CardTitle className="text-lg">引用来源 (Referer) 黑/白名单</CardTitle>
-                          <p className="text-sm font-normal text-muted-foreground">
-                            仅对当前路径生效。黑名单模式与"安全策略"中的全局规则叠加, 任一命中即拒绝;
-                            白名单模式仅放行命中名单的 Referer, 适合资源仅供自己站点引用的场景
-                          </p>
-                        </CardHeader>
-                        <CardContent>
-                          <RefererBanEditor
-                            config={
-                              selectedMappingObj.RefererBan ?? {
-                                Enabled: false,
-                                Mode: "blacklist",
-                                Hosts: [],
-                                BlockEmpty: false,
-                              }
-                            }
-                            onUpdate={(next) => handlePathRefererBanUpdate(selectedPath, next)}
-                            emptyHint="未添加 host, 即使开启黑名单也仅在拦截空 Referer 时生效"
-                            allowWhitelist
-                          />
-                        </CardContent>
-                      </Card>
-
-                      {/* 引用来源重定向 (路径级, 命中 302 分流到另一个 CDN) */}
-                      <Card>
-                        <CardHeader>
-                          <CardTitle className="text-lg">引用来源 (Referer) 重定向</CardTitle>
-                          <p className="text-sm font-normal text-muted-foreground">
-                            命中的来源不走当前 CDN, 改 302 跳到另一个目标前缀; 优先于黑名单, 在缓存检查前生效
-                          </p>
-                        </CardHeader>
-                        <CardContent>
-                          <RefererRedirectEditor
-                            config={
-                              selectedMappingObj.RefererRedirect ?? {
-                                Enabled: false,
-                                Rules: [],
-                              }
-                            }
-                            onUpdate={(next) => handlePathRefererRedirectUpdate(selectedPath, next)}
-                          />
-                        </CardContent>
-                      </Card>
-
-                      {/* 扩展名规则 */}
-                      <Card>
-                        <CardHeader className="flex flex-row items-center justify-between">
-                          <CardTitle className="text-lg">
-                            扩展名规则 ({selectedMappingObj.ExtensionMap?.length || 0})
-                          </CardTitle>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleExtensionRuleEdit(selectedPath)}
-                          >
-                            <FileText className="w-4 h-4 mr-2" />
-                            添加规则
-                          </Button>
-                        </CardHeader>
-                        <CardContent>
-                          {selectedMappingObj.ExtensionMap && selectedMappingObj.ExtensionMap.length > 0 ? (
-                            <div className="space-y-2">
-                              {selectedMappingObj.ExtensionMap.map((rule, index) => (
-                                <div
-                                  key={index}
-                                  className="border rounded-md p-3 bg-muted/50 space-y-2"
-                                >
-                                  <div className="flex items-start justify-between">
-                                    <div className="flex-1 space-y-1">
-                                      <div className="flex items-center gap-2">
-                                        <Badge variant="outline" className="font-mono text-xs">
-                                          {rule.Extensions}
-                                        </Badge>
-                                        {rule.RedirectMode && (
-                                          <Badge variant="secondary" className="text-xs">
-                                            302重定向
-                                          </Badge>
-                                        )}
-                                      </div>
-                                      <div className="text-xs text-muted-foreground break-all">
-                                        目标: {rule.Target}
-                                      </div>
-                                      {rule.Domains && (
-                                        <div className="text-xs text-muted-foreground">
-                                          域名限制: {rule.Domains}
-                                        </div>
-                                      )}
-                                      {(rule.SizeThreshold || rule.MaxSize) && (
-                                        <div className="text-xs text-muted-foreground">
-                                          大小范围: {rule.SizeThreshold ? convertBytesToUnit(rule.SizeThreshold).value + ' ' + convertBytesToUnit(rule.SizeThreshold).unit : "0"} - {rule.MaxSize ? convertBytesToUnit(rule.MaxSize).value + ' ' + convertBytesToUnit(rule.MaxSize).unit : "无限制"}
-                                        </div>
-                                      )}
-                                    </div>
-                                    <div className="flex gap-1 ml-2">
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => handleExtensionRuleEdit(selectedPath, index, rule)}
-                                        className="h-8 w-8 p-0"
-                                      >
-                                        <Edit className="h-3 w-3" />
-                                      </Button>
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => deleteExtensionRule(selectedPath, index)}
-                                        className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                      >
-                                        <Trash2 className="h-3 w-3" />
-                                      </Button>
-                                    </div>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-sm text-muted-foreground">暂无扩展名规则</p>
-                          )}
-                        </CardContent>
-                      </Card>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-center h-full text-muted-foreground">
-                      <p>请选择一个路径或新增路径</p>
-                    </div>
-                  )}
+            <div className="flex min-h-0 flex-col">
+              {loading ? (
+                <div className="space-y-4 p-5">
+                  <Skeleton className="h-7 w-40" />
+                  <Skeleton className="h-16 w-full" />
+                  <Skeleton className="h-16 w-full" />
                 </div>
-              </div>
-            </TabsContent>
+              ) : pathForm ? (
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <PathForm
+                    title={pathForm.mode === "add" ? "新增路径" : `编辑 ${selectedPath}`}
+                    value={pathForm.value}
+                    error={pathFormError}
+                    saving={saving}
+                    onChange={(value) => setPathForm({ ...pathForm, value })}
+                    onSubmit={handleSubmitPathForm}
+                    onCancel={() => setPathForm(null)}
+                  />
+                </div>
+              ) : selectedPath && selectedMappingObj ? (
+                <PathDetail
+                  path={selectedPath}
+                  mapping={selectedMappingObj}
+                  isSystemPath={isSystemPath}
+                  saving={saving}
+                  onEdit={handleStartEditPath}
+                  onDelete={handleDeletePath}
+                  onToggleEnabled={(v) => handleToggleEnabled(selectedPath, v)}
+                  onToggleCFImageOpt={(v) => handleToggleCFImageOpt(selectedPath, v)}
+                  onConfigureCache={() => setCacheDialogOpen(true)}
+                  onClearCache={() => handleClearPathCache(selectedPath)}
+                  onClearCDN={() => handleClearPathCDNCache(selectedPath)}
+                  onRefererBan={(next) => handlePathRefererBanUpdate(selectedPath, next)}
+                  onRefererRedirect={(next) => handlePathRefererRedirectUpdate(selectedPath, next)}
+                  onAddExtRule={() => handleExtensionRuleEdit(selectedPath)}
+                  onEditExtRule={(i, rule) => handleExtensionRuleEdit(selectedPath, i, rule)}
+                  onDeleteExtRule={(i) => deleteExtensionRule(selectedPath, i)}
+                />
+              ) : (
+                <div className="flex flex-1 items-center justify-center text-sm text-foreground-muted">
+                  选择左侧路径查看配置, 或新增一个路径
+                </div>
+              )}
+            </div>
+          </Card>
+        </TabsContent>
 
-            <TabsContent value="cache" className="space-y-6">
-              <CacheManagement />
-            </TabsContent>
+        <TabsContent value="cache" className="mt-0 min-h-0 flex-1 overflow-y-auto data-[state=inactive]:hidden">
+          <CacheManagement />
+        </TabsContent>
 
-            <TabsContent value="cdn" className="space-y-6">
-              <CDNCacheManagement />
-            </TabsContent>
+        <TabsContent value="cdn" className="mt-0 min-h-0 flex-1 overflow-y-auto data-[state=inactive]:hidden">
+          <CDNCacheManagement />
+        </TabsContent>
 
-            <TabsContent value="security" className="space-y-6">
-              <SecurityConfigPanel
-                config={config?.Security || null}
-                onUpdate={updateSecurity}
-              />
-            </TabsContent>
-          </Tabs>
-        </CardContent>
-      </Card>
+        <TabsContent value="security" className="mt-0 min-h-0 flex-1 overflow-y-auto data-[state=inactive]:hidden">
+          <SecurityConfigPanel config={config?.Security || null} onUpdate={updateSecurity} />
+        </TabsContent>
+      </Tabs>
 
       {/* 删除路径确认对话框 */}
       <AlertDialog open={!!deletingPath} onOpenChange={(open) => !open && setDeletingPath(null)}>
