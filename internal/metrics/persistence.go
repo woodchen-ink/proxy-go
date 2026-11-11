@@ -33,7 +33,7 @@ type MetricsStorage struct {
 	wg           gosync.WaitGroup
 	lastSaveTime time.Time
 	mutex        gosync.RWMutex
-	saveCount    int64 // 已执行保存次数, 用于按频率触发清理任务
+	saveCount    int64        // 已执行保存次数, 用于按频率触发清理任务
 	saveMu       gosync.Mutex // 定时心跳与中控 pulse 指令可能并发触发, 串行化避免重复上报 / 重复应用重置
 }
 
