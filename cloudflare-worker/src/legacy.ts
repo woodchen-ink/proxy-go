@@ -7,6 +7,7 @@
  */
 
 import * as db from './db';
+import { checkDrop, checkQuery, checkWrite } from './sql_guard';
 import { batchUpsertNodeTimeseries, pruneNodeTimeseries, type NodeTimeseriesUpload } from './node_timeseries';
 import type { Env } from './env';
 
@@ -206,8 +207,8 @@ export async function handleLegacy(request: Request, env: Env): Promise<Response
 			//   POST /admin/sql/batch   { statements: [{sql, params?}] }  -> 事务批量执行 (D1 batch 是事务的)
 			//   POST /admin/sql/query   { sql, params? }                  -> 查询返回 rows
 			//
-			// 安全模型: 这两个 endpoint 能直接执行任意 SQL (含 DROP), 全部走 API_TOKEN 鉴权,
-			// 与其他写入 endpoint 同等保护; 没设 API_TOKEN 的部署等于裸奔, 与现状一致
+			// 安全模型: 除 API_TOKEN 鉴权外, 语句按白名单校验 (sql_guard.ts), 只放行迁移与节点维护
+			// 实际用到的形态; 每个节点都持有 API_TOKEN, 不能让它等同于 D1 的任意读写权限
 			// ============================================
 			if (path === '/admin/sql/batch' && request.method === 'POST') {
 				const body = await request.json<{
@@ -219,6 +220,14 @@ export async function handleLegacy(request: Request, env: Env): Promise<Response
 						400,
 						corsHeaders
 					);
+				}
+				for (const s of body.statements) {
+					let verdict = checkWrite(s?.sql);
+					if (verdict.ok && verdict.dropTable) verdict = await checkDrop(env.DB, verdict.dropTable);
+					if (!verdict.ok) {
+						console.warn('admin/sql/batch rejected:', verdict.reason, String(s?.sql).slice(0, 200));
+						return jsonResponse({ error: `SQL rejected: ${verdict.reason}` }, 403, corsHeaders);
+					}
 				}
 				const prepared = body.statements.map((s) => {
 					const stmt = env.DB.prepare(s.sql);
@@ -246,6 +255,11 @@ export async function handleLegacy(request: Request, env: Env): Promise<Response
 						400,
 						corsHeaders
 					);
+				}
+				const verdict = checkQuery(body.sql);
+				if (!verdict.ok) {
+					console.warn('admin/sql/query rejected:', verdict.reason, body.sql.slice(0, 200));
+					return jsonResponse({ error: `SQL rejected: ${verdict.reason}` }, 403, corsHeaders);
 				}
 				const stmt = env.DB.prepare(body.sql);
 				const bound = body.params && body.params.length > 0 ? stmt.bind(...body.params) : stmt;
