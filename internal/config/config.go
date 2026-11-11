@@ -202,6 +202,7 @@ func (cm *ConfigManager) normalizeConfig(config *Config) {
 			if pathConfig.RefererBan.Mode == "" {
 				pathConfig.RefererBan.Mode = RefererModeBlacklist
 			}
+			normalizeNodeOverrides(pathConfig.RefererBan.NodeOverrides)
 		}
 		// 归一多源列表: 剔除空白/空项; 保证 DefaultTarget 与 DefaultTargets[0] 语义一致,
 		// 让依赖 DefaultTarget 的逻辑 (mirror 标记判断 / 展示) 在多源配置下不破。
@@ -212,6 +213,22 @@ func (cm *ConfigManager) normalizeConfig(config *Config) {
 	// 全局 RefererBan 也归一
 	if config.Security.RefererBan.Hosts == nil {
 		config.Security.RefererBan.Hosts = []string{}
+	}
+	normalizeNodeOverrides(config.Security.RefererBan.NodeOverrides)
+}
+
+// normalizeNodeOverrides 按节点覆盖的 nil 切片归一为空切片, 空 Mode 按黑名单
+func normalizeNodeOverrides(list []RefererNodeOverride) {
+	for i := range list {
+		if list[i].Nodes == nil {
+			list[i].Nodes = []string{}
+		}
+		if list[i].Hosts == nil {
+			list[i].Hosts = []string{}
+		}
+		if list[i].Mode == "" {
+			list[i].Mode = RefererModeBlacklist
+		}
 	}
 }
 

@@ -102,11 +102,38 @@ type RefererBanConfig struct {
 	Mode       string   `json:"Mode"`
 	Hosts      []string `json:"Hosts"`
 	BlockEmpty bool     `json:"BlockEmpty"`
+	// NodeOverrides 按节点覆盖: 当前节点出现在某条的 Nodes 里时, 用该条整体替换上面的默认规则 (按顺序先命中先用);
+	// 都不命中时用默认规则。覆盖是"替换"不是"叠加", 便于对个别节点放宽或收紧而不影响其他节点
+	NodeOverrides []RefererNodeOverride `json:"NodeOverrides,omitempty"`
+}
+
+// RefererNodeOverride 只对 Nodes 中的节点生效的一套 Referer 规则, 字段语义同 RefererBanConfig
+type RefererNodeOverride struct {
+	Nodes      []string `json:"Nodes"`
+	Enabled    bool     `json:"Enabled"`
+	Mode       string   `json:"Mode"`
+	Hosts      []string `json:"Hosts"`
+	BlockEmpty bool     `json:"BlockEmpty"`
 }
 
 // IsWhitelist 是否为白名单模式
 func (c *RefererBanConfig) IsWhitelist() bool {
 	return c != nil && c.Mode == RefererModeWhitelist
+}
+
+// ForNode 返回 nodeID 节点上实际生效的规则; c 为 nil 时返回 nil
+func (c *RefererBanConfig) ForNode(nodeID string) *RefererBanConfig {
+	if c == nil {
+		return nil
+	}
+	for _, o := range c.NodeOverrides {
+		for _, n := range o.Nodes {
+			if strings.TrimSpace(n) == nodeID && nodeID != "" {
+				return &RefererBanConfig{Enabled: o.Enabled, Mode: o.Mode, Hosts: o.Hosts, BlockEmpty: o.BlockEmpty}
+			}
+		}
+	}
+	return c
 }
 
 const (

@@ -75,12 +75,13 @@ type refererRedirectEntry struct {
 	target  string
 }
 
-// buildPathRefererMatchers 由 PathConfig 构建路径级 matcher; 只为配置了 RefererBan 的路径建立条目
+// buildPathRefererMatchers 由 PathConfig 构建路径级 matcher; 只为本节点上生效 (含按节点覆盖) 且启用的路径建立条目
 // Mode 为 "whitelist" 时走白名单语义 (只有命中 Hosts 才放行), 否则 (含空字符串, 兼容历史配置) 走黑名单语义
 func buildPathRefererMatchers(pathMap map[string]config.PathConfig) map[string]*security.RefererMatcher {
 	out := make(map[string]*security.RefererMatcher)
+	nodeID := config.CurrentNodeID()
 	for prefix, cfg := range pathMap {
-		rb := cfg.RefererBan
+		rb := cfg.RefererBan.ForNode(nodeID)
 		if rb == nil || !rb.Enabled {
 			continue
 		}
