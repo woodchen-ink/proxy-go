@@ -135,7 +135,7 @@ export default function SecurityConfigPanel({ config, onUpdate }: SecurityConfig
         <CardHeader>
           <CardTitle>引用来源 (Referer) 黑名单</CardTitle>
           <p className="text-sm font-normal text-muted-foreground">
-            全局规则, 对所有路径生效; 单独路径可在"路径映射"中追加额外规则
+            全局规则, 对所有路径生效; 单独路径可在「路径映射」中追加额外规则
           </p>
         </CardHeader>
         <CardContent>

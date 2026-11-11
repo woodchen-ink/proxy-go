@@ -552,7 +552,7 @@ function ProviderRow({
           <span className="font-medium">{provider.Name || "(未命名)"}</span>
           <Badge variant="outline">{PROVIDER_TYPE_LABEL[provider.Type]}</Badge>
           {provider.Enabled && (
-            <Badge className="bg-success/15 text-success hover:bg-success/15">
+            <Badge className="bg-success-soft text-success hover:bg-success-soft">
               <CheckCircle2 className="mr-1 h-3 w-3" />
               启用中
             </Badge>

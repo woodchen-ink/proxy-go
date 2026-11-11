@@ -74,7 +74,7 @@ export default function CacheStatsTiles() {
 
   useEffect(() => {
     fetchStats()
-    const interval = setInterval(fetchStats, 5000)
+    const interval = setInterval(fetchStats, 15000)
     return () => clearInterval(interval)
   }, [fetchStats])
 
@@ -306,9 +306,9 @@ function StatRow({
 }) {
   const toneClass =
     tone === "success"
-      ? "bg-success/10"
+      ? "bg-success-soft"
       : tone === "destructive"
-      ? "bg-destructive/10"
+      ? "bg-destructive-soft"
       : "bg-muted"
   const valueClass =
     tone === "success"

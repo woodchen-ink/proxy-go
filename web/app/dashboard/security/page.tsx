@@ -3,6 +3,8 @@
 import React, { useEffect, useState, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { PageHeader } from "@/components/page-header"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/components/ui/use-toast"
 import { fetchApi } from "@/lib/api-client"
 import { Input } from "@/components/ui/input"
@@ -25,7 +27,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Shield, Ban, Clock, Trash2, RefreshCw } from "lucide-react"
+import { Ban, Clock, Trash2, RefreshCw } from "lucide-react"
 
 interface BannedIP {
   ip: string
@@ -198,46 +200,44 @@ export default function SecurityPage() {
 
   if (loading) {
     return (
-      <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
-        <div className="text-center">
-          <div className="text-lg font-medium">加载中...</div>
-          <div className="text-sm text-muted-foreground mt-1">正在获取安全数据</div>
-        </div>
+      <div className="space-y-5">
+        <Skeleton className="h-8 w-40" />
+        <Skeleton className="h-64 w-full rounded-xl" />
       </div>
     )
   }
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle className="flex items-center gap-2">
-            <Shield className="w-5 h-5" />
-            安全管理
-          </CardTitle>
-          <Button onClick={handleRefresh} disabled={refreshing} variant="outline">
-            <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+    <div className="space-y-5">
+      <PageHeader
+        title="安全"
+        description="IP 封禁是各节点本地状态, 这里汇总全部在线节点"
+        actions={
+          <Button onClick={handleRefresh} disabled={refreshing} variant="outline" size="sm">
+            <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
             刷新
           </Button>
-        </CardHeader>
-        <CardContent>
+        }
+      />
+      <Card>
+        <CardContent className="pt-6">
           {stats && (
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-              <div className="bg-destructive/10 p-4 rounded-lg">
+              <div className={`rounded-lg p-4 ${stats.banned_ips_count > 0 ? "bg-destructive-soft" : "bg-muted"}`}>
                 <div className="flex items-center gap-2">
-                  <Ban className="w-5 h-5 text-destructive" />
+                  <Ban className={`size-5 ${stats.banned_ips_count > 0 ? "text-destructive" : "text-foreground-subtle"}`} />
                   <div>
-                    <div className="text-2xl font-semibold text-destructive">{stats.banned_ips_count}</div>
-                    <div className="text-sm text-destructive">被封禁 IP</div>
+                    <div className={`text-2xl font-semibold tabular-nums ${stats.banned_ips_count > 0 ? "text-destructive" : ""}`}>{stats.banned_ips_count}</div>
+                    <div className="text-sm text-foreground-muted">被封禁 IP</div>
                   </div>
                 </div>
               </div>
-              <div className="bg-warning/10 p-4 rounded-lg">
+              <div className={`rounded-lg p-4 ${stats.error_records_count > 0 ? "bg-warning-soft" : "bg-muted"}`}>
                 <div className="flex items-center gap-2">
-                  <Clock className="w-5 h-5 text-warning" />
+                  <Clock className={`size-5 ${stats.error_records_count > 0 ? "text-warning" : "text-foreground-subtle"}`} />
                   <div>
-                    <div className="text-2xl font-semibold text-warning">{stats.error_records_count}</div>
-                    <div className="text-sm text-warning">错误记录</div>
+                    <div className={`text-2xl font-semibold tabular-nums ${stats.error_records_count > 0 ? "text-warning" : ""}`}>{stats.error_records_count}</div>
+                    <div className="text-sm text-foreground-muted">错误记录</div>
                   </div>
                 </div>
               </div>
@@ -280,8 +280,8 @@ export default function SecurityPage() {
                     </div>
                     <div className={`px-2 py-1 rounded text-sm ${
                       ipStatus.banned
-                        ? 'bg-destructive/10 text-destructive'
-                        : 'bg-success/10 text-success'
+                        ? 'bg-destructive-soft text-destructive'
+                        : 'bg-success-soft text-success'
                     }`}>
                       {ipStatus.banned ? '已封禁' : '正常'}
                     </div>
@@ -391,7 +391,7 @@ export default function SecurityPage() {
                       <TableCell>
                         <span className={`px-2 py-1 rounded text-xs ${
                           item.is_active
-                            ? 'bg-destructive/10 text-destructive'
+                            ? 'bg-destructive-soft text-destructive'
                             : 'bg-muted text-muted-foreground'
                         }`}>
                           {item.is_active ? '封禁中' : '已解封'}

@@ -28,7 +28,7 @@ interface ExtensionRuleDialogProps {
     maxSizeUnit: 'B' | 'KB' | 'MB' | 'GB'
     domains: string
   }
-  onNewRuleChange: (rule: any) => void
+  onNewRuleChange: (rule: ExtensionRuleDialogProps["newRule"]) => void
   onSubmit: () => void
 }
 

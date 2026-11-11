@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Globe, Plus, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PageHeader } from "@/components/page-header";
 import { useToast } from "@/components/ui/use-toast";
 import { fetchApi } from "@/lib/api-client";
 import { BindingDialog } from "./components/BindingDialog";
@@ -126,27 +127,23 @@ export default function DnsPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">DNS 分流</h1>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            每条线路按优先级排列节点, 高亮的是当前承接流量的节点;
-            点击其他节点即可手动切换。节点故障时自动切到下一个健康节点,
-            首选节点恢复 10 分钟后自动切回, 全程推送企业微信。
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => load()}>
-            <RefreshCw className="mr-2 size-4" />
-            刷新
-          </Button>
-          <Button size="sm" onClick={() => openDialog(null)}>
-            <Plus className="mr-2 size-4" />
-            新建绑定
-          </Button>
-        </div>
-      </div>
+    <div className="space-y-5">
+      <PageHeader
+        title="DNS 分流"
+        description="每条线路按优先级排列节点, 高亮的是当前承接流量的节点, 点击其他节点即可手动切换。节点失联 1 分钟且回源探测失败时自动切到下一个健康节点, 首选节点恢复 10 分钟后自动切回, 全程推送企业微信。"
+        actions={
+          <>
+            <Button variant="outline" size="sm" onClick={() => load()}>
+              <RefreshCw className="size-4" />
+              刷新
+            </Button>
+            <Button size="sm" onClick={() => openDialog(null)}>
+              <Plus className="size-4" />
+              新建绑定
+            </Button>
+          </>
+        }
+      />
 
       {groups.length === 0 && (
         <Card>

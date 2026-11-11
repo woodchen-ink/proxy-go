@@ -15,8 +15,8 @@ import { DokployDialog } from "./DokployDialog"
 
 const STEP_CLASS: Record<string, string> = {
   pending: "text-muted-foreground",
-  running: "text-[hsl(var(--warning))]",
-  done: "text-[hsl(var(--success))]",
+  running: "text-warning",
+  done: "text-success",
   skipped: "text-muted-foreground",
   failed: "text-destructive",
 }
@@ -169,7 +169,7 @@ export function ReleaseCard({ nodes, onChange }: { nodes: NodeInfo[]; onChange: 
                 <label key={n.node_id} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-accent">
                   <input type="checkbox" checked={selected.has(n.node_id)} onChange={() => toggle(n.node_id)} />
                   <span className="font-mono font-medium">{n.node_id}</span>
-                  <span className={n.online ? "text-[hsl(var(--success))]" : "text-destructive"}>{n.online ? "在线" : "离线"}</span>
+                  <span className={n.online ? "text-success" : "text-destructive"}>{n.online ? "在线" : "离线"}</span>
                   <span className="font-mono text-muted-foreground">{n.version || "-"}</span>
                   {n.version && target && n.version === target && <span className="text-muted-foreground">已是目标版本</span>}
                   <span className="ml-auto text-muted-foreground">{n.dokploy_app_id ? "Dokploy 已登记" : "Dokploy 未登记"}</span>

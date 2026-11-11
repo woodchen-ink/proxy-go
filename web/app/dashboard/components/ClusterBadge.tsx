@@ -19,14 +19,14 @@ export default function ClusterBadge({ cluster }: { cluster?: ClusterInfo }) {
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
       <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-        <span aria-hidden className="size-1.5 rounded-full bg-[hsl(var(--success))]" />
+        <span aria-hidden className="size-1.5 rounded-full bg-success" />
         全 {nodes.length} 节点合计
       </span>
       <span aria-hidden>·</span>
       <span>
         {live.length} 个在线 (实时)
         {offline > 0 && (
-          <span className="text-[hsl(var(--warning))]"> · {offline} 个离线 (最后上报值)</span>
+          <span className="text-warning"> · {offline} 个离线 (最后上报值)</span>
         )}
       </span>
       <span aria-hidden>·</span>

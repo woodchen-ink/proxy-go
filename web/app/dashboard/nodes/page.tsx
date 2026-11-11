@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react"
 import { RefreshCw, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useToast } from "@/components/ui/use-toast"
@@ -39,7 +40,7 @@ const COMMAND_LABELS: Record<string, string> = {
 
 const LEVEL_CLASS: Record<string, string> = {
   info: "text-muted-foreground",
-  warning: "text-[hsl(var(--warning))]",
+  warning: "text-warning",
   error: "text-destructive",
 }
 
@@ -112,16 +113,19 @@ export default function NodesPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>节点</CardTitle>
+    <div className="space-y-5">
+      <PageHeader
+        title="节点"
+        description="在线状态、回源主机名与配置同步; 各节点承载的流量与下载速度见仪表盘"
+        actions={
           <Button variant="outline" size="sm" onClick={load}>
-            <RefreshCw className="mr-2 size-4" />
+            <RefreshCw className="size-4" />
             刷新
           </Button>
-        </CardHeader>
-        <CardContent className="overflow-x-auto">
+        }
+      />
+      <Card className="overflow-hidden">
+        <CardContent className="overflow-x-auto p-0">
           <Table>
             <TableHeader>
               <TableRow>
@@ -157,7 +161,7 @@ export default function NodesPage() {
                     <TableCell className="whitespace-nowrap text-xs">
                       <span
                         aria-hidden
-                        className={`mr-1.5 inline-block size-2 rounded-full ${n.online ? "bg-[hsl(var(--success))]" : "bg-destructive"}`}
+                        className={`mr-1.5 inline-block size-2 rounded-full ${n.online ? "bg-success" : "bg-destructive"}`}
                       />
                       {n.online ? "在线" : `离线 ${formatAge(n.state_since)}`}
                     </TableCell>
@@ -181,7 +185,7 @@ export default function NodesPage() {
                       {!n.probe ? (
                         <span className="text-muted-foreground">-</span>
                       ) : n.probe.ok ? (
-                        <span className="text-[hsl(var(--success))]">正常</span>
+                        <span className="text-success">正常</span>
                       ) : (
                         <span className="text-destructive" title={n.probe.error}>
                           失败
@@ -196,9 +200,9 @@ export default function NodesPage() {
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs">
                       {!n.live ? "-" : configSynced ? (
-                        <span className="text-[hsl(var(--success))]">已同步</span>
+                        <span className="text-success">已同步</span>
                       ) : (
-                        <span className="text-[hsl(var(--warning))]">待同步</span>
+                        <span className="text-warning">待同步</span>
                       )}
                     </TableCell>
                     <TableCell className="font-mono text-xs">{n.version || "-"}</TableCell>

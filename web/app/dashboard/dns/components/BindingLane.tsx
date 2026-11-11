@@ -32,7 +32,7 @@ function SyncBadge({ check }: { check: BindingCheck | null }) {
   if (err) {
     return (
       <span
-        className="rounded-full bg-destructive/10 px-2 py-0.5 text-xs text-destructive"
+        className="rounded-full bg-destructive-soft px-2 py-0.5 text-xs text-destructive"
         title={err}
       >
         读取失败
@@ -40,11 +40,11 @@ function SyncBadge({ check }: { check: BindingCheck | null }) {
     );
   }
   return check.consistent ? (
-    <span className="rounded-full bg-[hsl(var(--success))]/10 px-2 py-0.5 text-xs text-[hsl(var(--success))]">
+    <span className="rounded-full bg-success-soft px-2 py-0.5 text-xs text-success">
       线上一致
     </span>
   ) : (
-    <span className="rounded-full bg-[hsl(var(--warning))]/10 px-2 py-0.5 text-xs text-[hsl(var(--warning))]">
+    <span className="rounded-full bg-warning-soft px-2 py-0.5 text-xs text-warning">
       与配置不一致
     </span>
   );
@@ -150,7 +150,7 @@ export function BindingLane({
                 <div className="mt-1 flex items-center gap-1.5 font-mono text-sm">
                   <span
                     aria-hidden
-                    className={`size-2 shrink-0 rounded-full ${online ? "bg-[hsl(var(--success))]" : "bg-destructive"}`}
+                    className={`size-2 shrink-0 rounded-full ${online ? "bg-success" : "bg-destructive"}`}
                   />
                   {id}
                 </div>
