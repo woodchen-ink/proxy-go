@@ -194,7 +194,7 @@ function SummaryTile({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <div className="text-center p-4 rounded-lg border bg-card cursor-help hover:bg-accent/40 transition-colors">
+        <div className="text-center p-4 rounded-lg border bg-card cursor-help hover:bg-accent transition-colors">
           <div className="flex items-center justify-center gap-2 mb-2">
             {icon}
             <Info className="h-3 w-3 text-muted-foreground" />
@@ -342,7 +342,7 @@ function DetailTile({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <div className="text-center p-3 rounded-lg border bg-card cursor-help hover:bg-accent/40 transition-colors">
+        <div className="text-center p-3 rounded-lg border bg-card cursor-help hover:bg-accent transition-colors">
           {icon}
           <div className="text-lg font-semibold text-foreground">{value}</div>
           <div className="text-xs text-muted-foreground">{label}</div>

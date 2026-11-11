@@ -8,143 +8,158 @@
  * 关键点 (与 czl-code-skill/frontend-design/1-color.md 对齐):
  * 1. --primary 是近黑, 不是品牌蓝 (主 CTA 走中性深色)
  * 2. --accent 是浅灰 hover, 与 shadcn 默认对齐, 不是品牌色
- * 3. --brand = #2EA7E0 仅承载品牌强调, 通过 --ring 间接出场
+ * 3. --brand = #2EA7E0 本色只做 ring / 进度; 导航当前项与选中行用 --brand-soft 底 + --brand-strong 字
  * 4. 字体走系统栈, 不引网络字体
  */
 
 @layer base {
   :root {
-    /* 表面 — 灰底浮白卡 */
-    --background: 220 13% 97%;          /* #F6F7F8 页面浅灰底 */
-    --background-subtle: 220 10% 94%;   /* 次级背景 */
-    --foreground: 0 0% 4%;              /* #0A0A0A 近黑正文 */
-    --foreground-muted: 0 0% 32%;       /* 次要文字 */
-
-    --card: 0 0% 100%;                  /* 卡片纯白 */
+    /* 表面四级: 下沉 < 页面 < 卡片 = 浮层, 相邻可辨不跳 */
+    --background-subtle: 216 15% 94%;   /* #ECEEF1 侧栏 / 分段 Tab 槽 */
+    --background: 220 16% 96%;          /* #F4F5F7 页面底 */
+    --card: 0 0% 100%;
     --card-foreground: 0 0% 4%;
     --popover: 0 0% 100%;
     --popover-foreground: 0 0% 4%;
 
+    /* 字色三档 */
+    --foreground: 0 0% 4%;              /* #0A0A0A 标题 / 正文 / 数值 */
+    --foreground-muted: 0 0% 32%;       /* #525252 说明 / label / 表头 */
+    --foreground-subtle: 0 0% 48%;      /* #7A7A7A 时间戳 / 占位 / 计数 */
+
     /* shadcn 语义 */
     --primary: 0 0% 4%;                 /* 主 CTA 近黑 */
-    --primary-foreground: 0 0% 100%;
-    --secondary: 220 10% 95%;           /* #F1F2F4 */
+    --primary-foreground: 0 0% 98%;
+    --secondary: 210 13% 94%;           /* #EEF0F2 */
     --secondary-foreground: 0 0% 4%;
-    --muted: 220 13% 97%;
-    --muted-foreground: 0 0% 45%;
-    --accent: 220 12% 93%;              /* #EEEFF1 hover 浅灰 */
+    --muted: 220 18% 97%;               /* #F5F6F8 卡内弱块 / 表头 */
+    --muted-foreground: 0 0% 32%;
+    --accent: 0 0% 4% / 0.07;           /* hover 底: 前景色 7% 半透明, 叠在任何表面上都可见; 不要加 /NN 透明度修饰 */
     --accent-foreground: 0 0% 4%;
 
-    /* 语义色 — 与 brand 区分 */
+    /* 语义色: default + soft 底 */
     --destructive: 0 72% 51%;           /* #DC2626 */
     --destructive-foreground: 0 0% 100%;
-    --success: 142 71% 36%;             /* #16A34A */
+    --destructive-soft: 0 86% 97%;
+    --success: 142 76% 36%;             /* #16A34A */
     --success-foreground: 0 0% 100%;
+    --success-soft: 138 76% 97%;
     --warning: 32 95% 44%;              /* #D97706 */
     --warning-foreground: 0 0% 100%;
-    --info: 215 19% 35%;                /* #475569 slate-600, 避开 brand 蓝 */
+    --warning-soft: 48 100% 96%;
+    --info: 221 83% 53%;                /* #2563EB */
     --info-foreground: 0 0% 100%;
+    --info-soft: 214 100% 97%;
 
-    /* 边框 / 输入 / focus */
-    --border: 220 13% 91%;              /* #E5E5E5 */
-    --input: 220 13% 91%;
+    --border: 220 12% 90%;              /* #E2E4E8 */
+    --input: 220 12% 90%;
 
-    /* 品牌色 — CZL 唯一允许 brand 高频出场的位置是 --ring */
-    --brand: 200 75% 53%;               /* #2EA7E0 */
+    /* 品牌三件套: 本色只做 ring 与进度, 选中走 soft 底 + strong 字 */
+    --brand: 199 74% 53%;               /* #2EA7E0 */
     --brand-foreground: 0 0% 100%;
-    --ring: 200 75% 53%;
+    --brand-strong: 202 89% 32%;        /* #09669A */
+    --brand-soft: 202 75% 92%;          /* #DCEFFA */
+    --ring: 199 74% 53% / 0.6;
+    --link: 221 83% 53%;                /* #2563EB 内容内联链接 */
 
-    /* 数据可视化 — Vercel 风格, OKLCH L≈0.65, 避开 brand 青蓝区间 */
-    --chart-1: 215 60% 60%;             /* 钴蓝 #5B8FD9 */
-    --chart-2: 145 40% 50%;             /* 翠绿 #4FAE7E */
-    --chart-3: 28 76% 60%;              /* 暖橙 #E89A4B */
-    --chart-4: 273 51% 65%;             /* 紫罗兰 #A874D6 */
-    --chart-5: 343 71% 65%;             /* 玫粉 #E66A8E */
-    --chart-6: 47 65% 55%;              /* 金黄 #D9B73E */
+    /* 图表 6 色 (CZL 统一色板) */
+    --chart-1: 218 73% 55%;             /* #3975E0 */
+    --chart-2: 108 55% 44%;             /* #4CAF33 */
+    --chart-3: 28 91% 58%;              /* #F58D31 */
+    --chart-4: 253 59% 58%;             /* #7256D4 */
+    --chart-5: 345 73% 59%;             /* #E3496F */
+    --chart-6: 42 83% 56%;              /* #ECB333 */
 
-    /* sidebar — 与 background-subtle 同档, 不另起品牌色 */
-    --sidebar: 220 10% 94%;
+    /* sidebar: 下沉面; hover 走半透明 accent, 当前项在 app-sidebar 封装层覆盖为品牌浅底 */
+    --sidebar: 216 15% 94%;
     --sidebar-foreground: 0 0% 4%;
     --sidebar-primary: 0 0% 4%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 220 11% 89%;      /* 比侧栏底深一档, 选中 / hover 可辨 */
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 0 0% 4% / 0.07;
     --sidebar-accent-foreground: 0 0% 4%;
-    --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 200 75% 53%;
+    --sidebar-border: 220 12% 90%;
+    --sidebar-ring: 199 74% 53% / 0.6;
 
-    /* 字体 — 系统栈, 不引 Google Fonts */
     --font-sans: -apple-system, BlinkMacSystemFont, 'Noto Sans SC', system-ui,
       'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
       'Helvetica Neue', Helvetica, Arial, sans-serif;
-    --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-      "Liberation Mono", monospace;
+    --font-mono: ui-monospace, SFMono-Regular, "JetBrains Mono", "Cascadia Code",
+      Consolas, "Liberation Mono", Menlo, monospace;
 
-    /* 圆角 / 阴影 — 克制 */
-    --radius: 0.5rem;
-    --shadow-xs: 0 1px 1px hsl(0 0% 0% / 0.04);
-    --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.04), 0 1px 3px hsl(0 0% 0% / 0.06);
-    --shadow: 0 1px 3px hsl(0 0% 0% / 0.06), 0 1px 2px hsl(0 0% 0% / 0.04);
-    --shadow-md: 0 4px 6px -1px hsl(0 0% 0% / 0.06), 0 2px 4px -2px hsl(0 0% 0% / 0.04);
-    --shadow-lg: 0 10px 15px -3px hsl(0 0% 0% / 0.08), 0 4px 6px -4px hsl(0 0% 0% / 0.04);
+    /* 圆角: 单基准 10px, 派生档见 tailwind.config */
+    --radius: 0.625rem;
+
+    /* 阴影: 双层组合, 一个元素一个 token */
+    --shadow-sm: 0 1px 2px 0 rgb(15 23 42 / 0.04);
+    --shadow-card: 0 1px 3px 0 rgb(15 23 42 / 0.08), 0 4px 12px -2px rgb(15 23 42 / 0.06);
+    --shadow-popover: 0 4px 8px -2px rgb(15 23 42 / 0.10), 0 12px 24px -4px rgb(15 23 42 / 0.08);
+    --shadow-modal: 0 12px 24px -6px rgb(15 23 42 / 0.16), 0 24px 48px -12px rgb(15 23 42 / 0.12);
   }
 
   .dark {
-    --background: 240 4% 9%;            /* #171718 页面深底, 不用纯黑 */
-    --background-subtle: 240 4% 11%;
-    --foreground: 0 0% 93%;             /* #EDEDED 近白 */
-    --foreground-muted: 0 0% 63%;
-
-    --card: 0 0% 13%;                   /* #212121 卡片浮起 */
+    --background-subtle: 240 3% 6%;     /* #101011 */
+    --background: 240 2% 9%;            /* #161617 */
+    --card: 240 3% 13%;                 /* #1F1F21 */
     --card-foreground: 0 0% 93%;
-    --popover: 0 0% 16%;                /* #2A2A2A 浮层再亮一档 */
+    --popover: 240 3% 17%;              /* #2A2A2D */
     --popover-foreground: 0 0% 93%;
 
-    --primary: 0 0% 98%;                /* 暗色 CTA 反相: 近白底近黑字 */
+    --foreground: 0 0% 93%;
+    --foreground-muted: 0 0% 63%;
+    --foreground-subtle: 240 2% 50%;
+
+    --primary: 0 0% 98%;
     --primary-foreground: 0 0% 4%;
-    --secondary: 0 0% 15%;
+    --secondary: 240 4% 17%;
     --secondary-foreground: 0 0% 93%;
-    --muted: 240 4% 11%;
+    --muted: 240 2% 16%;
     --muted-foreground: 0 0% 63%;
-    --accent: 0 0% 15%;
+    --accent: 0 0% 100% / 0.08;
     --accent-foreground: 0 0% 93%;
 
-    --destructive: 0 84% 70%;           /* red-400 */
+    --destructive: 0 91% 71%;
     --destructive-foreground: 0 0% 4%;
-    --success: 142 69% 58%;             /* green-400 */
+    --destructive-soft: 0 75% 15%;
+    --success: 142 69% 58%;
     --success-foreground: 0 0% 4%;
-    --warning: 43 96% 56%;              /* amber-400 */
+    --success-soft: 145 80% 10%;
+    --warning: 43 96% 56%;
     --warning-foreground: 0 0% 4%;
-    --info: 215 20% 65%;                /* slate-400 */
+    --warning-soft: 21 92% 14%;
+    --info: 213 94% 68%;
     --info-foreground: 0 0% 4%;
+    --info-soft: 226 57% 21%;
 
-    --border: 0 0% 16%;
-    --input: 0 0% 16%;
+    --border: 240 5% 20%;               /* #303035 */
+    --input: 240 5% 20%;
 
-    --brand: 200 75% 61%;               /* #4FB8E8 暗色提亮 */
+    --brand: 199 77% 61%;
     --brand-foreground: 0 0% 4%;
-    --ring: 200 75% 61%;
+    --brand-strong: 199 79% 68%;
+    --brand-soft: 204 61% 18%;
+    --ring: 199 77% 61% / 0.6;
+    --link: 213 94% 68%;
 
-    --chart-1: 215 70% 70%;
-    --chart-2: 145 35% 60%;
-    --chart-3: 28 78% 70%;
-    --chart-4: 273 55% 75%;
-    --chart-5: 343 76% 75%;
-    --chart-6: 47 70% 65%;
+    --chart-1: 218 99% 70%;
+    --chart-2: 109 47% 58%;
+    --chart-3: 27 100% 67%;
+    --chart-4: 250 76% 71%;
+    --chart-5: 348 92% 71%;
+    --chart-6: 40 96% 68%;
 
-    --sidebar: 240 4% 11%;
+    --sidebar: 240 3% 6%;
     --sidebar-foreground: 0 0% 93%;
     --sidebar-primary: 0 0% 98%;
     --sidebar-primary-foreground: 0 0% 4%;
-    --sidebar-accent: 0 0% 15%;
+    --sidebar-accent: 0 0% 100% / 0.08;
     --sidebar-accent-foreground: 0 0% 93%;
-    --sidebar-border: 0 0% 16%;
-    --sidebar-ring: 200 75% 61%;
+    --sidebar-border: 240 5% 20%;
+    --sidebar-ring: 199 77% 61% / 0.6;
 
-    --shadow-xs: 0 1px 1px hsl(0 0% 0% / 0.3);
-    --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.3), 0 1px 3px hsl(0 0% 0% / 0.4);
-    --shadow: 0 1px 3px hsl(0 0% 0% / 0.4), 0 1px 2px hsl(0 0% 0% / 0.3);
-    --shadow-md: 0 4px 6px -1px hsl(0 0% 0% / 0.4), 0 2px 4px -2px hsl(0 0% 0% / 0.3);
-    --shadow-lg: 0 10px 15px -3px hsl(0 0% 0% / 0.5), 0 4px 6px -4px hsl(0 0% 0% / 0.3);
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.4);
+    --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.5), 0 4px 12px -2px rgb(0 0 0 / 0.4);
+    --shadow-popover: 0 4px 8px -2px rgb(0 0 0 / 0.5), 0 12px 24px -4px rgb(0 0 0 / 0.45);
+    --shadow-modal: 0 12px 24px -6px rgb(0 0 0 / 0.6), 0 24px 48px -12px rgb(0 0 0 / 0.5);
   }
 }
 

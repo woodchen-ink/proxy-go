@@ -240,7 +240,7 @@ export default function DashboardPage() {
                         const errPct = ((r.error_count / r.request_count) * 100).toFixed(1)
                         const last = new Date(r.last_access_time * 1000)
                         return (
-                          <tr key={i} className="border-b hover:bg-accent/30">
+                          <tr key={i} className="border-b hover:bg-accent">
                             <td className="max-w-xs truncate p-2">
                               <a
                                 href={r.path}
@@ -302,7 +302,7 @@ export default function DashboardPage() {
                 </thead>
                 <tbody>
                   {recentShown.map((req, i) => (
-                    <tr key={i} className="border-b hover:bg-accent/30">
+                    <tr key={i} className="border-b hover:bg-accent">
                       <td className="p-2 whitespace-nowrap">{formatDate(req.Time)}</td>
                       <td className="max-w-xs truncate p-2">
                         {req.Host ? (

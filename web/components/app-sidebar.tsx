@@ -104,7 +104,13 @@ export function AppSidebar() {
               <SidebarMenu>
                 {group.items.map((item) => (
                   <SidebarMenuItem key={item.href}>
-                    <SidebarMenuButton asChild isActive={pathname === item.href} tooltip={item.title}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={pathname === item.href}
+                      tooltip={item.title}
+                      // 当前项走品牌浅底, 与 hover 的半透明灰区分
+                      className="data-[active=true]:bg-brand-soft data-[active=true]:text-brand-strong data-[active=true]:hover:bg-brand-soft data-[active=true]:hover:text-brand-strong"
+                    >
                       <Link href={item.href} onClick={() => setOpenMobile(false)}>
                         <item.icon />
                         <span>{item.title}</span>

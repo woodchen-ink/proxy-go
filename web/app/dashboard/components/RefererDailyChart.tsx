@@ -239,7 +239,7 @@ export default function RefererDailyChart() {
               </thead>
               <tbody>
                 {data.hosts.map((h) => (
-                  <tr key={h.host} className="border-b hover:bg-accent/30">
+                  <tr key={h.host} className="border-b hover:bg-accent">
                     <td className="p-2 font-mono">{h.host}</td>
                     <td className="p-2 text-right tabular-nums">
                       {h.total_requests.toLocaleString()}

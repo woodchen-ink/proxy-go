@@ -14,6 +14,8 @@ export default {
         "background-subtle": "hsl(var(--background-subtle))",
         foreground: "hsl(var(--foreground))",
         "foreground-muted": "hsl(var(--foreground-muted))",
+        "foreground-subtle": "hsl(var(--foreground-subtle))",
+        link: "hsl(var(--link))",
         card: {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
@@ -41,22 +43,28 @@ export default {
         destructive: {
           DEFAULT: "hsl(var(--destructive))",
           foreground: "hsl(var(--destructive-foreground))",
+          soft: "hsl(var(--destructive-soft))",
         },
         success: {
           DEFAULT: "hsl(var(--success))",
           foreground: "hsl(var(--success-foreground))",
+          soft: "hsl(var(--success-soft))",
         },
         warning: {
           DEFAULT: "hsl(var(--warning))",
           foreground: "hsl(var(--warning-foreground))",
+          soft: "hsl(var(--warning-soft))",
         },
         info: {
           DEFAULT: "hsl(var(--info))",
           foreground: "hsl(var(--info-foreground))",
+          soft: "hsl(var(--info-soft))",
         },
         brand: {
           DEFAULT: "hsl(var(--brand))",
           foreground: "hsl(var(--brand-foreground))",
+          strong: "hsl(var(--brand-strong))",
+          soft: "hsl(var(--brand-soft))",
         },
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
@@ -81,9 +89,20 @@ export default {
         },
       },
       borderRadius: {
+        "2xl": "calc(var(--radius) + 8px)",
+        xl: "calc(var(--radius) + 4px)",
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+      },
+      boxShadow: {
+        sm: "var(--shadow-sm)",
+        DEFAULT: "var(--shadow-card)",
+        card: "var(--shadow-card)",
+        md: "var(--shadow-popover)",
+        popover: "var(--shadow-popover)",
+        lg: "var(--shadow-modal)",
+        modal: "var(--shadow-modal)",
       },
       fontFamily: {
         sans: "var(--font-sans)",

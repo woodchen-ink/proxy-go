@@ -860,7 +860,7 @@ export default function ConfigPage() {
                           className={`w-full text-left px-3 py-2 rounded-md transition-colors ${
                             isSelected
                               ? 'bg-accent text-accent-foreground font-medium'
-                              : 'text-foreground hover:bg-accent/60'
+                              : 'text-foreground hover:bg-accent'
                           }`}
                         >
                           <div className="flex items-center gap-2">

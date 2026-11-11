@@ -166,7 +166,7 @@ export function ReleaseCard({ nodes, onChange }: { nodes: NodeInfo[]; onChange: 
             <Label>节点 (按列表顺序逐个处理)</Label>
             <div className="max-h-56 space-y-1 overflow-y-auto rounded-md border p-2">
               {nodes.map((n) => (
-                <label key={n.node_id} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-accent/40">
+                <label key={n.node_id} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-accent">
                   <input type="checkbox" checked={selected.has(n.node_id)} onChange={() => toggle(n.node_id)} />
                   <span className="font-mono font-medium">{n.node_id}</span>
                   <span className={n.online ? "text-[hsl(var(--success))]" : "text-destructive"}>{n.online ? "在线" : "离线"}</span>
