@@ -24,7 +24,20 @@ export interface BindingCheck {
   actual_node: string;
 }
 
-export type BindingKind = "cf_dnspod" | "edgeone";
+export type BindingKind = "cf_dnspod" | "edgeone" | "dnspod_ip";
+
+// bindingTarget 该线路切到节点时写入的值: CF + DNSPod 用回源主机名, EdgeOne / DNSPod 纯 IP 用节点出口 IP
+export function bindingTarget(kind: BindingKind, n?: NodeOption): string {
+  if (!n) return "";
+  return kind === "cf_dnspod" ? n.origin_host : n.ipv4 || n.ipv6;
+}
+
+// bindingTitle 线路标题, 如「境内线路 · DNSPod 纯 IP」
+export function bindingTitle(b: Pick<Binding, "kind" | "record_line">): string {
+  if (b.kind === "edgeone") return "境内线路 · EdgeOne";
+  if (b.kind === "dnspod_ip") return `${b.record_line}线路 · DNSPod 纯 IP`;
+  return `${b.record_line}线路 · CF SaaS + DNSPod`;
+}
 
 export interface Binding {
   id: number;

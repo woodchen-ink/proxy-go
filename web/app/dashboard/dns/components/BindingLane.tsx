@@ -3,7 +3,13 @@
 import { ChevronRight, Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatTime } from "@/lib/format";
-import type { Binding, BindingCheck, NodeOption } from "../types";
+import {
+  bindingTarget,
+  bindingTitle,
+  type Binding,
+  type BindingCheck,
+  type NodeOption,
+} from "../types";
 
 interface Props {
   binding: Binding;
@@ -13,12 +19,6 @@ interface Props {
   onCheck: (b: Binding) => void;
   onEdit: (b: Binding) => void;
   onDelete: (b: Binding) => void;
-}
-
-// targetOf 该线路切到节点时写入的值: EdgeOne 用节点 IP, CF + DNSPod 用回源主机名
-function targetOf(b: Binding, n?: NodeOption): string {
-  if (!n) return "";
-  return b.kind === "edgeone" ? n.ipv4 || n.ipv6 : n.origin_host;
 }
 
 function SyncBadge({ check }: { check: BindingCheck | null }) {
@@ -68,11 +68,7 @@ export function BindingLane({
     <div className={`rounded-lg border p-4 ${b.enabled ? "" : "opacity-60"}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-medium">
-            {isEO
-              ? "境内线路 · EdgeOne"
-              : `${b.record_line}线路 · CF SaaS + DNSPod`}
-          </span>
+          <span className="text-sm font-medium">{bindingTitle(b)}</span>
           <SyncBadge check={check} />
           <span className="text-xs text-muted-foreground">
             故障切换{b.auto_failover ? "开" : "关"} · 自动切回
@@ -155,7 +151,7 @@ export function BindingLane({
                   {id}
                 </div>
                 <div className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
-                  {targetOf(b, n) || "未登记"}
+                  {bindingTarget(b.kind, n) || "未登记"}
                 </div>
               </button>
             </div>
@@ -171,6 +167,16 @@ export function BindingLane({
               {b.saas_zone_name || b.saas_zone_id}
             </span>{" "}
             · 实际源站 <span className="font-mono">{actual || "-"}</span>
+          </span>
+        ) : b.kind === "dnspod_ip" ? (
+          <span>
+            DNSPod{" "}
+            <span className="font-mono">
+              {b.record_name === "@" ? "" : `${b.record_name}.`}
+              {b.dnspod_domain}
+            </span>{" "}
+            · 实际解析{" "}
+            <span className="font-mono">{check?.dnspod_value || "-"}</span>
           </span>
         ) : (
           <>

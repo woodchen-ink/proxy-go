@@ -135,16 +135,21 @@ function addColumns(sql: SqlStorage): void {
 
 export function migrate(sql: SqlStorage): void {
 	for (const stmt of STATEMENTS) sql.exec(stmt);
-	addBindingKind(sql);
+	rebuildBindings(sql);
 	addColumns(sql);
 }
 
-// addBindingKind v2: 绑定增加 kind (cf_dnspod / edgeone), 唯一键从 hostname 改为 (hostname, kind)。
-// SQLite 不能改约束, 只能重建表; 判据是旧建表语句里还有 hostname 的列级 UNIQUE
-function addBindingKind(sql: SqlStorage): void {
+// rebuildBindings 把旧表重建为 v3。SQLite 不能改约束, 只能重建; 按建表语句判断版本:
+// v1 hostname 列级 UNIQUE, 无 kind 列; v2 增加 kind, 唯一键 (hostname, kind);
+// v3 唯一键 (hostname, kind, record_line), DNSPod 纯 IP 绑定可以按线路各一条 (境内 / 境外)
+function rebuildBindings(sql: SqlStorage): void {
 	const row = sql.exec("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'dns_bindings'").toArray()[0];
-	if (!row || !String(row.sql).includes('hostname TEXT NOT NULL UNIQUE')) return;
-	sql.exec(`CREATE TABLE dns_bindings_v2 (
+	if (!row) return;
+	const ddl = String(row.sql);
+	const v1 = ddl.includes('hostname TEXT NOT NULL UNIQUE');
+	if (!v1 && !ddl.includes('UNIQUE (hostname, kind)')) return;
+	sql.exec('DROP TABLE IF EXISTS dns_bindings_v3');
+	sql.exec(`CREATE TABLE dns_bindings_v3 (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		kind TEXT NOT NULL DEFAULT 'cf_dnspod',
 		hostname TEXT NOT NULL,
@@ -164,14 +169,14 @@ function addBindingKind(sql: SqlStorage): void {
 		last_check TEXT NOT NULL DEFAULT '',
 		note TEXT NOT NULL DEFAULT '',
 		updated_at INTEGER NOT NULL,
-		UNIQUE (hostname, kind)
+		UNIQUE (hostname, kind, record_line)
 	)`);
-	sql.exec(`INSERT INTO dns_bindings_v2 (id, kind, hostname, enabled, cf_credential_id, saas_zone_id, saas_zone_name,
+	sql.exec(`INSERT INTO dns_bindings_v3 (id, kind, hostname, enabled, cf_credential_id, saas_zone_id, saas_zone_name,
 		dnspod_credential_id, dnspod_domain, record_name, record_line, pool, active_node, auto_failover, auto_failback,
 		last_switch_at, last_check, note, updated_at)
-		SELECT id, 'cf_dnspod', hostname, enabled, cf_credential_id, saas_zone_id, saas_zone_name,
+		SELECT id, ${v1 ? "'cf_dnspod'" : 'kind'}, hostname, enabled, cf_credential_id, saas_zone_id, saas_zone_name,
 		dnspod_credential_id, dnspod_domain, record_name, record_line, pool, active_node, auto_failover, auto_failback,
 		last_switch_at, last_check, note, updated_at FROM dns_bindings`);
 	sql.exec('DROP TABLE dns_bindings');
-	sql.exec('ALTER TABLE dns_bindings_v2 RENAME TO dns_bindings');
+	sql.exec('ALTER TABLE dns_bindings_v3 RENAME TO dns_bindings');
 }

@@ -48,11 +48,10 @@ export default function DnsPage() {
     const m = new Map<string, Binding[]>();
     for (const b of bindings)
       m.set(b.hostname, [...(m.get(b.hostname) || []), b]);
-    // 默认线路 (CF + DNSPod) 排在 EdgeOne 前
-    for (const list of m.values())
-      list.sort((a, b) =>
-        a.kind === b.kind ? 0 : a.kind === "edgeone" ? 1 : -1,
-      );
+    // 按线路排: 默认 → 境外 → 境内 (EdgeOne 只承接境内)
+    const rank = (b: Binding) =>
+      b.kind === "edgeone" ? 2 : ["默认", "境外", "境内"].indexOf(b.record_line);
+    for (const list of m.values()) list.sort((a, b) => rank(a) - rank(b));
     return [...m.entries()];
   }, [bindings]);
 
@@ -88,7 +87,9 @@ export default function DnsPage() {
     const msg =
       b.kind === "edgeone"
         ? `把 ${b.hostname} 的 EdgeOne 源站切到 ${nodeId} (${n?.ipv4 || n?.ipv6})?\n该节点会成为首选。`
-        : `把 ${b.hostname} 切到 ${nodeId} (${n?.origin_host})?\n会同时修改 CF SaaS 回源与 DNSPod「${b.record_line}」线路记录, 该节点会成为首选。`;
+        : b.kind === "dnspod_ip"
+          ? `把 ${b.hostname} 的 DNSPod「${b.record_line}」线路直接解析到 ${nodeId} (${n?.ipv4 || n?.ipv6})?\n该节点会成为首选。`
+          : `把 ${b.hostname} 切到 ${nodeId} (${n?.origin_host})?\n会同时修改 CF SaaS 回源与 DNSPod「${b.record_line}」线路记录, 该节点会成为首选。`;
     if (!confirm(msg)) return;
     run(
       b,
@@ -102,7 +103,7 @@ export default function DnsPage() {
         const errors = (data.errors as string[]) || [];
         toast({
           title: errors.length ? "部分失败" : "已切换",
-          description: `${b.kind === "edgeone" ? `EdgeOne ${data.eo}` : `CF ${data.cf} · DNSPod ${data.dnspod}`}${errors.length ? ` · ${errors.join("; ")}` : ""}`,
+          description: `${b.kind === "edgeone" ? `EdgeOne ${data.eo}` : b.kind === "dnspod_ip" ? `DNSPod ${data.dnspod}` : `CF ${data.cf} · DNSPod ${data.dnspod}`}${errors.length ? ` · ${errors.join("; ")}` : ""}`,
           variant: errors.length ? "destructive" : undefined,
         });
       },

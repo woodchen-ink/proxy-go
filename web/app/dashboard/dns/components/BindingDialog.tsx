@@ -23,6 +23,7 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/ui/use-toast";
 import { fetchApi } from "@/lib/api-client";
 import {
+  bindingTarget,
   type Binding,
   type BindingKind,
   type Credential,
@@ -146,8 +147,8 @@ export function BindingDialog({
   const cfCreds = credentials.filter((c) => c.kind === "cloudflare");
   const podCreds = credentials.filter((c) => c.kind === "dnspod");
   const isEO = form.kind === "edgeone";
-  const targetOf = (n?: NodeOption) =>
-    n ? (isEO ? n.ipv4 || n.ipv6 : n.origin_host) : "";
+  const isCF = form.kind === "cf_dnspod";
+  const targetOf = (n?: NodeOption) => bindingTarget(form.kind, n);
   const registered = nodes.filter((n) => targetOf(n));
 
   return (
@@ -185,6 +186,9 @@ export function BindingDialog({
                 <SelectItem value="edgeone">
                   EdgeOne 加速域名源站 (节点 IP)
                 </SelectItem>
+                <SelectItem value="dnspod_ip">
+                  DNSPod 线路记录直接解析到节点 IP (不经 CDN)
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -198,7 +202,7 @@ export function BindingDialog({
             />
           </div>
 
-          {!isEO && (
+          {isCF && (
             <>
               <div className="space-y-1">
                 <Label>CF 凭据 (SaaS 区所在账号)</Label>
@@ -349,7 +353,7 @@ export function BindingDialog({
           <div className="space-y-2 sm:col-span-2">
             <Label>
               节点池 (按优先级排序, 第一个是首选;{" "}
-              {isEO ? "回源用节点出口 IP" : "只列已登记回源主机名的节点"})
+              {isCF ? "只列已登记回源主机名的节点" : "解析到节点出口 IP"})
             </Label>
             <div className="space-y-1 rounded-md border p-2">
               {form.pool.map((id, idx) => (

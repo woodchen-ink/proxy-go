@@ -5,7 +5,8 @@
  *   1. SaaS 区自定义主机名的 custom_origin_server
  *   2. DNSPod 上该域名指定线路 (默认「默认」) 的 CNAME
  * kind=edgeone 时改的是 EdgeOne 加速域名的源站 (OriginInfo.Origin = 节点 IP), 凭据复用腾讯云 API 密钥,
- * EdgeOne 站点 ID 存在 saas_zone_id 列。两类绑定互相独立, 同一访问域名可以各有一条。
+ * EdgeOne 站点 ID 存在 saas_zone_id 列。kind=dnspod_ip 时只改 DNSPod 指定线路的记录, 直接解析到节点 IP (A / AAAA),
+ * 不经 CF / EdgeOne。各类绑定互相独立, 同一访问域名可以各有一条 (dnspod_ip 按线路各一条)。
  *
  * 判定层区分"确实不一致"与"根本没读到": 读取失败记在 error 字段, 不当成不一致去自动修。
  */
@@ -15,7 +16,23 @@ import * as cf from './cloudflare';
 import * as dnspod from './dnspod';
 import * as edgeone from './edgeone';
 
-export type BindingKind = 'cf_dnspod' | 'edgeone';
+export type BindingKind = 'cf_dnspod' | 'edgeone' | 'dnspod_ip';
+
+const KINDS: BindingKind[] = ['cf_dnspod', 'edgeone', 'dnspod_ip'];
+
+export function parseKind(v: unknown): BindingKind {
+	return KINDS.includes(v as BindingKind) ? (v as BindingKind) : 'cf_dnspod';
+}
+
+// usesNodeIP 该类绑定写入的是节点出口 IP (否则是回源主机名)
+export function usesNodeIP(kind: BindingKind): boolean {
+	return kind !== 'cf_dnspod';
+}
+
+// usesDnspodLine 该类绑定会改 DNSPod 线路记录
+export function usesDnspodLine(kind: BindingKind): boolean {
+	return kind !== 'edgeone';
+}
 
 export interface Binding {
 	id: number;
@@ -41,7 +58,7 @@ export interface Binding {
 
 export interface BindingCheck {
 	at: number;
-	expected: string; // active_node 的回源主机名
+	expected: string; // active_node 的回源主机名 (IP 类绑定为节点出口 IP)
 	cf_origin: string;
 	cf_status: string;
 	cf_error: string;
@@ -69,7 +86,7 @@ export interface CloudflareSecret {
 export function rowToBinding(r: Record<string, SqlStorageValue>): Binding {
 	return {
 		id: Number(r.id),
-		kind: r.kind === 'edgeone' ? 'edgeone' : 'cf_dnspod',
+		kind: parseKind(r.kind),
 		hostname: String(r.hostname),
 		enabled: Number(r.enabled) === 1,
 		cf_credential_id: Number(r.cf_credential_id),
@@ -127,12 +144,11 @@ export class Credentials {
 export type OriginLookup = (nodeId: string) => string;
 
 function findLineRecord(records: dnspod.DnspodRecord[], b: Binding): dnspod.DnspodRecord[] {
-	return records.filter((r) => r.name === b.record_name && r.line === b.record_line && (r.type === 'CNAME' || r.type === 'A'));
+	return records.filter((r) => r.name === b.record_name && r.line === b.record_line && (r.type === 'CNAME' || r.type === 'A' || r.type === 'AAAA'));
 }
 
-export async function inspectBinding(b: Binding, creds: Credentials, expected: string, nodesByOrigin: Map<string, string>): Promise<BindingCheck> {
-	if (b.kind === 'edgeone') return inspectEdgeOne(b, creds, expected, nodesByOrigin);
-	const check: BindingCheck = {
+function emptyCheck(expected: string): BindingCheck {
+	return {
 		at: Date.now(),
 		expected,
 		cf_origin: '',
@@ -147,6 +163,33 @@ export async function inspectBinding(b: Binding, creds: Credentials, expected: s
 		consistent: false,
 		actual_node: '',
 	};
+}
+
+// readDnspodLine 读 DNSPod 线路记录, 结果写进 check.dnspod_*; 线路上必须恰好一条记录
+async function readDnspodLine(b: Binding, creds: Credentials, check: BindingCheck): Promise<void> {
+	try {
+		const cred = await creds.dnspod(b.dnspod_credential_id);
+		const recs = findLineRecord(await dnspod.listRecords(cred, b.dnspod_domain, b.record_name), b);
+		if (recs.length === 0) check.dnspod_error = `线路「${b.record_line}」没有记录`;
+		else if (recs.length > 1) check.dnspod_error = `线路「${b.record_line}」有 ${recs.length} 条记录, 说不清该改哪条`;
+		else {
+			check.dnspod_value = dnspod.normalizeHost(recs[0].value);
+			check.dnspod_record_id = recs[0].id;
+		}
+	} catch (e) {
+		check.dnspod_error = errText(e);
+	}
+}
+
+export async function inspectBinding(b: Binding, creds: Credentials, expected: string, nodesByTarget: Map<string, string>): Promise<BindingCheck> {
+	if (b.kind === 'edgeone') return inspectEdgeOne(b, creds, expected, nodesByTarget);
+	const check = emptyCheck(expected);
+	if (b.kind === 'dnspod_ip') {
+		await readDnspodLine(b, creds, check);
+		check.consistent = !check.dnspod_error && !!expected && check.dnspod_value === expected;
+		if (!check.dnspod_error) check.actual_node = nodesByTarget.get(check.dnspod_value) ?? '';
+		return check;
+	}
 
 	try {
 		const token = await creds.cloudflare(b.cf_credential_id);
@@ -160,41 +203,16 @@ export async function inspectBinding(b: Binding, creds: Credentials, expected: s
 		check.cf_error = errText(e);
 	}
 
-	try {
-		const cred = await creds.dnspod(b.dnspod_credential_id);
-		const recs = findLineRecord(await dnspod.listRecords(cred, b.dnspod_domain, b.record_name), b);
-		if (recs.length === 0) check.dnspod_error = `线路「${b.record_line}」没有记录`;
-		else if (recs.length > 1) check.dnspod_error = `线路「${b.record_line}」有 ${recs.length} 条记录, 说不清该改哪条`;
-		else {
-			check.dnspod_value = dnspod.normalizeHost(recs[0].value);
-			check.dnspod_record_id = recs[0].id;
-		}
-	} catch (e) {
-		check.dnspod_error = errText(e);
-	}
+	await readDnspodLine(b, creds, check);
 
 	const readOK = !check.cf_error && !check.dnspod_error;
 	check.consistent = readOK && !!expected && check.cf_origin === expected && check.dnspod_value === expected;
-	if (readOK && check.cf_origin === check.dnspod_value) check.actual_node = nodesByOrigin.get(check.cf_origin) ?? '';
+	if (readOK && check.cf_origin === check.dnspod_value) check.actual_node = nodesByTarget.get(check.cf_origin) ?? '';
 	return check;
 }
 
 async function inspectEdgeOne(b: Binding, creds: Credentials, expected: string, nodesByIP: Map<string, string>): Promise<BindingCheck> {
-	const check: BindingCheck = {
-		at: Date.now(),
-		expected,
-		cf_origin: '',
-		cf_status: '',
-		cf_error: '',
-		dnspod_value: '',
-		dnspod_record_id: 0,
-		dnspod_error: '',
-		eo_origin: '',
-		eo_status: '',
-		eo_error: '',
-		consistent: false,
-		actual_node: '',
-	};
+	const check = emptyCheck(expected);
 	try {
 		const d = await edgeone.getDomain(await creds.dnspod(b.dnspod_credential_id), b.saas_zone_id, b.hostname);
 		if (!d) check.eo_error = 'EdgeOne 站点里没有这个加速域名';
@@ -235,6 +253,11 @@ export async function switchBinding(b: Binding, creds: Credentials, origin: stri
 		}
 		return result;
 	}
+	if (b.kind === 'dnspod_ip') {
+		const result: SwitchResult = { cf: 'n/a', dnspod: 'unchanged', eo: 'n/a', errors: [] };
+		await switchDnspodLine(b, creds, origin.includes(':') ? 'AAAA' : 'A', origin, result);
+		return result;
+	}
 	const result: SwitchResult = { cf: 'unchanged', dnspod: 'unchanged', eo: 'n/a', errors: [] };
 
 	try {
@@ -250,21 +273,25 @@ export async function switchBinding(b: Binding, creds: Credentials, origin: stri
 		result.errors.push(`CF 回源: ${errText(e)}`);
 	}
 
+	await switchDnspodLine(b, creds, 'CNAME', origin, result);
+	return result;
+}
+
+// switchDnspodLine 把线路上唯一那条记录就地改成 type + value (类型不同也直接改, 如 CNAME → A)
+async function switchDnspodLine(b: Binding, creds: Credentials, type: 'CNAME' | 'A' | 'AAAA', value: string, result: SwitchResult): Promise<void> {
 	try {
 		const cred = await creds.dnspod(b.dnspod_credential_id);
 		const recs = findLineRecord(await dnspod.listRecords(cred, b.dnspod_domain, b.record_name), b);
 		if (recs.length !== 1) throw new Error(recs.length === 0 ? `线路「${b.record_line}」没有记录` : `线路「${b.record_line}」有多条记录`);
 		const rec = recs[0];
-		if (dnspod.normalizeHost(rec.value) !== origin || rec.type !== 'CNAME') {
-			await dnspod.modifyRecord(cred, b.dnspod_domain, { id: rec.id, name: rec.name, type: 'CNAME', line: rec.line, value: origin, ttl: rec.ttl });
+		if (dnspod.normalizeHost(rec.value) !== value || rec.type !== type) {
+			await dnspod.modifyRecord(cred, b.dnspod_domain, { id: rec.id, name: rec.name, type, line: rec.line, value, ttl: rec.ttl });
 			result.dnspod = 'updated';
 		}
 	} catch (e) {
 		result.dnspod = 'failed';
 		result.errors.push(`DNSPod: ${errText(e)}`);
 	}
-
-	return result;
 }
 
 export function errText(e: unknown): string {
