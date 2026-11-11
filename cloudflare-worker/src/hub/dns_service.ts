@@ -226,7 +226,9 @@ export class DnsService {
 			now,
 		];
 		if (input.id) {
-			this.getBinding(input.id);
+			// 改了类型或线路, 旧的巡检结果描述的是另一处解析, 清掉等下次检查
+			const old = this.getBinding(input.id);
+			if (old.kind !== kind || old.record_line !== recordLine) this.sql.exec("UPDATE dns_bindings SET last_check = '' WHERE id = ?", input.id);
 			this.sql.exec(
 				`UPDATE dns_bindings SET kind=?, hostname=?, enabled=?, cf_credential_id=?, saas_zone_id=?, saas_zone_name=?,
 				 dnspod_credential_id=?, dnspod_domain=?, record_name=?, record_line=?, pool=?, active_node=?,

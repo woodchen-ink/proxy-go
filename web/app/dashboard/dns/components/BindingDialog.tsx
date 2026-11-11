@@ -165,15 +165,29 @@ export function BindingDialog({
             <Label>线路类型</Label>
             <Select
               value={form.kind}
-              disabled={!!binding}
               onValueChange={(v) =>
-                setForm((f) => ({
-                  ...f,
-                  kind: v as BindingKind,
-                  pool: [],
-                  saas_zone_id: "",
-                  saas_zone_name: "",
-                }))
+                setForm((f) => {
+                  const kind = v as BindingKind;
+                  // 节点池保留新类型下仍有目标值的节点 (EdgeOne ↔ 纯 IP 都用节点 IP, 可原样保留)
+                  const pool = f.pool.filter((id) =>
+                    bindingTarget(
+                      kind,
+                      nodes.find((n) => n.node_id === id),
+                    ),
+                  );
+                  return {
+                    ...f,
+                    kind,
+                    pool,
+                    saas_zone_id: "",
+                    saas_zone_name: "",
+                    // EdgeOne 只承接境内, 改成纯 IP 时默认沿用境内线路
+                    record_line:
+                      f.kind === "edgeone" && kind === "dnspod_ip"
+                        ? "境内"
+                        : f.record_line,
+                  };
+                })
               }
             >
               <SelectTrigger>
