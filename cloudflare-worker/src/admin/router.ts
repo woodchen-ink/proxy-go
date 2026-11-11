@@ -12,7 +12,7 @@ import { fail, HttpError, json, readJSON } from '../lib/http';
 import type { CacheStats } from '../hub/protocol';
 import { currentUser, handleAuthRoutes, isSameOrigin } from './auth';
 import { activeProvider, purge, type PurgeRequest } from './cdn';
-import { readConfig, validateProviders, writeConfig, type CDNProvider } from './config';
+import { readConfig, readConfigVersion, validateProviders, writeConfig, type CDNProvider } from './config';
 import { registerReleaseRoutes } from './release';
 import { buildRefererDaily, buildTimeseries } from './series';
 import { CLUSTER_ROWS_KEY, buildMetrics, buildNodeStats, buildPathStats, loadSources } from './stats';
@@ -139,16 +139,30 @@ async function saveAndBroadcast(env: Env, cfg: Awaited<ReturnType<typeof readCon
 	return { version, command: cmd };
 }
 
-route('GET', '/admin/api/config/get', async ({ env }) => json((await readConfig(env)).config));
+// 配置读写的乐观锁: 读时在 X-Config-Version 头带回版本, 保存时以 If-Match 回传;
+// 版本已变 (别的标签页 / 缓存与 CDN 页签经单独接口改过) 时拒绝整份覆盖, 前端重新加载
+async function configResponse(env: Env): Promise<Response> {
+	const { config, version } = await readConfig(env);
+	return json(config, 200, { 'X-Config-Version': String(version) });
+}
+
+route('GET', '/admin/api/config/get', async ({ env }) => configResponse(env));
 
 route('POST', '/admin/api/config/save', async ({ env, request, user }) => {
+	const ifMatch = request.headers.get('If-Match');
+	if (ifMatch !== null) {
+		const current = await readConfigVersion(env);
+		if (String(current) !== ifMatch.replace(/"/g, '').trim()) {
+			return fail(409, 'config was modified elsewhere', { version: current });
+		}
+	}
 	const cfg = await readJSON<Awaited<ReturnType<typeof readConfig>>['config']>(request);
 	const { version, command } = await saveAndBroadcast(env, cfg, user);
 	return json({ message: `配置已保存 (版本 ${version}), ${command.acks.length} 个在线节点已生效`, version, command });
 });
 
 // config/pull 节点时代用于"从 D1 拉取"; 中控本身就是 D1 的权威读写方, 直接返回当前配置
-route('POST', '/admin/api/config/pull', async ({ env }) => json((await readConfig(env)).config));
+route('POST', '/admin/api/config/pull', async ({ env }) => configResponse(env));
 
 // ---------- 缓存 ----------
 

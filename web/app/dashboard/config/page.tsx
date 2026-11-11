@@ -93,6 +93,8 @@ export default function ConfigPage() {
   const isInitialLoadRef = useRef(true)
   const isConfigFromApiRef = useRef(true)
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  // versionRef 当前副本对应的配置版本, 保存时以 If-Match 回传; 中控发现版本已变 (别处改过) 会拒绝整份覆盖
+  const versionRef = useRef<string | null>(null)
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -101,6 +103,7 @@ export default function ConfigPage() {
       if (!response.ok) {
         throw new Error("获取配置失败")
       }
+      versionRef.current = response.headers.get("X-Config-Version")
 
       const data = await response.json()
 
@@ -150,16 +153,30 @@ export default function ConfigPage() {
 
     setSaving(true)
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" }
+      if (versionRef.current) headers["If-Match"] = versionRef.current
       const response = await fetchApi("/admin/api/config/save", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(config),
       })
 
+      if (response.status === 409) {
+        // 配置在别处被改过 (其他标签页 / 缓存与 CDN 页签): 不覆盖, 载入最新版本后让用户重做这次修改
+        toast({
+          title: "配置已在别处更新",
+          description: "已载入最新配置, 刚才的修改没有保存, 请重新操作",
+          variant: "destructive",
+        })
+        await fetchConfig()
+        return
+      }
       if (!response.ok) {
         const data = await response.json().catch(() => ({}))
-        throw new Error(data.message || "保存配置失败")
+        throw new Error(data.message || data.error || "保存配置失败")
       }
+      const saved = await response.json().catch(() => ({}))
+      if (saved.version !== undefined) versionRef.current = String(saved.version)
 
       toast({
         title: "成功",
@@ -174,7 +191,7 @@ export default function ConfigPage() {
     } finally {
       setSaving(false)
     }
-  }, [config, toast])
+  }, [config, toast, fetchConfig])
 
   useEffect(() => {
     if (isInitialLoadRef.current || !config || isConfigFromApiRef.current) {
@@ -224,6 +241,7 @@ export default function ConfigPage() {
         throw new Error(errorText || '从 D1 拉取配置失败')
       }
 
+      versionRef.current = response.headers.get("X-Config-Version")
       const pulledConfig = await response.json()
       isConfigFromApiRef.current = true
       setConfig(pulledConfig)

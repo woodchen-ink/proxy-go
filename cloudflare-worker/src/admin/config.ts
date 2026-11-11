@@ -52,6 +52,12 @@ function parseJSON<T>(s: string | null | undefined, fallback: T): T {
 	}
 }
 
+// readConfigVersion 只读当前配置版本号 (乐观锁比对用, 不拉整份配置)
+export async function readConfigVersion(env: Env): Promise<number> {
+	const row = await env.DB.prepare('SELECT value FROM config_other WHERE key = ?').bind(VERSION_KEY).first<{ value: string }>();
+	return row ? parseInt(row.value, 10) || 0 : 0;
+}
+
 export async function readConfig(env: Env): Promise<{ config: ProxyConfig; version: number }> {
 	const [maps, others] = await Promise.all([db.getConfigMaps(env.DB, false), db.getConfigOther(env.DB)]);
 	const MAP: Record<string, PathConfig> = {};
