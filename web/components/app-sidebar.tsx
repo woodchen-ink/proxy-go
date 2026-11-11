@@ -86,7 +86,10 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <SidebarMenuButton asChild size="lg" tooltip="Proxy Go 中控">
               <Link href="/dashboard" onClick={() => setOpenMobile(false)}>
-                <BrandIcon className="size-8 shrink-0" />
+                {/* 包一层: SidebarMenuButton 会把直接子级 svg 强制成 size-4 */}
+                <span className="flex size-10 shrink-0 items-center justify-center group-data-[collapsible=icon]:size-8">
+                  <BrandIcon className="size-full" />
+                </span>
                 <span className="truncate font-semibold tracking-tight">Proxy Go 中控</span>
               </Link>
             </SidebarMenuButton>

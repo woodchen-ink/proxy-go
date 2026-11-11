@@ -46,6 +46,14 @@ export interface SecurityConfig {
     CleanupIntervalMinutes: number
   }
   RefererBan?: RefererBanConfig
+  // 除内置 Cloudflare 外的可信 CDN 入口; undefined = 从未配置 (节点按 EdgeOne 仅凭请求头处理)
+  TrustedProxies?: TrustedProxy[]
+}
+
+export interface TrustedProxy {
+  Name: string
+  Header: string
+  CIDRs: string[]
 }
 
 export interface Config {

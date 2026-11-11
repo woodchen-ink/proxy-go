@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
+import { HelpTip } from "@/components/help-tip"
 import { Badge } from "@/components/ui/badge"
 import { Plus, Trash2 } from "lucide-react"
 
@@ -81,13 +82,12 @@ export default function RefererRedirectEditor({ config, onUpdate }: RefererRedir
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <Label className="font-semibold">Referer 重定向</Label>
-          <p className="text-sm text-foreground-muted">
-            Referer host 命中规则时 302 分流到另一个目标前缀 (换 host 去前缀, 保留子路径与 query),
-            在缓存检查之前生效, 优先于黑名单
-          </p>
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-1.5">
+          <span className="text-sm font-semibold">Referer 重定向</span>
+          <HelpTip>
+            Referer host 命中规则时 302 到另一个目标前缀 (换 host、去掉路径前缀, 保留子路径与 query), 在缓存检查之前生效, 优先于黑名单。空 Referer 不参与分流。
+          </HelpTip>
         </div>
         <Switch
           checked={config.Enabled}

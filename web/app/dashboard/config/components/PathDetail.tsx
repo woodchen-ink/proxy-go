@@ -5,6 +5,7 @@ import { Pencil, Plus, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
+import { HelpTip } from "@/components/help-tip"
 import RefererBanEditor from "./RefererBanEditor"
 import RefererRedirectEditor from "./RefererRedirectEditor"
 import { convertBytesToUnit, getMappingTargets } from "../utils"
@@ -116,15 +117,15 @@ export default function PathDetail(props: PathDetailProps) {
         </Section>
 
         <Section>
-          <label className="flex items-center justify-between gap-6">
-            <span>
-              <span className="block text-sm font-semibold">Cloudflare Images 优化</span>
-              <span className="block text-sm text-foreground-muted">
-                图片按 Accept 格式 + 浏览器分桶缓存, 用于源站按设备返回不同格式的场景; 关闭时全部设备共享一份缓存, 命中率更高
-              </span>
-            </span>
+          <div className="flex items-center justify-between gap-6">
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm font-semibold">Cloudflare Images 优化</span>
+              <HelpTip>
+                图片按 Accept 格式 (avif / webp …) + 浏览器分桶缓存, 用于源站按设备返回不同格式的场景 (如 Cloudflare Images)。关闭时全部设备共享一份缓存, 命中率更高。
+              </HelpTip>
+            </div>
             <Switch checked={!!mapping.CFImageOpt} onCheckedChange={props.onToggleCFImageOpt} />
-          </label>
+          </div>
         </Section>
 
         <Section
@@ -167,8 +168,8 @@ export default function PathDetail(props: PathDetailProps) {
           <RefererBanEditor
             config={mapping.RefererBan ?? { Enabled: false, Mode: "blacklist", Hosts: [], BlockEmpty: false }}
             onUpdate={props.onRefererBan}
-            emptyHint="未添加 host, 即使开启黑名单也仅在拦截空 Referer 时生效"
             allowWhitelist
+            pathPrefix={path}
           />
         </Section>
 
