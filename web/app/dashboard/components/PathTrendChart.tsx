@@ -1,46 +1,25 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState, useCallback } from "react"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import {
-  Tabs,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs"
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  Legend,
-} from "recharts"
-import { useToast } from "@/components/ui/use-toast"
+import { useCallback, useMemo, useState } from "react"
+import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
+import { Card } from "@/components/ui/card"
+import { Skeleton } from "@/components/ui/skeleton"
+import { usePolling } from "@/hooks/use-polling"
 import { fetchApi } from "@/lib/api-client"
+import { formatBytes, formatCount, formatPct } from "@/lib/format"
+import { cn } from "@/lib/utils"
 
-interface HourPoint {
+interface Point {
+  requests: number
+  bytes: number
+  errors: number
+}
+interface HourPoint extends Point {
   hour: number
-  requests: number
-  bytes: number
-  errors: number
 }
-
-interface DayPoint {
+interface DayPoint extends Point {
   date: string
-  requests: number
-  bytes: number
-  errors: number
 }
-
 interface PathSeries {
   path: string
   today: HourPoint[]
@@ -48,350 +27,290 @@ interface PathSeries {
   daily: DayPoint[]
   today_requests: number
   today_bytes: number
-  yesterday_requests: number
-  yesterday_bytes: number
   month_requests: number
   month_bytes: number
 }
-
 interface TimeseriesResponse {
-  generated_at: number
-  timezone: string
   days: number
   paths: PathSeries[]
 }
 
-type RangeKey = "today_yesterday" | "30d"
+type RangeKey = "today" | "30d"
 type MetricKey = "requests" | "bytes"
 
-// 图表系列颜色, 引用 globals.css 已定义的 chart token
-const CHART_COLORS = [
-  "hsl(var(--chart-1))",
-  "hsl(var(--chart-2))",
-  "hsl(var(--chart-3))",
-  "hsl(var(--chart-4))",
-  "hsl(var(--chart-5))",
-]
+// 选中路径各占一个 chart 色, 其余合并成"其他"一段, 堆起来始终等于全站总量
+const MAX_SELECTED = 5
+const OTHER = "__other"
+const OTHER_COLOR = "hsl(var(--foreground-subtle) / 0.35)"
+const pathColor = (i: number) => `hsl(var(--chart-${(i % MAX_SELECTED) + 1}))`
 
-// formatBytes 把字节数格式化为 B/KB/MB/GB
-function formatBytes(bytes: number): string {
-  if (!bytes || isNaN(bytes)) return "0 B"
-  const k = 1024
-  const sizes = ["B", "KB", "MB", "GB", "TB"]
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1)
-  return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`
-}
+const fmt = (v: number, metric: MetricKey) => (metric === "bytes" ? formatBytes(v) : formatCount(v))
 
-// formatNumber 简化的数字格式化, 万级以上加 K/M 缩写
-function formatNumber(n: number): string {
-  if (!n) return "0"
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-  return n.toString()
-}
-
-// fillTodayYesterday 把今日 / 昨日两条小时序列拼装成 24 行 chart 数据
-//
-// 缺失小时填 0, x 轴使用 0..23 小时数, 配合 monotone 平滑插值
-function fillTodayYesterday(series: PathSeries[], paths: string[], metric: MetricKey) {
-  const rows = Array.from({ length: 24 }, (_, h) => {
-    const row: Record<string, number | string> = { hour: `${h}:00` }
-    for (const p of paths) {
-      const s = series.find((x) => x.path === p)
-      const tdy = s?.today.find((x) => x.hour === h)
-      const yst = s?.yesterday.find((x) => x.hour === h)
-      row[`${p}__today`] = tdy ? tdy[metric] : 0
-      row[`${p}__yesterday`] = yst ? yst[metric] : 0
-    }
-    return row
-  })
-  return rows
-}
-
-// fillDaily 把近 N 天的日序列拼装成 chart 数据
-function fillDaily(series: PathSeries[], paths: string[], metric: MetricKey) {
-  const allDates = new Set<string>()
-  series.forEach((s) => s.daily.forEach((d) => allDates.add(d.date)))
-  const dates = Array.from(allDates).sort()
-  return dates.map((date) => {
-    const row: Record<string, number | string> = {
-      date: date.slice(5), // MM-DD 显示
-    }
-    for (const p of paths) {
-      const s = series.find((x) => x.path === p)
-      const dp = s?.daily.find((x) => x.date === date)
-      row[p] = dp ? dp[metric] : 0
-    }
-    return row
-  })
-}
-
-// PathTrendChart 主路径趋势图组件: 今日/昨日 + 近 30 天的请求与流量
-export default function PathTrendChart() {
-  const [data, setData] = useState<TimeseriesResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [range, setRange] = useState<RangeKey>("today_yesterday")
-  const [metric, setMetric] = useState<MetricKey>("requests")
-  const [selectedPaths, setSelectedPaths] = useState<string[]>([])
-  const failureCount = useRef(0)
-  const { toast } = useToast()
-  const lastErrorAt = useRef(0)
-
-  const fetchData = useCallback(async (): Promise<boolean> => {
-    try {
-      const resp = await fetchApi("/admin/api/metrics/timeseries?days=30")
-      if (!resp.ok) throw new Error("加载趋势数据失败")
-      const json = (await resp.json()) as TimeseriesResponse
-      setData(json)
-      setError(null)
-      // 默认选中 Top 5 路径 (按近 30 天请求数排序, 后端已排好)
-      setSelectedPaths((prev) => {
-        if (prev.length > 0) return prev
-        return json.paths.slice(0, 5).map((p) => p.path)
-      })
-      return true
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "加载趋势数据失败"
-      setError(msg)
-      const now = Date.now()
-      if (now - lastErrorAt.current > 30_000) {
-        lastErrorAt.current = now
-        toast({ title: "错误", description: msg, variant: "destructive" })
-      }
-      return false
-    } finally {
-      setLoading(false)
-    }
-  }, [toast])
-
-  useEffect(() => {
-    let cancelled = false
-    let timer: ReturnType<typeof setTimeout> | null = null
-    const tick = async () => {
-      if (cancelled) return
-      const ok = await fetchData()
-      if (cancelled) return
-      if (ok) failureCount.current = 0
-      else failureCount.current = Math.min(failureCount.current + 1, 5)
-      const delay = ok ? 30_000 : Math.min(1000 * 2 ** failureCount.current, 60_000)
-      timer = setTimeout(tick, delay)
-    }
-    tick()
-    return () => {
-      cancelled = true
-      if (timer) clearTimeout(timer)
-    }
-  }, [fetchData])
-
-  const togglePath = (path: string) => {
-    setSelectedPaths((prev) =>
-      prev.includes(path) ? prev.filter((p) => p !== path) : [...prev, path]
-    )
-  }
-
-  const chartData = useMemo(() => {
-    if (!data) return []
-    if (range === "today_yesterday") {
-      return fillTodayYesterday(data.paths, selectedPaths, metric)
-    }
-    return fillDaily(data.paths, selectedPaths, metric)
-  }, [data, range, metric, selectedPaths])
-
-  const yFormatter = metric === "bytes" ? (v: number) => formatBytes(v) : formatNumber
-
+function Pills<T extends string>({ items, value, onChange, label }: { items: { value: T; label: string }[]; value: T; onChange: (v: T) => void; label: string }) {
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <CardTitle>路径访问趋势</CardTitle>
-          <div className="flex flex-wrap items-center gap-2">
-            <Tabs value={metric} onValueChange={(v) => setMetric(v as MetricKey)}>
-              <TabsList>
-                <TabsTrigger value="requests">请求数</TabsTrigger>
-                <TabsTrigger value="bytes">流量</TabsTrigger>
-              </TabsList>
-            </Tabs>
-            <Select value={range} onValueChange={(v) => setRange(v as RangeKey)}>
-              <SelectTrigger className="w-36">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="today_yesterday">今日 vs 昨日</SelectItem>
-                <SelectItem value="30d">近 30 天</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent>
-        {loading && !data ? (
-          <div className="flex h-64 items-center justify-center text-muted-foreground">
-            加载中...
-          </div>
-        ) : error && !data ? (
-          <div className="flex h-64 items-center justify-center text-destructive">
-            {error}
-          </div>
-        ) : !data || data.paths.length === 0 ? (
-          <div className="flex h-64 items-center justify-center text-muted-foreground">
-            暂无数据 (D1 时间序列上报后才会有图)
-          </div>
-        ) : (
-          <>
-            <PathSelector
-              paths={data.paths}
-              selected={selectedPaths}
-              onToggle={togglePath}
-              metric={metric}
-            />
-            <div className="mt-4 h-72 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                {range === "today_yesterday" ? (
-                  <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis
-                      dataKey="hour"
-                      stroke="hsl(var(--muted-foreground))"
-                      fontSize={12}
-                    />
-                    <YAxis
-                      stroke="hsl(var(--muted-foreground))"
-                      fontSize={12}
-                      tickFormatter={yFormatter}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        background: "hsl(var(--popover))",
-                        border: "1px solid hsl(var(--border))",
-                        borderRadius: 8,
-                        color: "hsl(var(--popover-foreground))",
-                      }}
-                      formatter={(v: number) =>
-                        metric === "bytes" ? formatBytes(v) : v.toLocaleString()
-                      }
-                    />
-                    <Legend />
-                    {selectedPaths.flatMap((p, idx) => {
-                      const color = CHART_COLORS[idx % CHART_COLORS.length]
-                      return [
-                        <Line
-                          key={`${p}-today`}
-                          type="monotone"
-                          dataKey={`${p}__today`}
-                          name={`${p} 今日`}
-                          stroke={color}
-                          strokeWidth={2}
-                          dot={false}
-                          isAnimationActive={false}
-                        />,
-                        <Line
-                          key={`${p}-yesterday`}
-                          type="monotone"
-                          dataKey={`${p}__yesterday`}
-                          name={`${p} 昨日`}
-                          stroke={color}
-                          strokeWidth={1.5}
-                          strokeDasharray="4 4"
-                          dot={false}
-                          isAnimationActive={false}
-                        />,
-                      ]
-                    })}
-                  </LineChart>
-                ) : (
-                  <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis
-                      dataKey="date"
-                      stroke="hsl(var(--muted-foreground))"
-                      fontSize={12}
-                    />
-                    <YAxis
-                      stroke="hsl(var(--muted-foreground))"
-                      fontSize={12}
-                      tickFormatter={yFormatter}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        background: "hsl(var(--popover))",
-                        border: "1px solid hsl(var(--border))",
-                        borderRadius: 8,
-                        color: "hsl(var(--popover-foreground))",
-                      }}
-                      formatter={(v: number) =>
-                        metric === "bytes" ? formatBytes(v) : v.toLocaleString()
-                      }
-                    />
-                    <Legend />
-                    {selectedPaths.map((p, idx) => (
-                      <Line
-                        key={p}
-                        type="monotone"
-                        dataKey={p}
-                        name={p}
-                        stroke={CHART_COLORS[idx % CHART_COLORS.length]}
-                        strokeWidth={2}
-                        dot={false}
-                        isAnimationActive={false}
-                      />
-                    ))}
-                  </LineChart>
-                )}
-              </ResponsiveContainer>
-            </div>
-          </>
-        )}
-      </CardContent>
-    </Card>
+    <div role="radiogroup" aria-label={label} className="flex gap-1">
+      {items.map((it) => (
+        <button
+          key={it.value}
+          role="radio"
+          aria-checked={value === it.value}
+          onClick={() => onChange(it.value)}
+          className={cn(
+            "h-7 rounded-full border px-3 text-sm transition-colors",
+            value === it.value ? "border-primary bg-primary text-primary-foreground" : "text-foreground-muted hover:bg-accent hover:text-foreground",
+          )}
+        >
+          {it.label}
+        </button>
+      ))}
+    </div>
   )
 }
 
-// PathSelector 路径多选器, 默认 Top 5, 点击切换包含 / 排除
-function PathSelector({
-  paths,
-  selected,
-  onToggle,
-  metric,
-}: {
-  paths: PathSeries[]
-  selected: string[]
-  onToggle: (p: string) => void
-  metric: MetricKey
-}) {
+function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: "up" | "down" }) {
   return (
-    <div className="flex flex-wrap gap-2">
-      {paths.map((p) => {
-        const isOn = selected.includes(p.path)
-        const color = CHART_COLORS[selected.indexOf(p.path) % CHART_COLORS.length]
-        const sub =
-          metric === "bytes"
-            ? formatBytes(p.month_bytes)
-            : `${formatNumber(p.month_requests)} 次`
-        return (
-          <button
-            key={p.path}
-            onClick={() => onToggle(p.path)}
-            className={`group flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm transition-colors ${
-              isOn
-                ? "border-foreground bg-secondary"
-                : "border-border bg-card hover:bg-accent"
-            }`}
-          >
-            <span
-              className="inline-block h-2.5 w-2.5 rounded-full"
-              style={{
-                background: isOn ? color : "hsl(var(--muted-foreground))",
-                opacity: isOn ? 1 : 0.4,
-              }}
-            />
-            <span className={isOn ? "font-medium" : "text-muted-foreground"}>
-              {p.path}
-            </span>
-            <span className="text-xs text-muted-foreground">{sub}</span>
-          </button>
-        )
-      })}
+    <div>
+      <div className="text-sm text-foreground-muted">{label}</div>
+      <div className="mt-0.5 flex items-baseline gap-2">
+        <span className="text-2xl font-semibold tabular-nums">{value}</span>
+        {sub && (
+          <span className={cn("text-sm tabular-nums", tone === "up" ? "text-success" : tone === "down" ? "text-destructive" : "text-foreground-subtle")}>{sub}</span>
+        )}
+      </div>
     </div>
+  )
+}
+
+// PathTrendChart 路径访问趋势: 今日按小时 / 近 30 天按天的堆叠柱, 今日叠一条"昨日同时刻"总量对比线
+export default function PathTrendChart() {
+  const [data, setData] = useState<TimeseriesResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [range, setRange] = useState<RangeKey>("today")
+  const [metric, setMetric] = useState<MetricKey>("requests")
+  const [picked, setPicked] = useState<string[] | null>(null) // null = 跟随默认 Top 5
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetchApi("/admin/api/metrics/timeseries?days=30")
+      if (!res.ok) throw new Error("加载趋势数据失败")
+      setData(await res.json())
+      setError(null)
+      return true
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "加载趋势数据失败")
+      return false
+    }
+  }, [])
+  usePolling(load, 60_000)
+
+  // 路径按当前视图的量排序 (今日看今日、30 天看 30 天), 不按历史累计: 早已没人访问的路径不该占着前排
+  const ranked = useMemo(() => {
+    const val = (p: PathSeries) =>
+      range === "today" ? (metric === "bytes" ? p.today_bytes : p.today_requests) : metric === "bytes" ? p.month_bytes : p.month_requests
+    return [...(data?.paths ?? [])].map((p) => ({ p, v: val(p) })).sort((a, b) => b.v - a.v)
+  }, [data, range, metric])
+  const selected = picked ?? ranked.filter((r) => r.v > 0).slice(0, MAX_SELECTED).map((r) => r.p.path)
+
+  const view = useMemo(() => {
+    if (!data) return null
+    const now = new Date()
+    const curHour = now.getHours()
+    const sel = new Set(selected)
+    const pick = (pt: Point | undefined) => (pt ? pt[metric] : 0)
+
+    if (range === "today") {
+      const rows = Array.from({ length: 24 }, (_, h) => {
+        const row: Record<string, number | string | null> = { x: `${h}:00` }
+        let other = 0
+        let yesterday = 0
+        for (const s of data.paths) {
+          const v = h <= curHour ? pick(s.today.find((t) => t.hour === h)) : 0
+          if (sel.has(s.path)) row[s.path] = v
+          else other += v
+          yesterday += pick(s.yesterday.find((t) => t.hour === h))
+        }
+        row[OTHER] = other
+        row.yesterday = yesterday
+        return row
+      })
+      const sum = (key: "today" | "yesterday", upto: number) =>
+        data.paths.reduce((a, s) => a + s[key].filter((t) => t.hour <= upto).reduce((b, t) => b + t[metric], 0), 0)
+      const today = sum("today", curHour)
+      const ySame = sum("yesterday", curHour)
+      let peakHour = 0
+      let peak = -1
+      for (let hr = 0; hr <= curHour; hr++) {
+        const v = data.paths.reduce((a, s) => a + pick(s.today.find((t) => t.hour === hr)), 0)
+        if (v > peak) {
+          peak = v
+          peakHour = hr
+        }
+      }
+      return { rows, today, ySame, peakLabel: `${peakHour}:00`, peak }
+    }
+
+    const dates = data.paths[0]?.daily.map((d) => d.date) ?? []
+    const rows = dates.map((date) => {
+      const row: Record<string, number | string> = { x: date.slice(5) }
+      let other = 0
+      for (const s of data.paths) {
+        const v = pick(s.daily.find((d) => d.date === date))
+        if (sel.has(s.path)) row[s.path] = v
+        else other += v
+      }
+      row[OTHER] = other
+      return row
+    })
+    const dayTotals = dates.map((date) => data.paths.reduce((a, s) => a + pick(s.daily.find((d) => d.date === date)), 0))
+    const total = dayTotals.reduce((a, b) => a + b, 0)
+    const peakIdx = dayTotals.indexOf(Math.max(...dayTotals, 0))
+    return { rows, today: total, ySame: 0, peakLabel: dates[peakIdx]?.slice(5) ?? "-", peak: dayTotals[peakIdx] ?? 0, avg: dates.length ? total / dates.length : 0 }
+  }, [data, range, metric, selected])
+
+  const toggle = (path: string) => {
+    const cur = selected
+    if (cur.includes(path)) setPicked(cur.filter((p) => p !== path))
+    else setPicked([...cur, path].slice(-MAX_SELECTED)) // 超过 5 条时挤掉最早选的
+  }
+
+  const change = view && view.ySame > 0 ? view.today / view.ySame - 1 : null
+
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-3">
+        <h2 className="text-base font-semibold">路径访问趋势</h2>
+        <div className="flex flex-wrap gap-3">
+          <Pills
+            label="指标"
+            items={[
+              { value: "requests", label: "请求数" },
+              { value: "bytes", label: "流量" },
+            ]}
+            value={metric}
+            onChange={setMetric}
+          />
+          <Pills
+            label="时间范围"
+            items={[
+              { value: "today", label: "今日" },
+              { value: "30d", label: "近 30 天" },
+            ]}
+            value={range}
+            onChange={setRange}
+          />
+        </div>
+      </div>
+
+      <div className="space-y-4 px-5 py-4">
+        {!data && !error ? (
+          <Skeleton className="h-80 w-full" />
+        ) : error && !data ? (
+          <div className="flex h-80 items-center justify-center text-sm text-destructive">{error}</div>
+        ) : !view || data!.paths.length === 0 ? (
+          <div className="flex h-80 items-center justify-center rounded-lg bg-muted text-sm text-foreground-muted">暂无数据, 节点每 5 分钟上报一次</div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+              {range === "today" ? (
+                <>
+                  <Stat
+                    label="今日累计"
+                    value={fmt(view.today, metric)}
+                    sub={change === null ? "昨日同期无数据" : `${change >= 0 ? "+" : ""}${formatPct(change)} 较昨日同期`}
+                    tone={change === null ? undefined : change >= 0 ? "up" : "down"}
+                  />
+                  <Stat label="昨日同期" value={fmt(view.ySame, metric)} />
+                  <Stat label="今日峰值时段" value={view.peakLabel} sub={fmt(Math.max(view.peak, 0), metric)} />
+                </>
+              ) : (
+                <>
+                  <Stat label="近 30 天合计" value={fmt(view.today, metric)} />
+                  <Stat label="日均" value={fmt(view.avg ?? 0, metric)} />
+                  <Stat label="最高的一天" value={view.peakLabel} sub={fmt(view.peak, metric)} />
+                </>
+              )}
+            </div>
+
+            <div className="h-72 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={view.rows} margin={{ top: 4, right: 4, bottom: 0, left: 0 }} barCategoryGap="18%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                  <XAxis dataKey="x" stroke="hsl(var(--foreground-subtle))" fontSize={12} tickLine={false} minTickGap={12} />
+                  <YAxis
+                    tickFormatter={(v: number) => fmt(v, metric)}
+                    stroke="hsl(var(--foreground-subtle))"
+                    fontSize={12}
+                    tickLine={false}
+                    axisLine={false}
+                    width={64}
+                  />
+                  <Tooltip
+                    cursor={{ fill: "hsl(var(--accent))" }}
+                    contentStyle={{
+                      background: "hsl(var(--popover))",
+                      border: "1px solid hsl(var(--border))",
+                      borderRadius: 10,
+                      color: "hsl(var(--popover-foreground))",
+                      fontSize: 13,
+                    }}
+                    formatter={(v: number, name: string) => [fmt(v, metric), name === OTHER ? "其他路径" : name === "yesterday" ? "昨日同时刻 (全部)" : name]}
+                  />
+                  {selected.map((p, i) => (
+                    <Bar key={p} dataKey={p} name={p} stackId="a" fill={pathColor(i)} isAnimationActive={false} />
+                  ))}
+                  <Bar dataKey={OTHER} name={OTHER} stackId="a" fill={OTHER_COLOR} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+                  {range === "today" && (
+                    <Line
+                      dataKey="yesterday"
+                      name="yesterday"
+                      type="linear"
+                      stroke="hsl(var(--foreground-muted))"
+                      strokeWidth={1.5}
+                      strokeDasharray="4 3"
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                  )}
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-x-1 gap-y-1.5 border-t pt-3 text-sm">
+              {ranked.filter((r) => r.v > 0 || selected.includes(r.p.path)).map(({ p, v }) => {
+                const idx = selected.indexOf(p.path)
+                const on = idx >= 0
+                return (
+                  <button
+                    key={p.path}
+                    onClick={() => toggle(p.path)}
+                    aria-pressed={on}
+                    className={cn(
+                      "inline-flex h-7 items-center gap-1.5 rounded-md px-2 transition-colors hover:bg-accent",
+                      on ? "text-foreground" : "text-foreground-subtle",
+                    )}
+                  >
+                    <span aria-hidden className="h-2.5 w-2.5 rounded-sm" style={{ background: on ? pathColor(idx) : OTHER_COLOR }} />
+                    <span className={cn("font-mono", on && "font-medium")}>{p.path}</span>
+                    <span className="tabular-nums text-foreground-subtle">{fmt(v, metric)}</span>
+                  </button>
+                )
+              })}
+              {ranked.some((r) => r.v === 0) && (
+                <span className="px-2 text-foreground-subtle">
+                  另有 {ranked.filter((r) => r.v === 0).length} 个路径{range === "today" ? "今日" : "近 30 天"}无访问
+                </span>
+              )}
+              {range === "today" && (
+                <span className="ml-auto inline-flex items-center gap-1.5 text-foreground-muted">
+                  <span aria-hidden className="w-4 border-t-[1.5px] border-dashed border-foreground-muted" />
+                  昨日同时刻
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-foreground-subtle">点路径单独着色 (最多 {MAX_SELECTED} 条), 未选中的合并为灰色「其他」</p>
+          </>
+        )}
+      </div>
+    </Card>
   )
 }
