@@ -1,5 +1,6 @@
 "use client"
 
+import { BrandIcon } from "@/components/brand-icon"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
@@ -11,7 +12,6 @@ import {
   Server,
   Settings,
   ShieldCheck,
-  Waypoints,
   type LucideIcon,
 } from "lucide-react"
 import {
@@ -86,9 +86,7 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <SidebarMenuButton asChild size="lg" tooltip="Proxy Go 中控">
               <Link href="/dashboard" onClick={() => setOpenMobile(false)}>
-                <div className="flex aspect-square size-8 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
-                  <Waypoints className="size-4" />
-                </div>
+                <BrandIcon className="size-8 shrink-0" />
                 <span className="truncate font-semibold tracking-tight">Proxy Go 中控</span>
               </Link>
             </SidebarMenuButton>

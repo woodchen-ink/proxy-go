@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { BrandIcon } from "@/components/brand-icon"
 
 export default function LoginPage() {
   const handleLogin = () => {
@@ -10,12 +11,11 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-sm shadow-sm">
-        <CardHeader className="text-center">
-          <CardTitle className="text-2xl tracking-tight">管理员登录</CardTitle>
-          <p className="mt-1 text-sm text-muted-foreground">
-            使用 CZL Connect 单点登录
-          </p>
+      <Card className="w-full max-w-sm">
+        <CardHeader className="items-center text-center">
+          <BrandIcon className="mb-2 size-12" />
+          <CardTitle className="text-2xl tracking-tight">Proxy Go 中控</CardTitle>
+          <p className="mt-1 text-sm text-foreground-muted">使用 CZL Connect 单点登录</p>
         </CardHeader>
         <CardContent>
           <Button onClick={handleLogin} className="w-full">
