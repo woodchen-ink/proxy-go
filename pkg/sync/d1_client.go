@@ -176,13 +176,32 @@ type BulkPayload struct {
 	Latency      []LatencyMetric       `json:"latency,omitempty"`
 	Timeseries   []PathTimeseriesPoint `json:"timeseries,omitempty"`
 	RefererDaily []RefererDailyPoint   `json:"referer_daily,omitempty"`
+	NodeSeries   []NodeTimeseriesPoint `json:"node_timeseries,omitempty"`
 	Cursors      *PulseCursors         `json:"cursors,omitempty"`
 }
 
 // IsEmpty 五段指标全空 (不含游标: 空指标的心跳仍要发, 否则闲置节点收不到下发状态)
 func (p *BulkPayload) IsEmpty() bool {
 	return len(p.PathStats) == 0 && len(p.StatusCodes) == 0 && len(p.Latency) == 0 &&
-		len(p.Timeseries) == 0 && len(p.RefererDaily) == 0
+		len(p.Timeseries) == 0 && len(p.RefererDaily) == 0 && len(p.NodeSeries) == 0
+}
+
+// NodeTimeseriesPoint 本节点单小时的整体流量桶 (不分路径), 写 node_timeseries
+type NodeTimeseriesPoint struct {
+	NodeID      string  `json:"node_id,omitempty"`
+	TsHour      int64   `json:"ts_hour"`
+	Requests    int64   `json:"requests"`
+	Bytes       int64   `json:"bytes"`
+	OriginBytes int64   `json:"origin_bytes"`
+	Errors      int64   `json:"errors"`
+	CacheHits   int64   `json:"cache_hits"`
+	CacheMisses int64   `json:"cache_misses"`
+	LatencyNs   int64   `json:"latency_ns"`
+	BigBytes    int64   `json:"big_bytes"`
+	BigNs       int64   `json:"big_ns"`
+	BigCount    int64   `json:"big_count"`
+	Speed       []int64 `json:"speed"`
+	UpdatedAt   int64   `json:"updated_at"`
 }
 
 // BulkMetrics 一次读取拿回的三类累计统计, 过滤范围由 MetricsQuery 决定

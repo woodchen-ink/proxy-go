@@ -126,6 +126,7 @@ func (ms *MetricsStorage) SaveMetrics() error {
 		PathStats:    ms.getPathStatsArray(),
 		Timeseries:   ms.getTimeseriesPoints(),
 		RefererDaily: ms.getRefererDailyPoints(),
+		NodeSeries:   ms.getNodeTimeseriesPoints(),
 	}
 
 	now := time.Now().UnixMilli()
@@ -397,4 +398,29 @@ func (ms *MetricsStorage) getPathStatsArray() []sync.PathStat {
 	}
 
 	return result
+}
+
+// getNodeTimeseriesPoints 本节点近 timeseriesUploadHours 小时的整体小时桶 (与路径时间序列同窗口)
+func (ms *MetricsStorage) getNodeTimeseriesPoints() []sync.NodeTimeseriesPoint {
+	now := time.Now()
+	pts := ms.collector.NodeSeries().Hours(now, timeseriesUploadHours)
+	out := make([]sync.NodeTimeseriesPoint, 0, len(pts))
+	for _, p := range pts {
+		out = append(out, sync.NodeTimeseriesPoint{
+			TsHour:      p.Ts / 3600,
+			Requests:    p.Requests,
+			Bytes:       p.Bytes,
+			OriginBytes: p.OriginBytes,
+			Errors:      p.Errors,
+			CacheHits:   p.CacheHits,
+			CacheMisses: p.CacheMisses,
+			LatencyNs:   p.LatencyNs,
+			BigBytes:    p.BigBytes,
+			BigNs:       p.BigNs,
+			BigCount:    p.BigCount,
+			Speed:       p.Speed,
+			UpdatedAt:   now.UnixMilli(),
+		})
+	}
+	return out
 }

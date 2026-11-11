@@ -351,6 +351,9 @@ func BulkSave(ctx context.Context, payload *BulkPayload, resetSeen int64) (*Puls
 	for i := range payload.RefererDaily {
 		payload.RefererDaily[i].NodeID = nodeID
 	}
+	for i := range payload.NodeSeries {
+		payload.NodeSeries[i].NodeID = nodeID
+	}
 	payload.Cursors = &PulseCursors{
 		ConfigVersion: ConfigCursor(),
 		ResetSeen:     resetSeen,

@@ -223,6 +223,9 @@ type Collector struct {
 	// 新增：路径维度的小时级时间序列, 供仪表盘趋势图使用
 	pathTimeSeries *PathTimeSeries
 
+	// 节点维度 (不分路径) 的分钟 / 小时序列: 流量、回源、命中、下载速度
+	nodeSeries *NodeSeries
+
 	// 异步通道丢弃事件计数（channel 满时累加）
 	droppedMetrics int64
 
@@ -266,6 +269,7 @@ func InitCollector(cfg *config.Config) error {
 			refererDaySeries: NewRefererDailySeries(),
 			pathStatsStorage: NewPathStatsStorage("data/path_stats.json"),
 			pathTimeSeries:   NewPathTimeSeries(),
+			nodeSeries:       NewNodeSeries(),
 			stopChan:         make(chan struct{}),
 		}
 
@@ -889,6 +893,12 @@ func (c *Collector) updateMetricsBatch(batch []RequestMetric) {
 
 		// 记录路径维度的小时级时间序列 (按前缀聚合, 与 pathStats 保持一致)
 		c.pathTimeSeries.Record(m.StatsPrefix, m.Bytes, m.Status >= 400, time.Now())
+		c.nodeSeries.record(time.Now(), nodeSample{
+			bytes:     m.Bytes,
+			latencyNs: m.Latency.Nanoseconds(),
+			isError:   m.Status >= 400,
+			cacheHit:  m.CacheHit,
+		})
 
 		// 记录路径统计(使用路径前缀)
 		var pathMetrics *models.PathMetrics
@@ -1151,6 +1161,11 @@ func (c *Collector) zeroPathStats(prefix string) int {
 // PathTimeSeries 返回路径时间序列容器, 供同步 / 查询模块使用
 func (c *Collector) PathTimeSeries() *PathTimeSeries {
 	return c.pathTimeSeries
+}
+
+// NodeSeries 返回节点维度序列, 供实时快照与 D1 上报使用
+func (c *Collector) NodeSeries() *NodeSeries {
+	return c.nodeSeries
 }
 
 // RefererDaily 返回引用来源 host 天级时间序列容器, 供同步 / 查询模块使用

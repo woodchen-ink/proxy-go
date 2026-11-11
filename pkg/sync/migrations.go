@@ -254,6 +254,34 @@ var migrations = []Migration{
 			`CREATE INDEX IF NOT EXISTS idx_stats_resets_reset_at ON stats_resets(reset_at)`,
 		},
 	},
+	{
+		// 节点维度小时桶: 整体流量 / 回源 / 命中 / 下载速度原始量, 速度分档 <1 / 1-5 / 5-20 / 20-50 / >=50 MB/s
+		ID: "0008_add_node_timeseries",
+		Statements: []string{
+			`CREATE TABLE IF NOT EXISTS node_timeseries (
+				node_id TEXT NOT NULL,
+				ts_hour INTEGER NOT NULL,
+				requests INTEGER NOT NULL DEFAULT 0,
+				bytes INTEGER NOT NULL DEFAULT 0,
+				origin_bytes INTEGER NOT NULL DEFAULT 0,
+				errors INTEGER NOT NULL DEFAULT 0,
+				cache_hits INTEGER NOT NULL DEFAULT 0,
+				cache_misses INTEGER NOT NULL DEFAULT 0,
+				latency_ns INTEGER NOT NULL DEFAULT 0,
+				big_bytes INTEGER NOT NULL DEFAULT 0,
+				big_ns INTEGER NOT NULL DEFAULT 0,
+				big_count INTEGER NOT NULL DEFAULT 0,
+				speed_lt1 INTEGER NOT NULL DEFAULT 0,
+				speed_1_5 INTEGER NOT NULL DEFAULT 0,
+				speed_5_20 INTEGER NOT NULL DEFAULT 0,
+				speed_20_50 INTEGER NOT NULL DEFAULT 0,
+				speed_gt50 INTEGER NOT NULL DEFAULT 0,
+				updated_at INTEGER NOT NULL DEFAULT 0,
+				PRIMARY KEY (node_id, ts_hour)
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_node_timeseries_hour ON node_timeseries(ts_hour)`,
+		},
+	},
 }
 
 // MigrationResult 启动期迁移汇总, 仅用于日志

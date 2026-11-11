@@ -45,6 +45,8 @@ type LiveStats struct {
 	PathStats           []RawPathStat            `json:"path_stats"`
 	TopReferers         []models.PathMetricsJSON `json:"top_referers"`
 	RecentRequests      []models.RequestLog      `json:"recent_requests"`
+	// MinuteSeries 最近 60 分钟的分钟桶 (原始量), 中控据此画节点实时曲线, 不经 D1
+	MinuteSeries []NodeSeriesPoint `json:"minute_series"`
 }
 
 // LiveSnapshot 汇总本节点实时数据 (每 15s 由 control 包推一次)
@@ -118,5 +120,6 @@ func (c *Collector) LiveSnapshot() LiveStats {
 		PathStats:      pathStats,
 		TopReferers:    topReferers,
 		RecentRequests: recent,
+		MinuteSeries:   c.nodeSeries.Minutes(time.Now()),
 	}
 }
