@@ -356,33 +356,6 @@ func (cm *ConfigManager) GetConfig() *Config {
 	return cm.config.Load().(*Config)
 }
 
-// UpdateConfig 更新配置 (本地发起: 后台保存 / 从 D1 手动拉取后落地)
-func (cm *ConfigManager) UpdateConfig(newConfig *Config) error {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-
-	// 规范化 (nil 字段归一)
-	cm.normalizeConfig(newConfig)
-
-	// 确保所有路径配置的扩展名规则都已更新
-	for path, pc := range newConfig.MAP {
-		pc.ProcessExtensionMap()
-		newConfig.MAP[path] = pc // 更新回原始map
-	}
-
-	// 更新内存中的配置
-	cm.config.Store(newConfig)
-
-	// 触发回调（会自动同步到 D1）
-	TriggerCallbacks(newConfig)
-
-	// 刷新本地快照: 兜底文件始终保持为"本节点见过的最新配置"
-	cm.SaveSnapshot()
-
-	log.Printf("[ConfigManager] 配置已更新: %d 个路径映射", len(newConfig.MAP))
-	return nil
-}
-
 // ApplyRemoteData 热应用来自 D1 心跳的远端配置
 //
 // 与 UpdateConfig 的区别只有一个: 触发本地回调 (matcher 重建 / 组件刷新) 但**不触发
@@ -479,16 +452,6 @@ func RegisterUpdateCallback(callback func(*Config)) {
 	configCallbacks = append(configCallbacks, callback)
 }
 
-// RegisterSyncCallback 注册"回写 D1"回调, 只在本地发起的配置变更时触发
-//
-// 与 RegisterUpdateCallback 分开注册, 是心跳热应用不产生回声循环的关键:
-// ApplyRemoteData 只跑普通回调, 不跑这里注册的回调
-func RegisterSyncCallback(callback func(*Config)) {
-	callbackMutex.Lock()
-	defer callbackMutex.Unlock()
-	syncCallbacks = append(syncCallbacks, callback)
-}
-
 // TriggerCallbacks 触发所有回调 (普通 + 回写 D1), 用于本地发起的配置变更
 func TriggerCallbacks(cfg *Config) {
 	// 确保所有路径配置的扩展名规则都已更新
@@ -523,18 +486,6 @@ func triggerLocalCallbacks(cfg *Config) {
 // 为了向后兼容，保留Load函数，但现在它使用ConfigManager
 var globalConfigManager *ConfigManager
 
-// Load 加载配置（向后兼容）
-func Load(path string) (*Config, error) {
-	if globalConfigManager == nil {
-		var err error
-		globalConfigManager, err = NewConfigManager(path)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return globalConfigManager.GetConfig(), nil
-}
-
 // SetGlobalConfigManager 设置全局配置管理器
 func SetGlobalConfigManager(cm *ConfigManager) {
 	globalConfigManager = cm
@@ -554,14 +505,6 @@ func ReloadConfig() error {
 		return nil
 	}
 	return globalConfigManager.ReloadConfig()
-}
-
-// UpdateConfig 更新配置（全局接口）
-func UpdateConfig(newConfig *Config) error {
-	if globalConfigManager == nil {
-		return nil
-	}
-	return globalConfigManager.UpdateConfig(newConfig)
 }
 
 // ApplyRemoteConfig 热应用远端配置（全局接口, 供 D1 心跳调用）

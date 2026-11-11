@@ -11,21 +11,13 @@ import (
 var (
 	globalSyncService *SyncService
 	globalSyncMutex   sync.RWMutex
-
-	// 配置同步防抖：3 秒窗口内的多次调用合并为一次
-	configSyncDebounceMu sync.Mutex
-	configSyncTimer      *time.Timer
-	configSyncPending    bool
 )
-
-const configSyncDebounceWindow = 3 * time.Second
 
 // SyncService 同步服务
 type SyncService struct {
 	manager       *D1Manager
 	configAdapter *ConfigAdapter
 	isEnabled     bool
-	mutex         sync.RWMutex
 }
 
 // InitSyncService 初始化同步服务
@@ -126,18 +118,6 @@ func StopSyncService() error {
 	return nil
 }
 
-// SyncNow 立即同步
-func SyncNow(ctx context.Context) error {
-	globalSyncMutex.RLock()
-	defer globalSyncMutex.RUnlock()
-
-	if globalSyncService == nil || !globalSyncService.isEnabled {
-		return fmt.Errorf("sync service not available")
-	}
-
-	return globalSyncService.manager.SyncNow(ctx)
-}
-
 // DownloadConfigOnly 下载配置（启动时使用）
 // 返回: 配置数据，是否使用了本地配置，错误
 func DownloadConfigOnly(ctx context.Context) (map[string]any, bool, error) {
@@ -151,125 +131,9 @@ func DownloadConfigOnly(ctx context.Context) (map[string]any, bool, error) {
 	return globalSyncService.manager.downloadConfigWithFallback(ctx)
 }
 
-// SyncConfigOnly 同步配置
-func SyncConfigOnly(ctx context.Context) error {
-	globalSyncMutex.RLock()
-	defer globalSyncMutex.RUnlock()
-
-	if globalSyncService == nil || !globalSyncService.isEnabled {
-		return fmt.Errorf("sync service not available")
-	}
-
-	return globalSyncService.manager.SyncNow(ctx)
-}
-
-// UploadConfig 上传配置
-func UploadConfig(ctx context.Context) error {
-	globalSyncMutex.RLock()
-	defer globalSyncMutex.RUnlock()
-
-	if globalSyncService == nil || !globalSyncService.isEnabled {
-		return nil
-	}
-
-	config, err := globalSyncService.configAdapter.LoadConfig()
-	if err != nil {
-		return err
-	}
-	return globalSyncService.manager.UploadConfig(ctx, config)
-}
-
-// GetSyncStatus 获取同步状态
-func GetSyncStatus() *SyncStatus {
-	globalSyncMutex.RLock()
-	defer globalSyncMutex.RUnlock()
-
-	if globalSyncService == nil || !globalSyncService.isEnabled {
-		return &SyncStatus{
-			IsRunning: false,
-			LastError: "sync service not available",
-		}
-	}
-
-	status := globalSyncService.manager.GetSyncStatus()
-	return &status
-}
-
-// IsServiceEnabled 检查同步服务是否启用
-func IsServiceEnabled() bool {
-	globalSyncMutex.RLock()
-	defer globalSyncMutex.RUnlock()
-
-	return globalSyncService != nil && globalSyncService.isEnabled
-}
-
 // IsEnabled 检查同步功能是否启用（基于环境变量）
 func IsEnabled() bool {
 	return IsD1ConfigComplete()
-}
-
-// ConfigSyncCallback 配置同步回调 (仅本地发起的配置变更触发, 见 config.RegisterSyncCallback)
-// 短时间内连续调用会被合并为一次，避免用户快速点击导致 goroutine 风暴
-func ConfigSyncCallback() {
-	if !IsServiceEnabled() {
-		log.Printf("[Sync] Config sync skipped - service not enabled")
-		return
-	}
-
-	// 本地改动即视为持有比 D1 更新的配置: 立刻推进位点, 挡住上传完成前
-	// 恰好到达的旧版本心跳把这份改动回灌覆盖
-	AdvanceConfigCursor(time.Now().UnixMilli())
-
-	configSyncDebounceMu.Lock()
-	defer configSyncDebounceMu.Unlock()
-
-	if configSyncTimer != nil {
-		configSyncTimer.Stop()
-	}
-	configSyncPending = true
-	configSyncTimer = time.AfterFunc(configSyncDebounceWindow, func() {
-		configSyncDebounceMu.Lock()
-		if !configSyncPending {
-			configSyncDebounceMu.Unlock()
-			return
-		}
-		configSyncPending = false
-		configSyncDebounceMu.Unlock()
-
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		if err := SyncConfigOnly(ctx); err != nil {
-			log.Printf("[Sync] Warning: Config sync to D1 failed: %v", err)
-		} else {
-			log.Printf("[Sync] Config synced to D1 successfully (debounced)")
-		}
-	})
-}
-
-// FlushConfigSync 立即触发等待中的配置同步（用于关闭流程）
-func FlushConfigSync() {
-	configSyncDebounceMu.Lock()
-	if configSyncTimer != nil {
-		configSyncTimer.Stop()
-	}
-	if !configSyncPending {
-		configSyncDebounceMu.Unlock()
-		return
-	}
-	configSyncPending = false
-	configSyncDebounceMu.Unlock()
-
-	if !IsServiceEnabled() {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := SyncConfigOnly(ctx); err != nil {
-		log.Printf("[Sync] Warning: Final config sync to D1 failed: %v", err)
-	} else {
-		log.Printf("[Sync] Final config synced to D1 before shutdown")
-	}
 }
 
 // ============================================
@@ -382,35 +246,6 @@ func BulkLoadOwn(ctx context.Context) (*BulkMetrics, error) {
 	return globalSyncService.manager.storage.BulkFetch(ctx, MetricsQuery{NodeID: NodeID()})
 }
 
-// BulkLoadByNode 单请求读回全部节点的原始行 + 其他节点的状态码/延迟合计
-//
-// path_stats 用 by_node 拿原始行 (仪表盘要各节点明细), 而 status_codes / latency
-// 没有分节点展示需求, worker 端对同一 scope 已按 exclude_node 语义聚合
-func BulkLoadByNode(ctx context.Context) (*BulkMetrics, error) {
-	globalSyncMutex.RLock()
-	defer globalSyncMutex.RUnlock()
-
-	if globalSyncService == nil || !globalSyncService.isEnabled {
-		return nil, nil
-	}
-
-	return globalSyncService.manager.storage.BulkFetch(ctx, MetricsQuery{
-		ByNode:      true,
-		ExcludeNode: NodeID(),
-	})
-}
-
-// LoadPathTimeseries 拉取 [minHour, maxHour] 范围的跨节点聚合数据
-func LoadPathTimeseries(ctx context.Context, minHour, maxHour int64) ([]AggregatedHourPoint, error) {
-	globalSyncMutex.RLock()
-	defer globalSyncMutex.RUnlock()
-
-	if globalSyncService == nil || !globalSyncService.isEnabled {
-		return nil, nil
-	}
-	return globalSyncService.manager.storage.GetAggregatedTimeseries(ctx, minHour, maxHour)
-}
-
 // PruneTimeseries 清理 cutoffHour 之前的旧桶, 返回删除条数
 func PruneTimeseries(ctx context.Context, cutoffHour int64) (int, error) {
 	globalSyncMutex.RLock()
@@ -420,17 +255,6 @@ func PruneTimeseries(ctx context.Context, cutoffHour int64) (int, error) {
 		return 0, nil
 	}
 	return globalSyncService.manager.storage.PruneTimeseries(ctx, cutoffHour)
-}
-
-// LoadRefererDaily 拉取 [minDate, maxDate] 范围的跨节点聚合数据
-func LoadRefererDaily(ctx context.Context, minDate, maxDate int64) ([]AggregatedRefererDayPoint, error) {
-	globalSyncMutex.RLock()
-	defer globalSyncMutex.RUnlock()
-
-	if globalSyncService == nil || !globalSyncService.isEnabled {
-		return nil, nil
-	}
-	return globalSyncService.manager.storage.GetAggregatedRefererDaily(ctx, minDate, maxDate)
 }
 
 // PruneRefererDaily 清理 cutoffDate 之前的天级桶, 返回删除条数

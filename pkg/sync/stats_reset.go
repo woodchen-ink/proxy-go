@@ -3,8 +3,6 @@ package sync
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"time"
 )
 
 // 重置代际 (stats reset generation)
@@ -42,25 +40,6 @@ func buildStatsResetStatements(prefix string, resetAt int64) []SQLStatement {
 		})
 	}
 	return stmts
-}
-
-// PublishStatsReset 发布一次跨节点重置, 返回 marker 的代际时间戳 (ms)
-//
-// marker 与全节点行删除在同一个 D1 batch 里原子提交; 失败时调用方应降级为只删本节点行
-func PublishStatsReset(ctx context.Context, prefix string) (int64, error) {
-	globalSyncMutex.RLock()
-	defer globalSyncMutex.RUnlock()
-
-	if globalSyncService == nil || !globalSyncService.isEnabled {
-		return 0, fmt.Errorf("sync service not available")
-	}
-
-	resetAt := time.Now().UnixMilli()
-	_, err := globalSyncService.manager.storage.ExecuteSQLBatch(ctx, buildStatsResetStatements(prefix, resetAt))
-	if err != nil {
-		return 0, err
-	}
-	return resetAt, nil
 }
 
 // FetchStatsResets 拉取比 since 新的 marker, 按代际升序; 启动补应用用

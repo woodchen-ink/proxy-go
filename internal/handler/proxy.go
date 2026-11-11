@@ -13,7 +13,6 @@ import (
 	"proxy-go/internal/security"
 	"proxy-go/internal/service"
 	"proxy-go/internal/utils"
-	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -131,64 +130,6 @@ func (h *ProxyHandler) GetProxyService() *service.ProxyService {
 	return h.proxyService
 }
 
-// 前缀匹配器结构体
-type prefixMatcher struct {
-	prefixes []string
-	configs  map[string]config.PathConfig
-}
-
-// 创建新的前缀匹配器
-func newPrefixMatcher(pathMap map[string]config.PathConfig) *prefixMatcher {
-	pm := &prefixMatcher{
-		prefixes: make([]string, 0, len(pathMap)),
-		configs:  make(map[string]config.PathConfig, len(pathMap)),
-	}
-
-	// 按长度降序排列前缀，确保最长匹配优先
-	for prefix, cfg := range pathMap {
-		pm.prefixes = append(pm.prefixes, prefix)
-		pm.configs[prefix] = cfg
-	}
-
-	// 按长度降序排列
-	sort.Slice(pm.prefixes, func(i, j int) bool {
-		return len(pm.prefixes[i]) > len(pm.prefixes[j])
-	})
-
-	return pm
-}
-
-// 根据路径查找匹配的前缀和配置
-func (pm *prefixMatcher) match(path string) (string, config.PathConfig, bool) {
-	// 按预排序的前缀列表查找最长匹配
-	for _, prefix := range pm.prefixes {
-		if strings.HasPrefix(path, prefix) {
-			// 确保匹配的是完整的路径段
-			restPath := path[len(prefix):]
-			if restPath == "" || restPath[0] == '/' {
-				return prefix, pm.configs[prefix], true
-			}
-		}
-	}
-	return "", config.PathConfig{}, false
-}
-
-// 更新前缀匹配器
-func (pm *prefixMatcher) update(pathMap map[string]config.PathConfig) {
-	pm.prefixes = make([]string, 0, len(pathMap))
-	pm.configs = make(map[string]config.PathConfig, len(pathMap))
-
-	for prefix, cfg := range pathMap {
-		pm.prefixes = append(pm.prefixes, prefix)
-		pm.configs[prefix] = cfg
-	}
-
-	// 按长度降序排列
-	sort.Slice(pm.prefixes, func(i, j int) bool {
-		return len(pm.prefixes[i]) > len(pm.prefixes[j])
-	})
-}
-
 // NewProxyHandler 创建新的代理处理器
 func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 	dialer := &net.Dialer{
@@ -254,7 +195,6 @@ func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 	}
 
 	// 初始化重定向处理器（暂时保留）
-	_ = NewRedirectHandler(ruleService)
 
 	// 初始化Service层
 	pathMatcherService := service.NewPathMatcherService(cfg.MAP)

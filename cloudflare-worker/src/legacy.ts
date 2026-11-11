@@ -35,40 +35,6 @@ export async function handleLegacy(request: Request, env: Env): Promise<Response
 				return jsonResponse({ success: true, data: stats }, 200, corsHeaders);
 			}
 
-			if (path === '/path-stats' && request.method === 'POST') {
-				const body = await request.json<{ stats: db.PathStat[] }>();
-				if (!body.stats || !Array.isArray(body.stats)) {
-					return jsonResponse({ error: 'Invalid request: stats array required' }, 400, corsHeaders);
-				}
-				await db.batchUpsertPathStats(env.DB, body.stats);
-				return jsonResponse({ success: true, updated: body.stats.length }, 200, corsHeaders);
-			}
-
-			// ============================================
-			// Banned IPs API
-			// ============================================
-			if (path === '/banned-ips' && request.method === 'GET') {
-				const activeOnly = url.searchParams.get('active') === 'true';
-				const bans = await db.getBannedIPs(env.DB, activeOnly);
-				return jsonResponse({ success: true, data: bans }, 200, corsHeaders);
-			}
-
-			if (path === '/banned-ips' && request.method === 'POST') {
-				const body = await request.json<{ bans: db.BannedIP[] }>();
-				if (!body.bans || !Array.isArray(body.bans)) {
-					return jsonResponse({ error: 'Invalid request: bans array required' }, 400, corsHeaders);
-				}
-				await db.batchUpsertBannedIPs(env.DB, body.bans);
-				return jsonResponse({ success: true, updated: body.bans.length }, 200, corsHeaders);
-			}
-
-			if (path === '/banned-ips/history' && request.method === 'GET') {
-				const ip = url.searchParams.get('ip');
-				const limit = parseInt(url.searchParams.get('limit') || '100');
-				const history = await db.getBannedIPHistory(env.DB, ip || undefined, limit);
-				return jsonResponse({ success: true, data: history }, 200, corsHeaders);
-			}
-
 			// ============================================
 			// Config Maps API
 			// ============================================
@@ -125,37 +91,6 @@ export async function handleLegacy(request: Request, env: Env): Promise<Response
 			}
 
 			// ============================================
-			// Metrics API (status_codes, latency_distribution)
-			// ============================================
-			if (path === '/metrics/status-codes' && request.method === 'GET') {
-				const metrics = await db.getStatusCodes(env.DB, readScope(url));
-				return jsonResponse({ success: true, data: metrics }, 200, corsHeaders);
-			}
-
-			if (path === '/metrics/status-codes' && request.method === 'POST') {
-				const body = await request.json<{ metrics: db.StatusCodeMetric[] }>();
-				if (!body.metrics || !Array.isArray(body.metrics)) {
-					return jsonResponse({ error: 'Invalid request: metrics array required' }, 400, corsHeaders);
-				}
-				await db.batchUpsertStatusCodes(env.DB, body.metrics);
-				return jsonResponse({ success: true, updated: body.metrics.length }, 200, corsHeaders);
-			}
-
-			if (path === '/metrics/latency' && request.method === 'GET') {
-				const metrics = await db.getLatencyDistribution(env.DB, readScope(url));
-				return jsonResponse({ success: true, data: metrics }, 200, corsHeaders);
-			}
-
-			if (path === '/metrics/latency' && request.method === 'POST') {
-				const body = await request.json<{ metrics: db.LatencyMetric[] }>();
-				if (!body.metrics || !Array.isArray(body.metrics)) {
-					return jsonResponse({ error: 'Invalid request: metrics array required' }, 400, corsHeaders);
-				}
-				await db.batchUpsertLatencyDistribution(env.DB, body.metrics);
-				return jsonResponse({ success: true, updated: body.metrics.length }, 200, corsHeaders);
-			}
-
-			// ============================================
 			// 合并读写 endpoint
 			//
 			// 一次同步原本要打 5 个 POST, 一次仪表盘刷新要打 3 个 GET。
@@ -174,7 +109,6 @@ export async function handleLegacy(request: Request, env: Env): Promise<Response
 					cursors?: {
 						config_version?: number;
 						reset_seen?: number;
-						bans_seen?: number;
 					};
 				}>();
 
@@ -245,22 +179,6 @@ export async function handleLegacy(request: Request, env: Env): Promise<Response
 						}
 					} catch (e) {
 						console.error('pulse resets slot failed:', e);
-					}
-
-					// 槽位 3: 封禁变更 (预留; Go 侧封禁同步子系统落地后自动启用)
-					try {
-						if (typeof cursors.bans_seen === 'number') {
-							const rows = await env.DB.prepare(
-								'SELECT * FROM banned_ips WHERE updated_at > ? ORDER BY updated_at ASC LIMIT 200'
-							)
-								.bind(cursors.bans_seen)
-								.all();
-							if (rows.results?.length) {
-								state.bans = rows.results;
-							}
-						}
-					} catch (e) {
-						console.error('pulse bans slot failed:', e);
 					}
 				}
 
@@ -342,45 +260,6 @@ export async function handleLegacy(request: Request, env: Env): Promise<Response
 			// ============================================
 			// Path Time Series API
 			// ============================================
-			if (path === '/metrics/path-timeseries' && request.method === 'POST') {
-				const body = await request.json<{ points: db.PathTimeseriesPoint[] }>();
-				if (!body.points || !Array.isArray(body.points)) {
-					return jsonResponse(
-						{ error: 'Invalid request: points array required' },
-						400,
-						corsHeaders
-					);
-				}
-				await db.batchUpsertPathTimeseries(env.DB, body.points);
-				return jsonResponse(
-					{ success: true, updated: body.points.length },
-					200,
-					corsHeaders
-				);
-			}
-
-			if (path === '/metrics/path-timeseries' && request.method === 'GET') {
-				const minHour = parseInt(url.searchParams.get('min_hour') || '0');
-				const maxHour = parseInt(url.searchParams.get('max_hour') || '0');
-				if (!minHour || !maxHour || maxHour < minHour) {
-					return jsonResponse(
-						{ error: 'min_hour and max_hour required (max_hour >= min_hour)' },
-						400,
-						corsHeaders
-					);
-				}
-				// 上限保护: 单次最多查询 31 天 (744 小时)
-				if (maxHour - minHour > 744) {
-					return jsonResponse(
-						{ error: 'range too wide, max 744 hours' },
-						400,
-						corsHeaders
-					);
-				}
-				const data = await db.getAggregatedTimeseries(env.DB, minHour, maxHour);
-				return jsonResponse({ success: true, data }, 200, corsHeaders);
-			}
-
 			if (path === '/metrics/path-timeseries' && request.method === 'DELETE') {
 				const cutoff = parseInt(url.searchParams.get('cutoff_hour') || '0');
 				if (!cutoff) {
@@ -397,45 +276,6 @@ export async function handleLegacy(request: Request, env: Env): Promise<Response
 			// ============================================
 			// Referer Daily API (host 天级时间序列)
 			// ============================================
-			if (path === '/metrics/referer-daily' && request.method === 'POST') {
-				const body = await request.json<{ points: db.RefererDailyPoint[] }>();
-				if (!body.points || !Array.isArray(body.points)) {
-					return jsonResponse(
-						{ error: 'Invalid request: points array required' },
-						400,
-						corsHeaders
-					);
-				}
-				await db.batchUpsertRefererDaily(env.DB, body.points);
-				return jsonResponse(
-					{ success: true, updated: body.points.length },
-					200,
-					corsHeaders
-				);
-			}
-
-			if (path === '/metrics/referer-daily' && request.method === 'GET') {
-				const minDate = parseInt(url.searchParams.get('min_date') || '0');
-				const maxDate = parseInt(url.searchParams.get('max_date') || '0');
-				if (!minDate || !maxDate || maxDate < minDate) {
-					return jsonResponse(
-						{ error: 'min_date and max_date required (max_date >= min_date)' },
-						400,
-						corsHeaders
-					);
-				}
-				// 上限保护: 单次最多查询 90 天
-				if (maxDate - minDate > 90) {
-					return jsonResponse(
-						{ error: 'range too wide, max 90 days' },
-						400,
-						corsHeaders
-					);
-				}
-				const data = await db.getAggregatedRefererDaily(env.DB, minDate, maxDate);
-				return jsonResponse({ success: true, data }, 200, corsHeaders);
-			}
-
 			if (path === '/metrics/referer-daily' && request.method === 'DELETE') {
 				const cutoff = parseInt(url.searchParams.get('cutoff_date') || '0');
 				if (!cutoff) {
@@ -458,46 +298,14 @@ export async function handleLegacy(request: Request, env: Env): Promise<Response
 						name: 'proxy-go-sync API v2',
 						version: '3.0.0',
 						endpoints: {
-							'Path Stats': {
-								'GET /path-stats': 'Get all path statistics',
-								'GET /path-stats?path=/xxx': 'Get stats for specific path',
-								'POST /path-stats': 'Batch update path statistics',
-							},
-							'Banned IPs': {
-								'GET /banned-ips': 'Get all banned IPs',
-								'GET /banned-ips?active=true': 'Get active bans only',
-								'POST /banned-ips': 'Batch update banned IPs',
-								'GET /banned-ips/history': 'Get ban history',
-								'GET /banned-ips/history?ip=xxx': 'Get history for specific IP',
-							},
-							'Config Maps': {
-								'GET /config-maps': 'Get all path configurations',
-								'GET /config-maps?enabled=true': 'Get enabled paths only',
-								'GET /config-maps/{path}': 'Get specific path config',
-								'POST /config-maps': 'Batch update path configs',
-								'DELETE /config-maps/{path}': 'Delete path config',
-							},
-							'Config Other': {
-								'GET /config-other': 'Get all system configs',
-								'GET /config-other?key=xxx': 'Get specific config',
-								'POST /config-other': 'Batch update system configs',
-							},
-							'Admin SQL (token-protected)': {
-								'POST /admin/sql/batch': 'Run a transactional batch of {sql, params?} statements',
-								'POST /admin/sql/query': 'Run a single read query and return rows',
-							},
-							'Metrics': {
-								'GET /metrics/status-codes': 'Get HTTP status code statistics',
-								'POST /metrics/status-codes': 'Batch update status code stats',
-								'GET /metrics/latency': 'Get latency distribution',
-								'POST /metrics/latency': 'Batch update latency distribution',
-								'GET /metrics/path-timeseries?min_hour&max_hour': 'Get aggregated path time series',
-								'POST /metrics/path-timeseries': 'Batch upload node-local time-series buckets',
-								'DELETE /metrics/path-timeseries?cutoff_hour': 'Prune old time-series buckets',
-								'GET /metrics/referer-daily?min_date&max_date': 'Get aggregated referer host daily series',
-								'POST /metrics/referer-daily': 'Batch upload node-local referer daily buckets',
-								'DELETE /metrics/referer-daily?cutoff_date': 'Prune old referer daily buckets',
-							},
+							'POST /metrics/bulk': 'Node heartbeat: upload stats, receive config / reset state',
+							'GET /metrics/bulk?node_id=': 'Node startup: read back own cumulative stats',
+							'GET /path-stats': 'Path statistics',
+							'GET|POST /config-maps, DELETE /config-maps/{path}': 'Path configs (seed only; hub is the writer)',
+							'GET|POST /config-other': 'Other configs',
+							'POST /admin/sql/batch|query': 'Node-owned schema migrations',
+							'DELETE /metrics/path-timeseries?cutoff_hour': 'Prune hourly buckets',
+							'DELETE /metrics/referer-daily?cutoff_date': 'Prune referer daily buckets',
 						},
 					},
 					200,

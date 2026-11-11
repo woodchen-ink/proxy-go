@@ -2,8 +2,6 @@ package utils
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"log"
 	"net/http"
@@ -23,7 +21,6 @@ type GoroutinePool struct {
 	maxWorkers int
 	taskQueue  chan func()
 	wg         sync.WaitGroup
-	once       sync.Once
 	stopped    int32
 }
 
@@ -100,39 +97,6 @@ func (p *GoroutinePool) Submit(task func()) error {
 	}
 }
 
-// SubmitWithTimeout 提交任务到池中，带超时
-func (p *GoroutinePool) SubmitWithTimeout(task func(), timeout time.Duration) error {
-	if atomic.LoadInt32(&p.stopped) == 1 {
-		return fmt.Errorf("goroutine pool is stopped")
-	}
-
-	select {
-	case p.taskQueue <- task:
-		return nil
-	case <-time.After(timeout):
-		return fmt.Errorf("goroutine pool submit timeout")
-	}
-}
-
-// Stop 停止 goroutine 池
-func (p *GoroutinePool) Stop() {
-	p.once.Do(func() {
-		atomic.StoreInt32(&p.stopped, 1)
-		close(p.taskQueue)
-		p.wg.Wait()
-	})
-}
-
-// Size 返回池中工作协程数量
-func (p *GoroutinePool) Size() int {
-	return p.maxWorkers
-}
-
-// QueueSize 返回当前任务队列大小
-func (p *GoroutinePool) QueueSize() int {
-	return len(p.taskQueue)
-}
-
 // 异步执行函数的包装器
 func GoSafe(fn func()) {
 	pool := GetGoroutinePool()
@@ -148,12 +112,6 @@ func GoSafe(fn func()) {
 			fn()
 		}()
 	}
-}
-
-// 带超时的异步执行
-func GoSafeWithTimeout(fn func(), timeout time.Duration) error {
-	pool := GetGoroutinePool()
-	return pool.SubmitWithTimeout(fn, timeout)
 }
 
 // 文件大小缓存相关
@@ -211,16 +169,6 @@ func cleanExpiredCache() {
 		}
 		return true
 	})
-}
-
-// GenerateRequestID 生成唯一的请求ID
-func GenerateRequestID() string {
-	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
-		// 如果随机数生成失败，使用时间戳作为备选
-		return fmt.Sprintf("%x", time.Now().UnixNano())
-	}
-	return hex.EncodeToString(b)
 }
 
 // 获取请求来源
@@ -424,85 +372,6 @@ func IsTargetAccessible(client *http.Client, targetURL string) bool {
 	})
 
 	return accessible
-}
-
-// SafeInt64 安全地将 interface{} 转换为 int64
-func SafeInt64(v interface{}) int64 {
-	if v == nil {
-		return 0
-	}
-	if i, ok := v.(int64); ok {
-		return i
-	}
-	return 0
-}
-
-// SafeInt 安全地将 interface{} 转换为 int
-func SafeInt(v interface{}) int {
-	if v == nil {
-		return 0
-	}
-	if i, ok := v.(int); ok {
-		return i
-	}
-	return 0
-}
-
-// SafeString 安全地将 interface{} 转换为 string
-func SafeString(v interface{}, defaultValue string) string {
-	if v == nil {
-		return defaultValue
-	}
-	if s, ok := v.(string); ok {
-		return s
-	}
-	return defaultValue
-}
-
-func SafeFloat64(v interface{}) float64 {
-	if v == nil {
-		return 0
-	}
-	switch val := v.(type) {
-	case float64:
-		return val
-	case float32:
-		return float64(val)
-	case int64:
-		return float64(val)
-	case int:
-		return float64(val)
-	case int32:
-		return float64(val)
-	default:
-		return 0
-	}
-}
-
-// Max 返回两个 int64 中的较大值
-func Max(a, b int64) int64 {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-// MaxFloat64 返回两个 float64 中的较大值
-func MaxFloat64(a, b float64) float64 {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-// ParseInt 将字符串解析为整数，如果解析失败则返回默认值
-func ParseInt(s string, defaultValue int) int {
-	var result int
-	_, err := fmt.Sscanf(s, "%d", &result)
-	if err != nil {
-		return defaultValue
-	}
-	return result
 }
 
 // ClearAccessibilityCache 清理可访问性缓存

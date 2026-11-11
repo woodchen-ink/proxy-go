@@ -213,16 +213,6 @@ func (m *D1Manager) UploadConfig(ctx context.Context, config any) error {
 	return nil
 }
 
-// GetSyncStatus 获取同步状态
-func (m *D1Manager) GetSyncStatus() SyncStatus {
-	return m.status.Load().(SyncStatus)
-}
-
-// GetEventChannel 获取事件通道
-func (m *D1Manager) GetEventChannel() <-chan SyncEvent {
-	return m.eventChan
-}
-
 // syncConfigToD1 同步配置到D1
 //
 // 配置不可信时直接跳过: 见 configTrusted 字段说明。这条守卫覆盖了所有上传入口

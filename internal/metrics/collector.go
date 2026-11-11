@@ -102,13 +102,6 @@ func (rs *RefererStats) Store(key string, value *models.PathMetrics) {
 	shard.data[key] = value
 }
 
-func (rs *RefererStats) Delete(key string) {
-	shard := rs.getShard(key)
-	shard.mu.Lock()
-	defer shard.mu.Unlock()
-	delete(shard.data, key)
-}
-
 func (rs *RefererStats) Range(f func(key string, value *models.PathMetrics) bool) {
 	for _, shard := range rs.shards {
 		shard.mu.RLock()
@@ -183,18 +176,18 @@ func (s *StatusCodeStats) GetStats() map[string]int64 {
 
 // Collector 指标收集器
 type Collector struct {
-	startTime       time.Time
-	activeRequests  int64
-	totalBytes      int64
-	latencySum      int64
-	maxLatency      int64 // 最大响应时间
-	minLatency      int64 // 最小响应时间
-	statusCodeStats *StatusCodeStats
-	latencyBuckets  *LatencyBuckets // 使用结构体替代 sync.Map
-	refererStats      *RefererStats       // 使用分片哈希表
-	pathStats         *RefererStats       // 路径统计（复用RefererStats的分片结构）
-	refererDaySeries  *RefererDailySeries // referer host 天级时间序列, 供 D1 上报
-	bandwidthStats  struct {
+	startTime        time.Time
+	activeRequests   int64
+	totalBytes       int64
+	latencySum       int64
+	maxLatency       int64 // 最大响应时间
+	minLatency       int64 // 最小响应时间
+	statusCodeStats  *StatusCodeStats
+	latencyBuckets   *LatencyBuckets     // 使用结构体替代 sync.Map
+	refererStats     *RefererStats       // 使用分片哈希表
+	pathStats        *RefererStats       // 路径统计（复用RefererStats的分片结构）
+	refererDaySeries *RefererDailySeries // referer host 天级时间序列, 供 D1 上报
+	bandwidthStats   struct {
 		sync.RWMutex
 		window     time.Duration
 		lastUpdate time.Time
@@ -377,11 +370,6 @@ func (c *Collector) recordDrop() {
 	}
 }
 
-// GetDroppedMetrics 返回累计被丢弃的指标事件数
-func (c *Collector) GetDroppedMetrics() int64 {
-	return atomic.LoadInt64(&c.droppedMetrics)
-}
-
 // Stop 通知所有后台 goroutine 退出，并等待其完成（最长 wait 超时）
 func (c *Collector) Stop(wait time.Duration) {
 	c.stopOnce.Do(func() {
@@ -550,30 +538,6 @@ func (c *Collector) GetStats() map[string]interface{} {
 	}
 }
 
-func (c *Collector) SaveMetrics(stats map[string]interface{}) error {
-	lastSaveTime = time.Now()
-
-	// 如果指标存储服务已初始化，则调用它来保存指标
-	if metricsStorage != nil {
-		return metricsStorage.SaveMetrics()
-	}
-
-	return nil
-}
-
-// LoadRecentStats 简化为只进行数据验证
-func (c *Collector) LoadRecentStats() error {
-	start := time.Now()
-	log.Printf("[Metrics] Loading stats...")
-
-	if err := c.validateLoadedData(); err != nil {
-		return fmt.Errorf("data validation failed: %v", err)
-	}
-
-	log.Printf("[Metrics] Loaded stats in %v", time.Since(start))
-	return nil
-}
-
 // validateLoadedData 验证当前数据的有效性
 func (c *Collector) validateLoadedData() error {
 	// 验证基础指标
@@ -592,22 +556,6 @@ func (c *Collector) validateLoadedData() error {
 		statusCodeTotal += count
 	}
 
-	return nil
-}
-
-// GetLastSaveTime 实现 interfaces.MetricsCollector 接口
-var lastSaveTime time.Time
-
-func (c *Collector) GetLastSaveTime() time.Time {
-	return lastSaveTime
-}
-
-// CheckDataConsistency 实现 interfaces.MetricsCollector 接口
-func (c *Collector) CheckDataConsistency() error {
-	// 简单的数据验证
-	if err := c.validateLoadedData(); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -981,28 +929,6 @@ func (c *Collector) updateMetricsBatch(batch []RequestMetric) {
 			ClientIP:  m.ClientIP,
 			Referer:   referer,
 		})
-	}
-}
-
-// RecordStatusCodeBatch 批量记录状态码（用于同步）
-func (c *Collector) RecordStatusCodeBatch(code int, count int64) {
-	c.statusCodeStats.mu.RLock()
-	if counter, exists := c.statusCodeStats.stats[code]; exists {
-		c.statusCodeStats.mu.RUnlock()
-		atomic.AddInt64(counter, count)
-		return
-	}
-	c.statusCodeStats.mu.RUnlock()
-
-	// 需要创建新的计数器
-	c.statusCodeStats.mu.Lock()
-	defer c.statusCodeStats.mu.Unlock()
-	if counter, exists := c.statusCodeStats.stats[code]; exists {
-		atomic.AddInt64(counter, count)
-	} else {
-		counter := new(int64)
-		*counter = count
-		c.statusCodeStats.stats[code] = counter
 	}
 }
 

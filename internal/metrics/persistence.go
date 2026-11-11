@@ -236,13 +236,6 @@ func (ms *MetricsStorage) LoadMetrics() error {
 	return nil
 }
 
-// GetLastSaveTime 获取最后保存时间
-func (ms *MetricsStorage) GetLastSaveTime() time.Time {
-	ms.mutex.RLock()
-	defer ms.mutex.RUnlock()
-	return ms.lastSaveTime
-}
-
 // getStatusCodesMap 获取状态码统计 map
 func (ms *MetricsStorage) getStatusCodesMap() map[string]int64 {
 	result := make(map[string]int64)

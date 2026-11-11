@@ -186,29 +186,3 @@ func cloneRequest(req *http.Request) *http.Request {
 
 	return reqClone
 }
-
-// RetryStats 重试统计信息
-type RetryStats struct {
-	TotalRequests     int64 // 总请求数
-	RetriedRequests   int64 // 重试的请求数
-	SuccessAfterRetry int64 // 重试后成功的请求数
-	FailedAfterRetry  int64 // 重试后仍失败的请求数
-}
-
-// RetryService 重试服务（可选，用于统计）
-type RetryService struct {
-	config RetryConfig
-	stats  RetryStats
-}
-
-// NewRetryService 创建重试服务
-func NewRetryService(config RetryConfig) *RetryService {
-	return &RetryService{
-		config: config,
-	}
-}
-
-// GetStats 获取重试统计
-func (rs *RetryService) GetStats() RetryStats {
-	return rs.stats
-}

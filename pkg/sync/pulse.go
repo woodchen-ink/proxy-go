@@ -15,7 +15,6 @@ import (
 // 下行槽位:
 //   - config:  __config_version 比游标新时, 响应带回完整配置, 节点热应用 (不重启生效)
 //   - resets:  重置代际 marker, 见 stats_reset.go
-//   - bans:    协议已预留 (worker 侧按 bans_seen 游标查询), Go 侧封禁同步子系统落地后启用
 
 // PulseCursors 上行游标: 声明本节点已应用的状态位点, worker 只回传比它新的部分
 type PulseCursors struct {

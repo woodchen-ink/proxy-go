@@ -41,12 +41,6 @@ func IsD1ConfigComplete() bool {
 	return os.Getenv("D1_SYNC_URL") != "" && os.Getenv("D1_SYNC_TOKEN") != ""
 }
 
-// IsEnabled 检查同步功能是否启用（基于环境变量）
-// 为了兼容旧代码，保留此函数
-func IsConfigComplete() bool {
-	return IsD1ConfigComplete()
-}
-
 // getEnvDefault 获取环境变量，如果不存在则返回默认值
 func getEnvDefault(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {

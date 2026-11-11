@@ -90,13 +90,6 @@ func (pss *PathStatsStorage) Load() (*PathStatsPersistence, error) {
 	}, nil
 }
 
-// Save 保存路径统计数据（废弃 - 现在通过 D1Manager.SyncNow 保存）
-func (pss *PathStatsStorage) Save(persistence *PathStatsPersistence) error {
-	// 不再保存到本地文件，数据通过 D1 sync 保存
-	// 保留方法为了向后兼容
-	return nil
-}
-
 // SavePathStats 保存路径统计数据（数组格式）（废弃）
 func (pss *PathStatsStorage) SavePathStats(pathStats []models.PathMetricsJSON) error {
 	// 不再保存到本地文件

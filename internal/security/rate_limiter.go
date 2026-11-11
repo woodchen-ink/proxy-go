@@ -370,11 +370,6 @@ func (m *IPBanManager) GetBanHistory(limit int) ([]BanRecord, error) {
 	return m.storage.GetHistory(limit)
 }
 
-// GetStorage 获取存储实例（用于S3同步）
-func (m *IPBanManager) GetStorage() *BanStorage {
-	return m.storage
-}
-
 // Stop 停止IP封禁管理器
 func (m *IPBanManager) Stop() {
 	close(m.stopCleanup)

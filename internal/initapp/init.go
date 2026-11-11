@@ -35,18 +35,6 @@ type AppComponents struct {
 	MainRoutes []router.RouteHandler
 }
 
-// Init 初始化应用程序（简化版本，兼容现有代码）
-func Init(configPath string) (*config.ConfigManager, error) {
-	components, err := InitApp(InitOptions{
-		ConfigPath:  configPath,
-		SyncTimeout: 30 * time.Second,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return components.ConfigManager, nil
-}
-
 // InitApp 完整初始化应用程序
 func InitApp(opts InitOptions) (*AppComponents, error) {
 	return InitWithOptions(opts)

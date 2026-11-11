@@ -47,11 +47,6 @@ func StopMetricsStorage() {
 	}
 }
 
-// GetMetricsStorage 获取指标存储服务实例
-func GetMetricsStorage() *MetricsStorage {
-	return metricsStorage
-}
-
 // Pulse 立即执行一次心跳 (上报 + 拉取下行状态: 配置热应用 / 重置统计), 供中控 pulse 指令调用
 func Pulse() error {
 	if metricsStorage == nil {

@@ -28,14 +28,6 @@ func (s *CacheService) GetCacheStats() map[string]cache.CacheStats {
 	}
 }
 
-// GetCacheConfig 获取缓存配置
-func (s *CacheService) GetCacheConfig() map[string]config.CacheConfig {
-	return map[string]config.CacheConfig{
-		"proxy":  s.proxyCache.GetConfig(),
-		"mirror": s.mirrorCache.GetConfig(),
-	}
-}
-
 // UpdateCacheConfig 更新指定类型的缓存配置
 func (s *CacheService) UpdateCacheConfig(cacheType string, config config.CacheConfig) error {
 	var targetCache *cache.CacheManager
