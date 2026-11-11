@@ -7,7 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/components/ui/use-toast"
 import { fetchApi } from "@/lib/api-client"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Download, RefreshCw } from "lucide-react"
+import { Download, RefreshCw, Save, Undo2 } from "lucide-react"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -43,6 +43,8 @@ export default function ConfigPage() {
   const [config, setConfig] = useState<Config | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  // dirty 本地有未保存的修改; 改动只进本地副本, 点「保存」才整份提交
+  const [dirty, setDirty] = useState(false)
   const { toast } = useToast()
 
   // 选中的路径
@@ -90,9 +92,6 @@ export default function ConfigPage() {
   })
   const [deletingExtensionRule, setDeletingExtensionRule] = useState<{path: string, index: number} | null>(null)
 
-  const isInitialLoadRef = useRef(true)
-  const isConfigFromApiRef = useRef(true)
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   // versionRef 当前副本对应的配置版本, 保存时以 If-Match 回传; 中控发现版本已变 (别处改过) 会拒绝整份覆盖
   const versionRef = useRef<string | null>(null)
 
@@ -119,8 +118,8 @@ export default function ConfigPage() {
         }
       }
 
-      isConfigFromApiRef.current = true
       setConfig(data)
+      setDirty(false)
 
       // 仅在当前未选中任何路径时，初始化默认选中项
       if (data.MAP && Object.keys(data.MAP).length > 0) {
@@ -140,8 +139,8 @@ export default function ConfigPage() {
   }, [toast])
 
   const updateConfig = useCallback((newConfig: Config) => {
-    isConfigFromApiRef.current = false
     setConfig(newConfig)
+    setDirty(true)
   }, [])
 
   useEffect(() => {
@@ -149,7 +148,7 @@ export default function ConfigPage() {
   }, [fetchConfig])
 
   const handleSave = useCallback(async () => {
-    if (!config) return
+    if (!config || !dirty) return
 
     setSaving(true)
     try {
@@ -177,10 +176,11 @@ export default function ConfigPage() {
       }
       const saved = await response.json().catch(() => ({}))
       if (saved.version !== undefined) versionRef.current = String(saved.version)
+      setDirty(false)
 
       toast({
         title: "成功",
-        description: "配置已自动保存",
+        description: "配置已保存, 正在下发到各节点",
       })
     } catch (error) {
       toast({
@@ -191,31 +191,21 @@ export default function ConfigPage() {
     } finally {
       setSaving(false)
     }
-  }, [config, toast, fetchConfig])
+  }, [config, dirty, toast, fetchConfig])
 
+  // 有未保存修改时离开页面先确认
   useEffect(() => {
-    if (isInitialLoadRef.current || !config || isConfigFromApiRef.current) {
-      isInitialLoadRef.current = false
-      isConfigFromApiRef.current = false
-      return
-    }
+    if (!dirty) return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener("beforeunload", onBeforeUnload)
+    return () => window.removeEventListener("beforeunload", onBeforeUnload)
+  }, [dirty])
 
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current)
-    }
-
-    // 1.5~3s 随机延迟抖动，避免输入中间状态触发保存
-    const jitterDelay = 1500 + Math.random() * 1500
-    saveTimeoutRef.current = setTimeout(() => {
-      handleSave()
-    }, jitterDelay)
-
-    return () => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current)
-      }
-    }
-  }, [config, handleSave])
+  // 放弃修改: 重新载入中控上的配置
+  const discardChanges = () => {
+    setPathForm(null)
+    fetchConfig()
+  }
 
   const exportConfig = () => {
     if (!config) return
@@ -243,8 +233,8 @@ export default function ConfigPage() {
 
       versionRef.current = response.headers.get("X-Config-Version")
       const pulledConfig = await response.json()
-      isConfigFromApiRef.current = true
       setConfig(pulledConfig)
+      setDirty(false)
 
       toast({
         title: "成功",
@@ -682,10 +672,7 @@ export default function ConfigPage() {
     // 外壳 main 是滚动容器; 配置页锁定在一屏内, 两栏各自内部滚动 (扣除主区上下内边距与移动端顶栏)
     <div className="flex h-[calc(100svh-6rem)] flex-col gap-4 md:h-[calc(100svh-3rem)]">
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
-        <div className="flex items-baseline gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">配置</h1>
-          {saving && <span className="text-sm text-foreground-subtle">正在保存…</span>}
-        </div>
+        <h1 className="text-2xl font-semibold tracking-tight">配置</h1>
         <div className="flex gap-2">
           <Button onClick={exportConfig} variant="outline" size="sm">
             <Download className="h-4 w-4" />
@@ -699,12 +686,28 @@ export default function ConfigPage() {
       </div>
 
       <Tabs defaultValue="paths" className="flex min-h-0 flex-1 flex-col gap-4">
-        <TabsList className="self-start">
-          <TabsTrigger value="paths">路径映射</TabsTrigger>
-          <TabsTrigger value="cache">缓存管理</TabsTrigger>
-          <TabsTrigger value="cdn">CDN 缓存</TabsTrigger>
-          <TabsTrigger value="security">安全策略</TabsTrigger>
-        </TabsList>
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
+          <TabsList>
+            <TabsTrigger value="paths">路径映射</TabsTrigger>
+            <TabsTrigger value="cache">缓存管理</TabsTrigger>
+            <TabsTrigger value="cdn">CDN 缓存</TabsTrigger>
+            <TabsTrigger value="security">安全策略</TabsTrigger>
+          </TabsList>
+          {/* 保存作用于路径映射与安全策略; 缓存管理 / CDN 页签各自即时生效 */}
+          <div className="flex items-center gap-2">
+            {dirty && !saving && <span className="text-sm text-warning">有未保存的修改</span>}
+            {dirty && (
+              <Button onClick={discardChanges} variant="ghost" size="sm" disabled={saving}>
+                <Undo2 className="h-4 w-4" />
+                放弃修改
+              </Button>
+            )}
+            <Button onClick={handleSave} size="sm" disabled={!dirty || saving}>
+              <Save className="h-4 w-4" />
+              {saving ? "保存中…" : "保存"}
+            </Button>
+          </div>
+        </div>
 
         <TabsContent value="paths" className="mt-0 min-h-0 flex-1 data-[state=inactive]:hidden">
           <Card className="grid h-full grid-rows-[minmax(0,12rem)_minmax(0,1fr)] overflow-hidden md:grid-cols-[15rem_minmax(0,1fr)] md:grid-rows-1">
