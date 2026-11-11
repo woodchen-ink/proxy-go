@@ -1,7 +1,7 @@
 github.com/joho/godotenv v1.5.1 h1:7eLL/+HRGLY0ldzfGMeQkb7vMd0as4CfYvUVzLqw0N0=
 github.com/joho/godotenv v1.5.1/go.mod h1:f4LDr5Voq0i2e/R5DDNOoa2zzDfwtkZa6DnEwAbqwq4=
-github.com/woodchen-ink/go-web-utils v1.3.0 h1:qSSRP66uPJKVoLrxOWXV4GJk3+jKgMGKfN9K/HexNak=
-github.com/woodchen-ink/go-web-utils v1.3.0/go.mod h1:hpiT30rd5Egj2LqRwYBqbEtUXjhjh/Qary0S14KCZgw=
+github.com/woodchen-ink/go-web-utils v1.6.2 h1:8BXU1ZWSFw1FBTal9FK8tmP9+Z2fDUkNqnyJ6Uet5eU=
+github.com/woodchen-ink/go-web-utils v1.6.2/go.mod h1:d+L8rZ7xekLnf679XRvfwqpl4M8RCNdWSViaB3GmpnI=
 golang.org/x/net v0.56.0 h1:Rw8j/hFzGvJUZwNBXnAtf5sVDVt+65SK2C7IxCxZt5o=
 golang.org/x/net v0.56.0/go.mod h1:D3Ku6r+V6JROoZK144D2XfMHFcMq/0zSfLelVTCFKec=
 golang.org/x/text v0.40.0 h1:Ub2Z6/xjgF1WrYQz2nuITOEegKFtiIy+rieRJ5lHZKs=

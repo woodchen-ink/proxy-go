@@ -89,6 +89,27 @@ type CompressorConfig struct {
 type SecurityConfig struct {
 	IPBan      IPBanConfig      `json:"IPBan"`      // IP封禁配置
 	RefererBan RefererBanConfig `json:"RefererBan"` // 引用来源 (Referer host) 黑名单, 全局生效
+	// TrustedProxies 除内置 Cloudflare 外的 CDN 入口: 对端落在 CIDRs 内才采信 Header 声明的访客 IP。
+	// nil 表示从未配置, 按 DefaultTrustedProxies 处理 (保留 EdgeOne 旧行为); 显式空列表表示只信 Cloudflare
+	TrustedProxies []TrustedProxyConfig `json:"TrustedProxies,omitempty"`
+}
+
+// TrustedProxyConfig 一个 CDN 入口; CIDRs 为空时仅凭请求头 (可被直连节点的人伪造, 管理端会提示)
+type TrustedProxyConfig struct {
+	Name   string   `json:"Name"`
+	Header string   `json:"Header"`
+	CIDRs  []string `json:"CIDRs"`
+}
+
+// DefaultTrustedProxies 未配置时的入口: EdgeOne 仅凭请求头, 与升级前行为一致, 不让 EO 节点一升级就拿不到访客 IP
+var DefaultTrustedProxies = []TrustedProxyConfig{{Name: "EdgeOne", Header: "EO-Client-IP", CIDRs: []string{}}}
+
+// EffectiveTrustedProxies 实际生效的入口列表
+func (s *SecurityConfig) EffectiveTrustedProxies() []TrustedProxyConfig {
+	if s.TrustedProxies == nil {
+		return DefaultTrustedProxies
+	}
+	return s.TrustedProxies
 }
 
 // RefererBanConfig 引用来源 host 黑白名单

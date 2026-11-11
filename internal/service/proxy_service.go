@@ -8,11 +8,10 @@ import (
 	"net/url"
 	"proxy-go/internal/cache"
 	"proxy-go/internal/config"
+	"proxy-go/internal/security"
 	"proxy-go/internal/utils"
 	"strings"
 	"time"
-
-	"github.com/woodchen-ink/go-web-utils/iputil"
 )
 
 // ProxyRequest 代理请求结构
@@ -200,7 +199,7 @@ func (s *ProxyService) CreateProxyRequest(req *ProxyRequest, targetURL string) (
 		}
 
 		// 设置代理头部
-		clientIP := iputil.GetClientIP(req.OriginalRequest)
+		clientIP := security.ClientIP(req.OriginalRequest)
 		proxyReq.Header.Set("X-Real-IP", clientIP)
 
 		// 设置X-Forwarded-For
@@ -507,6 +506,6 @@ func (s *ProxyService) isConnectionClosed(err error) bool {
 func (s *ProxyService) CreateLogEntry(req *ProxyRequest, statusCode int, duration time.Duration, bytesWritten int64, targetURL string) string {
 	return fmt.Sprintf("[Proxy] %s %s -> %d (%s) %s from %s (target: %s)",
 		req.OriginalRequest.Method, req.OriginalRequest.URL.Path, statusCode,
-		iputil.GetClientIP(req.OriginalRequest), utils.FormatBytes(bytesWritten),
+		security.ClientIP(req.OriginalRequest), utils.FormatBytes(bytesWritten),
 		utils.GetRequestSource(req.OriginalRequest), targetURL)
 }

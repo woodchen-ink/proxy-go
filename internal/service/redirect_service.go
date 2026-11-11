@@ -5,10 +5,9 @@ import (
 	"net/http"
 	"net/url"
 	"proxy-go/internal/config"
+	"proxy-go/internal/security"
 	"proxy-go/internal/utils"
 	"strings"
-
-	"github.com/woodchen-ink/go-web-utils/iputil"
 )
 
 // RedirectResult 重定向处理结果
@@ -101,7 +100,7 @@ func (s *RedirectService) PerformRedirect(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusFound)
 
 	// 记录跳转日志
-	clientIP := iputil.GetClientIP(r)
+	clientIP := security.ClientIP(r)
 	log.Printf("[Redirect] %s %s -> 302 %s (%s) from %s",
 		r.Method, r.URL.Path, targetURL, clientIP, utils.GetRequestSource(r))
 }

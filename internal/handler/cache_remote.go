@@ -6,10 +6,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"proxy-go/internal/security"
 	"strings"
 	"time"
-
-	"github.com/woodchen-ink/go-web-utils/iputil"
 )
 
 // CacheRemoteHandler 节点上的公开清缓存接口 POST /api/cache/clear-url
@@ -64,7 +63,7 @@ func (h *CacheRemoteHandler) ClearCacheByURL(w http.ResponseWriter, r *http.Requ
 
 	resp, err := h.client.Do(req)
 	if err != nil {
-		log.Printf("[RemoteCacheClear] 转发中控失败 ip=%s: %v", iputil.GetClientIP(r), err)
+		log.Printf("[RemoteCacheClear] 转发中控失败 ip=%s: %v", security.ClientIP(r), err)
 		writeRemoteError(w, http.StatusBadGateway, "failed to clear cache")
 		return
 	}

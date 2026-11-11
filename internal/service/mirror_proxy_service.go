@@ -7,11 +7,10 @@ import (
 	"net/http"
 	"net/url"
 	"proxy-go/internal/cache"
+	"proxy-go/internal/security"
 	"proxy-go/internal/utils"
 	"strings"
 	"time"
-
-	"github.com/woodchen-ink/go-web-utils/iputil"
 )
 
 // validateMirrorTarget 阻断 mirror 模式被当作 SSRF 跳板:
@@ -311,6 +310,6 @@ func (s *MirrorProxyService) isConnectionClosed(err error) bool {
 func (s *MirrorProxyService) CreateLogEntry(req *MirrorProxyRequest, statusCode int, duration time.Duration, bytesWritten int64) string {
 	return fmt.Sprintf("| %-6s | %3d | %12s | %15s | %10s | %-30s | %s",
 		req.OriginalRequest.Method, statusCode, duration,
-		iputil.GetClientIP(req.OriginalRequest), utils.FormatBytes(bytesWritten),
+		security.ClientIP(req.OriginalRequest), utils.FormatBytes(bytesWritten),
 		utils.GetRequestSource(req.OriginalRequest), req.ActualURL)
 }

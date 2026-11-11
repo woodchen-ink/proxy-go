@@ -8,10 +8,10 @@ import (
 	"proxy-go/internal/cache"
 	"proxy-go/internal/config"
 	"proxy-go/internal/metrics"
+	"proxy-go/internal/security"
 	"proxy-go/internal/service"
 	"time"
 
-	"github.com/woodchen-ink/go-web-utils/iputil"
 	"golang.org/x/net/http2"
 )
 
@@ -147,7 +147,7 @@ func (h *MirrorProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Print(h.mirrorService.CreateLogEntry(mirrorReq, resp.StatusCode, time.Since(startTime), written))
 
 	// 记录统计信息（缓存未命中）
-	collector.RecordRequestWithCache(r.URL.Path, "/mirror", resp.StatusCode, time.Since(startTime), written, iputil.GetClientIP(r), r, false, 0)
+	collector.RecordRequestWithCache(r.URL.Path, "/mirror", resp.StatusCode, time.Since(startTime), written, security.ClientIP(r), r, false, 0)
 }
 
 // handleCORSPreflight 处理CORS预检请求
@@ -155,7 +155,7 @@ func (h *MirrorProxyHandler) handleCORSPreflight(w http.ResponseWriter, r *http.
 	w.WriteHeader(http.StatusOK)
 	log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | CORS Preflight",
 		r.Method, http.StatusOK, time.Since(startTime),
-		iputil.GetClientIP(r), "-", r.URL.Path)
+		security.ClientIP(r), "-", r.URL.Path)
 }
 
 // handleError 处理错误
@@ -163,7 +163,7 @@ func (h *MirrorProxyHandler) handleError(w http.ResponseWriter, r *http.Request,
 	http.Error(w, message, statusCode)
 	log.Printf("| %-6s | %3d | %12s | %15s | %10s | %-30s | Error: %v",
 		r.Method, statusCode, time.Since(startTime),
-		iputil.GetClientIP(r), "-", r.URL.Path, err)
+		security.ClientIP(r), "-", r.URL.Path, err)
 }
 
 // handleCacheHit 处理缓存命中
@@ -179,11 +179,11 @@ func (h *MirrorProxyHandler) handleCacheHit(w http.ResponseWriter, r *http.Reque
 	if notModified {
 		w.WriteHeader(http.StatusNotModified)
 		// 记录缓存命中（304响应也算命中，节省了带宽）
-		collector.RecordRequestWithCache(r.URL.Path, "/mirror", http.StatusNotModified, time.Since(startTime), 0, iputil.GetClientIP(r), r, true, item.Size)
+		collector.RecordRequestWithCache(r.URL.Path, "/mirror", http.StatusNotModified, time.Since(startTime), 0, security.ClientIP(r), r, true, item.Size)
 		return
 	}
 
 	http.ServeFile(w, r, item.FilePath)
 	// 记录缓存命中，节省的字节数等于文件大小
-	collector.RecordRequestWithCache(r.URL.Path, "/mirror", http.StatusOK, time.Since(startTime), item.Size, iputil.GetClientIP(r), r, true, item.Size)
+	collector.RecordRequestWithCache(r.URL.Path, "/mirror", http.StatusOK, time.Since(startTime), item.Size, security.ClientIP(r), r, true, item.Size)
 }

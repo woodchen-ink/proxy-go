@@ -185,6 +185,18 @@ func initServices(components *AppComponents) error {
 	applyReferer(components.Config)
 	config.RegisterUpdateCallback(applyReferer)
 
+	// 访客 IP 解析的可信 CDN 入口 (Cloudflare 内置), 随配置热更新
+	applyTrusted := func(cfg *config.Config) {
+		list := cfg.Security.EffectiveTrustedProxies()
+		ingresses := make([]security.TrustedIngress, 0, len(list))
+		for _, p := range list {
+			ingresses = append(ingresses, security.TrustedIngress{Header: p.Header, CIDRs: p.CIDRs})
+		}
+		security.SetTrustedIngresses(ingresses)
+	}
+	applyTrusted(components.Config)
+	config.RegisterUpdateCallback(applyTrusted)
+
 
 	log.Printf("[Init] 应用服务初始化完成")
 	return nil

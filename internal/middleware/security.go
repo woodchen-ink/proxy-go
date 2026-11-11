@@ -7,8 +7,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-
-	"github.com/woodchen-ink/go-web-utils/iputil"
 )
 
 // SecurityMiddleware 安全中间件
@@ -50,7 +48,7 @@ func isAdminPath(path string) bool {
 // 顺序: admin 放行 → Referer 黑名单 → IP 封禁; Referer 命中直接 403, 不计入 IP 封禁 404 计数
 func (sm *SecurityMiddleware) IPBanMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		clientIP := iputil.GetClientIP(r)
+		clientIP := security.ClientIP(r)
 
 		// 管理后台路径不受IP封禁限制
 		if isAdminPath(r.URL.Path) {
@@ -97,7 +95,8 @@ func (sm *SecurityMiddleware) IPBanMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(wrapper, r)
 
 		// 如果响应是404，记录错误 (banManager 可能未启用)
-		if wrapper.statusCode == http.StatusNotFound && sm.banManager != nil {
+		// 内网地址说明没解析出访客 (落在反代 / docker 网关上), 封它等于封全站, 不计数
+		if wrapper.statusCode == http.StatusNotFound && sm.banManager != nil && !security.IsInternalIP(clientIP) {
 			sm.banManager.RecordError(clientIP)
 		}
 	})
