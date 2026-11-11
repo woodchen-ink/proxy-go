@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react"
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import { usePolling } from "@/hooks/use-polling"
 import { fetchApi } from "@/lib/api-client"
@@ -10,7 +10,7 @@ import { formatBps, formatBytes, formatCount, formatMs, formatPct } from "@/lib/
 import type { NodeOverviewRow, NodesSeries } from "../node-types"
 import RecentRequests, { type RequestLogRow } from "./RecentRequests"
 
-interface NodeDetailSheetProps {
+interface NodeDetailDialogProps {
   node: NodeOverviewRow | null
   color: string
   speedLabels: string[]
@@ -34,8 +34,8 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
   )
 }
 
-// NodeDetailSheet 单个节点详情: 今日关键指标、近 24 小时带宽、下载速度分布、该节点最近请求
-export default function NodeDetailSheet({ node, color, speedLabels, onClose }: NodeDetailSheetProps) {
+// NodeDetailDialog 单个节点详情 (居中弹窗): 今日关键指标、近 24 小时带宽、下载速度分布、该节点最近请求
+export default function NodeDetailDialog({ node, color, speedLabels, onClose }: NodeDetailDialogProps) {
   const [series, setSeries] = useState<NodesSeries | null>(null)
   const [recent, setRecent] = useState<RequestLogRow[] | null>(null)
   const nodeId = node?.node_id ?? ""
@@ -63,22 +63,22 @@ export default function NodeDetailSheet({ node, color, speedLabels, onClose }: N
   const speedTotal = t ? t.speed.reduce((a, b) => a + b, 0) : 0
 
   return (
-    <Sheet open={!!node} onOpenChange={(open) => !open && onClose()}>
-      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-2xl">
+    <Dialog open={!!node} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="flex max-h-[85vh] w-[calc(100vw-2rem)] max-w-3xl flex-col gap-0 overflow-hidden rounded-2xl bg-popover p-0 shadow-modal">
         {node && t && (
           <>
-            <SheetHeader className="space-y-1 text-left">
-              <SheetTitle className="flex items-center gap-2">
+            <DialogHeader className="shrink-0 space-y-1 border-b px-6 py-4 pr-12 text-left">
+              <DialogTitle className="flex items-center gap-2">
                 <span aria-hidden className="h-3 w-3 rounded-sm" style={{ background: color }} />
                 {node.node_id}
                 {!node.online && <span className="rounded-md bg-destructive-soft px-1.5 py-0.5 text-xs font-normal text-destructive">离线</span>}
-              </SheetTitle>
-              <SheetDescription>
+              </DialogTitle>
+              <DialogDescription>
                 {[node.note, node.hostname, node.version, node.live ? `运行 ${formatUptime(node.live.uptime_sec)}` : ""].filter(Boolean).join(" · ") || "无备注"}
-              </SheetDescription>
-            </SheetHeader>
+              </DialogDescription>
+            </DialogHeader>
 
-            <div className="mt-6 space-y-6">
+            <div className="min-h-0 flex-1 space-y-6 overflow-y-auto overscroll-contain px-6 py-5">
               <section className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
                 <Stat label="实时带宽" value={node.live ? formatBps(node.live.bandwidth_bps) : "-"} hint={node.live ? `${node.live.requests_per_second.toFixed(1)} QPS` : undefined} />
                 <Stat label="今日下发" value={formatBytes(t.bytes)} hint={`${formatCount(t.requests)} 次请求`} />
@@ -154,7 +154,7 @@ export default function NodeDetailSheet({ node, color, speedLabels, onClose }: N
             </div>
           </>
         )}
-      </SheetContent>
-    </Sheet>
+      </DialogContent>
+    </Dialog>
   )
 }

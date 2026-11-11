@@ -17,7 +17,7 @@ import CacheStatsTiles from "./components/CacheStatsTiles"
 import ClusterBadge from "./components/ClusterBadge"
 import NodeCompareTable from "./components/NodeCompareTable"
 import NodeTrafficPanel from "./components/NodeTrafficPanel"
-import NodeDetailSheet from "./components/NodeDetailSheet"
+import NodeDetailDialog from "./components/NodeDetailDialog"
 import RecentRequests, { type RequestLogRow } from "./components/RecentRequests"
 import TopReferers, { type TopReferer } from "./components/TopReferers"
 import { nodeColor, type NodesOverview } from "./node-types"
@@ -180,7 +180,7 @@ export default function DashboardPage() {
         </Tabs>
       )}
 
-      <NodeDetailSheet
+      <NodeDetailDialog
         node={detail}
         color={detail ? colors[detail.node_id] : ""}
         speedLabels={overview?.speed_labels ?? []}
