@@ -15,7 +15,8 @@ import { activeProvider, purge, type PurgeRequest } from './cdn';
 import { readConfig, validateProviders, writeConfig, type CDNProvider } from './config';
 import { registerReleaseRoutes } from './release';
 import { buildRefererDaily, buildTimeseries } from './series';
-import { buildMetrics, buildNodeStats, buildPathStats, loadSources } from './stats';
+import { CLUSTER_ROWS_KEY, buildMetrics, buildNodeStats, buildPathStats, loadSources } from './stats';
+import { cachedJSON, dropCached } from '../lib/read_cache';
 import { buildNodesOverview, buildNodesSeries, type SeriesRange } from './nodes_view';
 
 type Handler = (ctx: Ctx) => Promise<Response>;
@@ -90,11 +91,17 @@ route('GET', '/admin/api/path-stats', async ({ env }) => {
 
 route('GET', '/admin/api/node-stats', async ({ env }) => json(buildNodeStats(await sources(env))));
 
-route('GET', '/admin/api/metrics/timeseries', async ({ env, url }) => json(await buildTimeseries(env, url.searchParams.get('days'))));
+// 时间序列来自 5 分钟心跳, 缓存 60s; 参数进键
+route('GET', '/admin/api/metrics/timeseries', async ({ env, url }) => {
+	const days = url.searchParams.get('days');
+	return json(await cachedJSON(`timeseries-v1:${days}`, 60, () => buildTimeseries(env, days)));
+});
 
-route('GET', '/admin/api/metrics/referer-daily', async ({ env, url }) =>
-	json(await buildRefererDaily(env, url.searchParams.get('days'), url.searchParams.get('top'))),
-);
+route('GET', '/admin/api/metrics/referer-daily', async ({ env, url }) => {
+	const days = url.searchParams.get('days');
+	const top = url.searchParams.get('top');
+	return json(await cachedJSON(`referer-daily-v1:${days}:${top}`, 60, () => buildRefererDaily(env, days, top)));
+});
 
 // resetStats 删全节点 D1 行 + 写重置 marker (同一事务), 再下发 pulse 让各节点立即清自己的内存
 async function resetStats(env: Env, prefix: string, user: string): Promise<Response> {
@@ -106,6 +113,7 @@ async function resetStats(env: Env, prefix: string, user: string): Promise<Respo
 			: env.DB.prepare('DELETE FROM path_stats'),
 	);
 	await env.DB.batch(stmts);
+	await dropCached(CLUSTER_ROWS_KEY);
 	const cmd = await hubStub(env).issueCommand('pulse', { reason: 'stats_reset' }, user);
 	return json({
 		success: true,

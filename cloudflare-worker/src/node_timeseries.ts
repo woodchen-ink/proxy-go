@@ -1,3 +1,5 @@
+import { cachedJSON } from './lib/read_cache';
+
 /**
  * node_timeseries 表读写: 节点整体 (不分路径) 的小时桶
  *
@@ -79,7 +81,12 @@ export async function batchUpsertNodeTimeseries(db: D1Database, points: NodeTime
 }
 
 // loadNodeHours 读 [minHour, maxHour] 的全部节点小时桶; 表尚未建立 (还没有节点跑过迁移 0008) 时返回空
+// D1 行每 5 分钟才更新一次, 在线节点的近期小时另由快照分钟桶补齐, 所以缓存 60s
 export async function loadNodeHours(db: D1Database, minHour: number, maxHour: number): Promise<NodeHourRow[]> {
+	return cachedJSON(`node-hours-v1:${minHour}:${maxHour}`, 60, () => queryNodeHours(db, minHour, maxHour));
+}
+
+async function queryNodeHours(db: D1Database, minHour: number, maxHour: number): Promise<NodeHourRow[]> {
 	try {
 		const res = await db
 			.prepare(`SELECT node_id, ts_hour, ${COUNTER_COLUMNS.join(', ')} FROM node_timeseries WHERE ts_hour BETWEEN ?1 AND ?2`)

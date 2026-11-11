@@ -13,6 +13,10 @@
 import type { Env } from '../env';
 import type { NodeStatus } from '../hub/hub';
 import type { NodeSnapshot, RawPathStat, RequestLog } from '../hub/protocol';
+import { cachedJSON } from '../lib/read_cache';
+
+// CLUSTER_ROWS_KEY D1 累计统计三张表的读缓存键; 只用于离线节点 (离线节点的行不会再变), 重置统计时失效
+export const CLUSTER_ROWS_KEY = 'cluster-rows-v1';
 
 type LiveMap = Record<string, NodeSnapshot & { received_at: number }>;
 
@@ -31,11 +35,14 @@ export interface ClusterSources {
 }
 
 export async function loadSources(env: Env, live: LiveMap, nodes: NodeStatus[]): Promise<ClusterSources> {
-	const [paths, codes, lat] = await env.DB.batch([
-		env.DB.prepare('SELECT * FROM path_stats'),
-		env.DB.prepare('SELECT node_id, status_code, count FROM status_codes'),
-		env.DB.prepare('SELECT node_id, bucket, count FROM latency_distribution'),
-	]);
+	const [paths, codes, lat] = await cachedJSON(CLUSTER_ROWS_KEY, 60, async () => {
+		const res = await env.DB.batch([
+			env.DB.prepare('SELECT * FROM path_stats'),
+			env.DB.prepare('SELECT node_id, status_code, count FROM status_codes'),
+			env.DB.prepare('SELECT node_id, bucket, count FROM latency_distribution'),
+		]);
+		return res.map((r) => ({ results: r.results ?? [] }));
+	});
 	const isLive = (id: string) => id in live;
 	const pathRows = ((paths.results ?? []) as unknown as D1PathRow[]).filter((r) => !isLive(r.node_id));
 	const statusRows = ((codes.results ?? []) as unknown as ClusterSources['statusRows']).filter((r) => !isLive(r.node_id));
