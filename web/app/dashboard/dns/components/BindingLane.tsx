@@ -14,6 +14,7 @@ import {
 
 interface Props {
   binding: Binding;
+  leader?: Binding; // 优选线路跟随的普通 CF 线路
   nodes: NodeOption[];
   busy: boolean;
   onSwitch: (b: Binding, nodeId: string) => void;
@@ -55,6 +56,7 @@ function SyncBadge({ check }: { check: BindingCheck | null }) {
 // BindingLane 一条线路的分流视图: 节点池按优先级横排, 当前承接流量的节点高亮, 点击节点即切换
 export function BindingLane({
   binding: b,
+  leader,
   nodes,
   busy,
   onSwitch,
@@ -76,8 +78,9 @@ export function BindingLane({
           </span>
           <SyncBadge check={check} />
           <span className="text-xs text-muted-foreground">
-            故障切换{b.auto_failover ? "开" : "关"} · 自动切回
-            {b.auto_failback ? "开" : "关"}
+            {leader
+              ? `跟随「${leader.record_line}」线路的 CF 回源`
+              : `故障切换${b.auto_failover ? "开" : "关"} · 自动切回${b.auto_failback ? "开" : "关"}`}
           </span>
         </div>
         <div className="flex items-center gap-1">
@@ -127,55 +130,69 @@ export function BindingLane({
         </div>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-stretch gap-2">
-        {b.pool.map((id, i) => {
-          const n = nodes.find((x) => x.node_id === id);
-          const active = id === b.active_node;
-          const online = !!n?.online;
-          return (
-            <div key={id} className="flex items-center gap-2">
-              {i > 0 && (
-                <ChevronRight
-                  aria-hidden
-                  className="size-4 text-muted-foreground"
-                />
-              )}
-              <button
-                type="button"
-                disabled={busy || active || !b.enabled}
-                onClick={() => onSwitch(b, id)}
-                title={active ? "当前承接流量" : "切换到这个节点"}
-                className={`min-w-[190px] rounded-lg border px-3 py-2.5 text-left transition-colors ${
-                  active
-                    ? "border-foreground bg-foreground/[0.03] ring-1 ring-foreground"
-                    : "hover:border-foreground/40 hover:bg-accent disabled:hover:bg-transparent"
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs text-muted-foreground">
-                    {i === 0 ? "首选" : `备选 ${i}`}
-                  </span>
-                  {active && (
-                    <span className="rounded bg-foreground px-1.5 py-0.5 text-[10px] text-background">
-                      当前
-                    </span>
-                  )}
-                </div>
-                <div className="mt-1 flex items-center gap-1.5 font-mono text-sm">
-                  <span
+      {leader ? (
+        <div className="mt-3 flex items-center gap-1.5 text-sm">
+          <span className="text-muted-foreground">当前回源</span>
+          <span
+            aria-hidden
+            className={`size-2 shrink-0 rounded-full ${nodes.find((x) => x.node_id === b.active_node)?.online ? "bg-success" : "bg-destructive"}`}
+          />
+          <span className="font-mono">{b.active_node || "-"}</span>
+          <span className="text-xs text-muted-foreground">
+            · 切换节点请到「{leader.record_line}」线路
+          </span>
+        </div>
+      ) : (
+        <div className="mt-4 flex flex-wrap items-stretch gap-2">
+          {b.pool.map((id, i) => {
+            const n = nodes.find((x) => x.node_id === id);
+            const active = id === b.active_node;
+            const online = !!n?.online;
+            return (
+              <div key={id} className="flex items-center gap-2">
+                {i > 0 && (
+                  <ChevronRight
                     aria-hidden
-                    className={`size-2 shrink-0 rounded-full ${online ? "bg-success" : "bg-destructive"}`}
+                    className="size-4 text-muted-foreground"
                   />
-                  {id}
-                </div>
-                <div className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
-                  {bindingTarget(b.kind, n) || "未登记"}
-                </div>
-              </button>
-            </div>
-          );
-        })}
-      </div>
+                )}
+                <button
+                  type="button"
+                  disabled={busy || active || !b.enabled}
+                  onClick={() => onSwitch(b, id)}
+                  title={active ? "当前承接流量" : "切换到这个节点"}
+                  className={`min-w-[190px] rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                    active
+                      ? "border-foreground bg-foreground/[0.03] ring-1 ring-foreground"
+                      : "hover:border-foreground/40 hover:bg-accent disabled:hover:bg-transparent"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-muted-foreground">
+                      {i === 0 ? "首选" : `备选 ${i}`}
+                    </span>
+                    {active && (
+                      <span className="rounded bg-foreground px-1.5 py-0.5 text-[10px] text-background">
+                        当前
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 flex items-center gap-1.5 font-mono text-sm">
+                    <span
+                      aria-hidden
+                      className={`size-2 shrink-0 rounded-full ${online ? "bg-success" : "bg-destructive"}`}
+                    />
+                    {id}
+                  </div>
+                  <div className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
+                    {bindingTarget(b.kind, n) || "未登记"}
+                  </div>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
         {isEO ? (

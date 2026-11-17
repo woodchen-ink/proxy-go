@@ -4,6 +4,7 @@ import { Globe, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+  cfLeader,
   LINES,
   type Binding,
   type Credential,
@@ -115,6 +116,7 @@ export function DomainCard({
           <BindingLane
             key={b.id}
             binding={b}
+            leader={b.dnspod_target ? cfLeader(lines, b.id) : undefined}
             nodes={nodes}
             busy={busy === b.id}
             onSwitch={onSwitch}

@@ -120,3 +120,10 @@ export async function readError(res: Response): Promise<string> {
   const data = await res.json().catch(() => ({}));
   return data.error || `HTTP ${res.status}`;
 }
+
+// cfLeader 同域名下的普通 CF 回源线路; 优选线路没有自己的节点池, 跟随它的 CF 回源
+export function cfLeader(lines: Binding[], excludeId = 0): Binding | undefined {
+  return lines.find(
+    (l) => l.kind === "cf_dnspod" && !l.dnspod_target && l.id !== excludeId,
+  );
+}

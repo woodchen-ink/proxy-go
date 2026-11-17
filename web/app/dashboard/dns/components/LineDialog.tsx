@@ -16,6 +16,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { fetchApi } from "@/lib/api-client";
 import {
   bindingTarget,
+  cfLeader,
   kindOf,
   LINES,
   METHOD_HINT,
@@ -82,6 +83,9 @@ export function LineDialog({
 
   const kind = kindOf(form.method);
   const shareCF = kind === "cf_dnspod" && !!cfSibling;
+  // 优选线路跟随普通 CF 线路时不设节点池与自动切换
+  const leader =
+    form.method === "cf_pref" ? cfLeader(lines, binding?.id) : undefined;
   // CF 线路共用回源: 新加的 CF 线路沿用已有 CF 线路的节点池
   useEffect(() => {
     if (open && !binding && shareCF && cfSibling)
@@ -133,7 +137,7 @@ export function LineDialog({
           kind,
           record_line: form.record_line,
           dnspod_target: form.method === "cf_pref" ? form.dnspod_target : "",
-          pool: form.pool,
+          pool: leader ? leader.pool : form.pool,
           active_node: binding?.active_node,
           auto_failover: form.auto_failover,
           auto_failback: form.auto_failback,
@@ -202,36 +206,46 @@ export function LineDialog({
             </div>
           )}
 
-          <div className="space-y-2 sm:col-span-2">
-            <Label>节点池 (按优先级排序, 第一个是首选)</Label>
-            {shareCF && (
-              <p className="text-xs text-foreground-muted">
-                与「{cfSibling!.record_line}」线路共用 CF 回源,
-                节点池、当前节点和自动切换开关会同步, 切换时一起切。
-              </p>
-            )}
-            <PoolEditor
-              pool={form.pool}
-              nodes={nodes}
-              target={target}
-              onChange={(p) => set("pool", p)}
-            />
-          </div>
+          {leader ? (
+            <p className="rounded-md border bg-muted/40 px-3 py-2 text-sm text-foreground-muted sm:col-span-2">
+              跟随「{leader.record_line}」线路的 CF 回源, 不单独设节点池:
+              那条线路切到哪个节点, 访客经优选 IP 进 CF 后就回源到哪个节点 (当前{" "}
+              {leader.active_node || "-"})。
+            </p>
+          ) : (
+            <>
+              <div className="space-y-2 sm:col-span-2">
+                <Label>节点池 (按优先级排序, 第一个是首选)</Label>
+                {shareCF && (
+                  <p className="text-xs text-foreground-muted">
+                    与「{cfSibling!.record_line}」线路共用 CF 回源,
+                    节点池、当前节点和自动切换开关会同步, 切换时一起切。
+                  </p>
+                )}
+                <PoolEditor
+                  pool={form.pool}
+                  nodes={nodes}
+                  target={target}
+                  onChange={(p) => set("pool", p)}
+                />
+              </div>
 
-          <label className="flex items-center gap-2 text-sm">
-            <Switch
-              checked={form.auto_failover}
-              onCheckedChange={(v) => set("auto_failover", v)}
-            />
-            节点故障自动切换
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <Switch
-              checked={form.auto_failback}
-              onCheckedChange={(v) => set("auto_failback", v)}
-            />
-            首选节点恢复后自动切回
-          </label>
+              <label className="flex items-center gap-2 text-sm">
+                <Switch
+                  checked={form.auto_failover}
+                  onCheckedChange={(v) => set("auto_failover", v)}
+                />
+                节点故障自动切换
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <Switch
+                  checked={form.auto_failback}
+                  onCheckedChange={(v) => set("auto_failback", v)}
+                />
+                首选节点恢复后自动切回
+              </label>
+            </>
+          )}
           <label className="flex items-center gap-2 text-sm">
             <Switch
               checked={form.enabled}
@@ -256,7 +270,7 @@ export function LineDialog({
             onClick={save}
             disabled={
               saving ||
-              form.pool.length === 0 ||
+              (!leader && form.pool.length === 0) ||
               (form.method === "cf_pref" && !form.dnspod_target.trim())
             }
           >

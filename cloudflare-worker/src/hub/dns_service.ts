@@ -225,6 +225,11 @@ export class DnsService {
 		if (dnspodTarget && !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(dnspodTarget)) throw new Error('优选域名格式不对');
 		if (dnspodTarget === hostname) throw new Error('优选域名不能是访问域名本身');
 		this.assertNoConflict(input.id ?? 0, kind, hostname, recordLine);
+		// 优选线路没有自己的节点池: 同域名有普通 CF 线路时, 跟随它的 CF 回源 (节点池 / 当前节点 / 自动切换都取它的)
+		const leader = dnspodTarget ? this.cfLeader(hostname, input.id ?? 0) : undefined;
+		if (leader) {
+			input = { ...input, pool: leader.pool, active_node: leader.active_node, auto_failover: leader.auto_failover, auto_failback: leader.auto_failback };
+		}
 		const pool = [...new Set((input.pool ?? []).map((s) => s.trim()).filter(Boolean))];
 		if (pool.length === 0) throw new Error('节点池不能为空');
 		for (const id of pool) {
@@ -336,6 +341,11 @@ export class DnsService {
 		}
 		this.sql.exec('UPDATE dns_bindings SET last_check = ? WHERE id = ?', JSON.stringify(result), id);
 		return result;
+	}
+
+	// cfLeader 同域名下的普通 CF 回源线路 (没填优选域名), 优选线路跟随它
+	cfLeader(hostname: string, excludeId = 0): Binding | undefined {
+		return this.listBindings().find((o) => o.kind === 'cf_dnspod' && !o.dnspod_target && o.hostname === hostname && o.id !== excludeId);
 	}
 
 	// cfGroup 同域名下全部 CF 线路 (共用一份 CF SaaS 回源, 因此共用节点池与当前节点); 非 CF 线路只有自己
