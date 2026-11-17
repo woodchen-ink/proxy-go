@@ -50,6 +50,7 @@ const EMPTY = {
   dnspod_domain: "",
   record_name: "@",
   record_line: "默认",
+  dnspod_target: "",
   pool: [] as string[],
   auto_failover: true,
   auto_failback: true,
@@ -361,6 +362,16 @@ export function BindingDialog({
                   </SelectContent>
                 </Select>
               </div>
+              {isCF && (
+                <div className="space-y-1 sm:col-span-2">
+                  <Label>DNSPod 记录值 (优选域名, 可选)</Label>
+                  <Input
+                    value={form.dnspod_target}
+                    onChange={(e) => set("dnspod_target", e.target.value)}
+                    placeholder="留空 = CNAME 到节点回源主机名; 填优选域名则固定 CNAME 过去, 切换只改 CF 回源"
+                  />
+                </div>
+              )}
             </>
           )}
 

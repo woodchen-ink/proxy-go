@@ -44,6 +44,7 @@ export interface BindingInput {
 	dnspod_domain: string;
 	record_name?: string;
 	record_line?: string;
+	dnspod_target?: string;
 	pool: string[];
 	active_node?: string;
 	auto_failover?: boolean;
@@ -199,6 +200,9 @@ export class DnsService {
 		const dnspodDomain = usesDnspodLine(kind) ? (input.dnspod_domain ?? '').trim().toLowerCase() : '';
 		const recordName = (input.record_name ?? '@').trim() || '@';
 		const recordLine = usesDnspodLine(kind) ? (input.record_line ?? '默认').trim() || '默认' : '默认';
+		const dnspodTarget = kind === 'cf_dnspod' ? (input.dnspod_target ?? '').trim().toLowerCase().replace(/\.$/, '') : '';
+		if (dnspodTarget && !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(dnspodTarget)) throw new Error('优选域名格式不对');
+		if (dnspodTarget === hostname) throw new Error('优选域名不能是访问域名本身');
 		this.assertNoConflict(input.id ?? 0, kind, hostname, dnspodDomain, recordName, recordLine);
 		const pool = [...new Set((input.pool ?? []).map((s) => s.trim()).filter(Boolean))];
 		if (pool.length === 0) throw new Error('节点池不能为空');
@@ -218,6 +222,7 @@ export class DnsService {
 			dnspodDomain,
 			recordName,
 			recordLine,
+			dnspodTarget,
 			JSON.stringify(pool),
 			active,
 			input.auto_failover === false ? 0 : 1,
@@ -228,10 +233,10 @@ export class DnsService {
 		if (input.id) {
 			// 改了类型或线路, 旧的巡检结果描述的是另一处解析, 清掉等下次检查
 			const old = this.getBinding(input.id);
-			if (old.kind !== kind || old.record_line !== recordLine) this.sql.exec("UPDATE dns_bindings SET last_check = '' WHERE id = ?", input.id);
+			if (old.kind !== kind || old.record_line !== recordLine || old.dnspod_target !== dnspodTarget) this.sql.exec("UPDATE dns_bindings SET last_check = '' WHERE id = ?", input.id);
 			this.sql.exec(
 				`UPDATE dns_bindings SET kind=?, hostname=?, enabled=?, cf_credential_id=?, saas_zone_id=?, saas_zone_name=?,
-				 dnspod_credential_id=?, dnspod_domain=?, record_name=?, record_line=?, pool=?, active_node=?,
+				 dnspod_credential_id=?, dnspod_domain=?, record_name=?, record_line=?, dnspod_target=?, pool=?, active_node=?,
 				 auto_failover=?, auto_failback=?, note=?, updated_at=? WHERE id=?`,
 				...args,
 				input.id,
@@ -242,8 +247,8 @@ export class DnsService {
 			this.sql
 				.exec(
 					`INSERT INTO dns_bindings (kind, hostname, enabled, cf_credential_id, saas_zone_id, saas_zone_name,
-					 dnspod_credential_id, dnspod_domain, record_name, record_line, pool, active_node,
-					 auto_failover, auto_failback, note, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
+					 dnspod_credential_id, dnspod_domain, record_name, record_line, dnspod_target, pool, active_node,
+					 auto_failover, auto_failback, note, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
 					...args,
 				)
 				.one().id,
@@ -282,7 +287,9 @@ export class DnsService {
 					? `[EdgeOne] 期望回源 ${result.expected} (${b.active_node}), 实际 ${result.eo_origin || '-'}`
 					: b.kind === 'dnspod_ip'
 						? `[${b.record_line} IP] 期望解析到 ${result.expected} (${b.active_node}), 实际 ${result.dnspod_value || '-'}`
-						: `期望指向 ${result.expected} (${b.active_node}), 实际 CF=${result.cf_origin || '-'} DNSPod=${result.dnspod_value || '-'}`,
+						: b.dnspod_target
+							? `期望 CF 回源 ${result.expected} (${b.active_node}) + DNSPod CNAME ${b.dnspod_target}, 实际 CF=${result.cf_origin || '-'} DNSPod=${result.dnspod_value || '-'}`
+							: `期望指向 ${result.expected} (${b.active_node}), 实际 CF=${result.cf_origin || '-'} DNSPod=${result.dnspod_value || '-'}`,
 				notifyDrift,
 			);
 		}

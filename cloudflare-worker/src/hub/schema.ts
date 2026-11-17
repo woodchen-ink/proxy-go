@@ -124,6 +124,7 @@ const COLUMNS: [table: string, column: string, ddl: string][] = [
 	['nodes', 'dokploy_server_id', 'INTEGER NOT NULL DEFAULT 0'],
 	['nodes', 'dokploy_app_id', "TEXT NOT NULL DEFAULT ''"],
 	['nodes', 'dokploy_app_type', "TEXT NOT NULL DEFAULT 'application'"], // application | compose
+	['dns_bindings', 'dnspod_target', "TEXT NOT NULL DEFAULT ''"], // cf_dnspod 的 DNSPod 固定 CNAME (优选域名), 空 = 跟随回源主机名
 ];
 
 function addColumns(sql: SqlStorage): void {

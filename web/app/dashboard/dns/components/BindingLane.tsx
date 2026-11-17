@@ -185,7 +185,7 @@ export function BindingLane({
               <span className="font-mono">{check?.cf_origin || "-"}</span>
             </span>
             <span>
-              DNSPod{" "}
+              DNSPod{b.dnspod_target ? " (优选)" : ""}{" "}
               <span className="font-mono">{check?.dnspod_value || "-"}</span>
             </span>
           </>

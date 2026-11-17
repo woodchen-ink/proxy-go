@@ -11,6 +11,7 @@ export interface Credential {
 export interface BindingCheck {
   at: number;
   expected: string;
+  dnspod_expected?: string;
   cf_origin: string;
   cf_status: string;
   cf_error: string;
@@ -33,9 +34,12 @@ export function bindingTarget(kind: BindingKind, n?: NodeOption): string {
 }
 
 // bindingTitle 线路标题, 如「境内线路 · DNSPod 纯 IP」
-export function bindingTitle(b: Pick<Binding, "kind" | "record_line">): string {
+export function bindingTitle(
+  b: Pick<Binding, "kind" | "record_line" | "dnspod_target">,
+): string {
   if (b.kind === "edgeone") return "境内线路 · EdgeOne";
   if (b.kind === "dnspod_ip") return `${b.record_line}线路 · DNSPod 纯 IP`;
+  if (b.dnspod_target) return `${b.record_line}线路 · CF SaaS + 优选 CNAME`;
   return `${b.record_line}线路 · CF SaaS + DNSPod`;
 }
 
@@ -51,6 +55,7 @@ export interface Binding {
   dnspod_domain: string;
   record_name: string;
   record_line: string;
+  dnspod_target: string;
   pool: string[];
   active_node: string;
   auto_failover: boolean;

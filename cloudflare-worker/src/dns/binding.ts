@@ -4,6 +4,8 @@
  * 切换节点就是把两处同时改成目标节点的回源主机名 (如 rn-22dc3.20200511.xyz):
  *   1. SaaS 区自定义主机名的 custom_origin_server
  *   2. DNSPod 上该域名指定线路 (默认「默认」) 的 CNAME
+ * 填了 dnspod_target (优选域名) 时 DNSPod 记录固定 CNAME 到它, 切换只改 CF 回源: CF SaaS 按 SNI 认自定义主机名,
+ * 访客经优选 IP 进 CF 后仍按 custom_origin_server 回源到当前节点。
  * kind=edgeone 时改的是 EdgeOne 加速域名的源站 (OriginInfo.Origin = 节点 IP), 凭据复用腾讯云 API 密钥,
  * EdgeOne 站点 ID 存在 saas_zone_id 列。kind=dnspod_ip 时只改 DNSPod 指定线路的记录, 直接解析到节点 IP (A / AAAA),
  * 不经 CF / EdgeOne。各类绑定互相独立, 同一访问域名可以各有一条 (dnspod_ip 按线路各一条)。
@@ -46,6 +48,7 @@ export interface Binding {
 	dnspod_domain: string;
 	record_name: string;
 	record_line: string;
+	dnspod_target: string; // cf_dnspod: DNSPod 固定 CNAME 目标 (优选域名), 空 = 跟随节点回源主机名
 	pool: string[]; // node_id 有序列表, pool[0] 为首选节点
 	active_node: string;
 	auto_failover: boolean;
@@ -59,6 +62,7 @@ export interface Binding {
 export interface BindingCheck {
 	at: number;
 	expected: string; // active_node 的回源主机名 (IP 类绑定为节点出口 IP)
+	dnspod_expected: string; // DNSPod 记录应有的值: 固定 CNAME 时为优选域名, 否则同 expected
 	cf_origin: string;
 	cf_status: string;
 	cf_error: string;
@@ -96,6 +100,7 @@ export function rowToBinding(r: Record<string, SqlStorageValue>): Binding {
 		dnspod_domain: String(r.dnspod_domain),
 		record_name: String(r.record_name),
 		record_line: String(r.record_line),
+		dnspod_target: String(r.dnspod_target ?? ''),
 		pool: safeJSON<string[]>(String(r.pool), []),
 		active_node: String(r.active_node),
 		auto_failover: Number(r.auto_failover) === 1,
@@ -147,10 +152,11 @@ function findLineRecord(records: dnspod.DnspodRecord[], b: Binding): dnspod.Dnsp
 	return records.filter((r) => r.name === b.record_name && r.line === b.record_line && (r.type === 'CNAME' || r.type === 'A' || r.type === 'AAAA'));
 }
 
-function emptyCheck(expected: string): BindingCheck {
+function emptyCheck(expected: string, dnspodExpected = expected): BindingCheck {
 	return {
 		at: Date.now(),
 		expected,
+		dnspod_expected: dnspodExpected,
 		cf_origin: '',
 		cf_status: '',
 		cf_error: '',
@@ -183,7 +189,7 @@ async function readDnspodLine(b: Binding, creds: Credentials, check: BindingChec
 
 export async function inspectBinding(b: Binding, creds: Credentials, expected: string, nodesByTarget: Map<string, string>): Promise<BindingCheck> {
 	if (b.kind === 'edgeone') return inspectEdgeOne(b, creds, expected, nodesByTarget);
-	const check = emptyCheck(expected);
+	const check = emptyCheck(expected, b.dnspod_target || expected);
 	if (b.kind === 'dnspod_ip') {
 		await readDnspodLine(b, creds, check);
 		check.consistent = !check.dnspod_error && !!expected && check.dnspod_value === expected;
@@ -206,8 +212,10 @@ export async function inspectBinding(b: Binding, creds: Credentials, expected: s
 	await readDnspodLine(b, creds, check);
 
 	const readOK = !check.cf_error && !check.dnspod_error;
-	check.consistent = readOK && !!expected && check.cf_origin === expected && check.dnspod_value === expected;
-	if (readOK && check.cf_origin === check.dnspod_value) check.actual_node = nodesByTarget.get(check.cf_origin) ?? '';
+	check.consistent = readOK && !!expected && check.cf_origin === expected && check.dnspod_value === check.dnspod_expected;
+	// 固定 CNAME 时 DNSPod 不指向节点, 实际节点只看 CF 回源; 否则两处一致才算得出
+	const sameTarget = b.dnspod_target ? check.dnspod_value === b.dnspod_target : check.cf_origin === check.dnspod_value;
+	if (readOK && sameTarget) check.actual_node = nodesByTarget.get(check.cf_origin) ?? '';
 	return check;
 }
 
@@ -273,7 +281,7 @@ export async function switchBinding(b: Binding, creds: Credentials, origin: stri
 		result.errors.push(`CF 回源: ${errText(e)}`);
 	}
 
-	await switchDnspodLine(b, creds, 'CNAME', origin, result);
+	await switchDnspodLine(b, creds, 'CNAME', b.dnspod_target || origin, result);
 	return result;
 }
 
