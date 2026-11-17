@@ -409,6 +409,10 @@ route('GET', '/admin/api/dns/suggest-origins', async ({ env, url }) =>
 		origins: await dns(env, 'suggestOrigins', { credential_id: Number(url.searchParams.get('credential_id')), zone_id: url.searchParams.get('zone_id') ?? '' }),
 	}),
 );
+route('GET', '/admin/api/dns/domains', async ({ env }) => json({ domains: await dns(env, 'listDomains') }));
+route('POST', '/admin/api/dns/domains', async ({ env, request }) => json(await dns(env, 'saveDomain', await readJSON(request))));
+route('DELETE', '/admin/api/dns/domains/(\\d+)', async ({ env, params }) => json(await dns(env, 'deleteDomain', { id: Number(params[0]) })));
+route('POST', '/admin/api/dns/bindings/(\\d+)/sync', async ({ env, params, user }) => json(await dns(env, 'sync', { id: Number(params[0]), user })));
 route('GET', '/admin/api/dns/bindings', async ({ env }) => json({ bindings: await dns(env, 'listBindings') }));
 route('POST', '/admin/api/dns/bindings', async ({ env, request }) => json(await dns(env, 'saveBinding', await readJSON(request))));
 route('DELETE', '/admin/api/dns/bindings/(\\d+)', async ({ env, params }) => json(await dns(env, 'deleteBinding', { id: Number(params[0]) })));

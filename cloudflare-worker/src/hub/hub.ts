@@ -451,6 +451,13 @@ export class Hub extends DurableObject<Env> implements HubAPI {
 				return d.discover(Number(args.id));
 			case 'suggestOrigins':
 				return d.suggestOrigins(Number(args.credential_id), String(args.zone_id));
+			case 'listDomains':
+				return d.listDomains();
+			case 'saveDomain':
+				return { id: d.saveDomain(args as never) };
+			case 'deleteDomain':
+				d.deleteDomain(Number(args.id));
+				return { ok: true };
 			case 'listBindings':
 				return d.listBindings();
 			case 'saveBinding':
@@ -462,6 +469,11 @@ export class Hub extends DurableObject<Env> implements HubAPI {
 				return d.check(Number(args.id));
 			case 'switch':
 				return d.switchTo(Number(args.id), String(args.node_id), 'switch', `由 ${String(args.user ?? 'admin')} 手动切换`);
+			case 'sync': {
+				const b = d.getBinding(Number(args.id));
+				if (!b.active_node) throw new Error('线路还没有当前节点');
+				return d.switchTo(b.id, b.active_node, 'sync', `由 ${String(args.user ?? 'admin')} 同步到线上`);
+			}
 			default:
 				throw new Error(`unknown dns op: ${op}`);
 		}

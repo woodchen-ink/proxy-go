@@ -243,6 +243,14 @@ export interface SwitchResult {
 	errors: string[];
 }
 
+// switchSucceeded 切换是否算成功 (决定是否更新 active_node): 看真正决定流量去向的那一处。
+// CF 线路看 CF 回源 (填了优选域名时 DNSPod 本来就不动, 同组其他线路的 DNSPod 成功也不代表流量切走了)
+export function switchSucceeded(kind: BindingKind, r: SwitchResult): boolean {
+	const ok = (s: SwitchResult['cf']) => s === 'updated' || s === 'unchanged';
+	if (kind === 'cf_dnspod') return ok(r.cf);
+	return kind === 'edgeone' ? ok(r.eo) : ok(r.dnspod);
+}
+
 // switchBinding 把各处都改成 origin; 每处独立执行, 一处失败不阻止另一处 (半切总比不切好, 结果如实回报)
 export async function switchBinding(b: Binding, creds: Credentials, origin: string): Promise<SwitchResult> {
 	if (b.kind === 'edgeone') {
@@ -281,6 +289,13 @@ export async function switchBinding(b: Binding, creds: Credentials, origin: stri
 		result.errors.push(`CF 回源: ${errText(e)}`);
 	}
 
+	await switchDnspodLine(b, creds, 'CNAME', b.dnspod_target || origin, result);
+	return result;
+}
+
+// switchDnspodOnly 只改 DNSPod 线路记录 (同域名另一条 CF 线路已改过共用的 CF 回源时用)
+export async function switchDnspodOnly(b: Binding, creds: Credentials, origin: string): Promise<SwitchResult> {
+	const result: SwitchResult = { cf: 'n/a', dnspod: 'unchanged', eo: 'n/a', errors: [] };
 	await switchDnspodLine(b, creds, 'CNAME', b.dnspod_target || origin, result);
 	return result;
 }

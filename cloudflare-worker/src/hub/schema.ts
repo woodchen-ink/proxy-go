@@ -5,6 +5,7 @@
  * 强一致、与 WS 连接同进程, 不需要跨服务事务。语句全部 idempotent, 每次 DO 冷启动执行一遍。
  * 加列只能追加 ALTER (用 addColumn 判重), 不改既有语句。
  */
+import { DOMAINS_DDL, seedDomains } from './dns_domains';
 
 const STATEMENTS = [
 	`CREATE TABLE IF NOT EXISTS nodes (
@@ -138,6 +139,8 @@ export function migrate(sql: SqlStorage): void {
 	for (const stmt of STATEMENTS) sql.exec(stmt);
 	rebuildBindings(sql);
 	addColumns(sql);
+	sql.exec(DOMAINS_DDL);
+	seedDomains(sql);
 }
 
 // rebuildBindings 把旧表重建为 v3。SQLite 不能改约束, 只能重建; 按建表语句判断版本:

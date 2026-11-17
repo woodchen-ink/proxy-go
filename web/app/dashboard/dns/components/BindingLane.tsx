@@ -1,11 +1,12 @@
 "use client";
 
-import { ChevronRight, Pencil, RefreshCw, Trash2 } from "lucide-react";
+import { ChevronRight, Pencil, RefreshCw, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatTime } from "@/lib/format";
 import {
   bindingTarget,
-  bindingTitle,
+  METHOD_LABEL,
+  methodOf,
   type Binding,
   type BindingCheck,
   type NodeOption,
@@ -17,6 +18,7 @@ interface Props {
   busy: boolean;
   onSwitch: (b: Binding, nodeId: string) => void;
   onCheck: (b: Binding) => void;
+  onSync: (b: Binding) => void;
   onEdit: (b: Binding) => void;
   onDelete: (b: Binding) => void;
 }
@@ -57,6 +59,7 @@ export function BindingLane({
   busy,
   onSwitch,
   onCheck,
+  onSync,
   onEdit,
   onDelete,
 }: Props) {
@@ -68,7 +71,9 @@ export function BindingLane({
     <div className={`rounded-lg border p-4 ${b.enabled ? "" : "opacity-60"}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-medium">{bindingTitle(b)}</span>
+          <span className="text-sm font-medium">
+            {b.record_line}线路 · {METHOD_LABEL[methodOf(b)]}
+          </span>
           <SyncBadge check={check} />
           <span className="text-xs text-muted-foreground">
             故障切换{b.auto_failover ? "开" : "关"} · 自动切回
@@ -76,6 +81,19 @@ export function BindingLane({
           </span>
         </div>
         <div className="flex items-center gap-1">
+          {!check?.consistent && b.enabled && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8"
+              disabled={busy}
+              onClick={() => onSync(b)}
+              title="把当前节点重新写到线上解析"
+            >
+              <Upload className="mr-1.5 size-3.5" />
+              同步到线上
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"
@@ -185,7 +203,7 @@ export function BindingLane({
               <span className="font-mono">{check?.cf_origin || "-"}</span>
             </span>
             <span>
-              DNSPod{b.dnspod_target ? " (优选)" : ""}{" "}
+              DNSPod {b.record_line}{" "}
               <span className="font-mono">{check?.dnspod_value || "-"}</span>
             </span>
           </>

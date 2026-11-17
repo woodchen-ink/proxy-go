@@ -1,39 +1,53 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Globe, Plus, RefreshCw } from "lucide-react";
+import { Plus, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { PageHeader } from "@/components/page-header";
 import { useToast } from "@/components/ui/use-toast";
 import { fetchApi } from "@/lib/api-client";
-import { BindingDialog } from "./components/BindingDialog";
-import { BindingLane } from "./components/BindingLane";
 import { CredentialsCard } from "./components/CredentialsCard";
+import { DomainCard } from "./components/DomainCard";
+import { DomainDialog } from "./components/DomainDialog";
+import { LineDialog } from "./components/LineDialog";
 import {
+  LINES,
+  readError,
   type Binding,
   type Credential,
+  type Domain,
   type NodeOption,
-  readError,
 } from "./types";
 
-// DnsPage 按访问域名分组的分流视图; 每个域名下每条线路 (CF + DNSPod / EdgeOne) 一行
+type LineEdit = { domain: Domain; binding: Binding | null } | null;
+
+// DnsPage 按域名组织: 域名上配一次账号, 其下 默认 / 境内 / 境外 每条线路一行, 点节点即切换
 export default function DnsPage() {
   const { toast } = useToast();
   const [credentials, setCredentials] = useState<Credential[]>([]);
+  const [domains, setDomains] = useState<Domain[]>([]);
   const [bindings, setBindings] = useState<Binding[]>([]);
   const [nodes, setNodes] = useState<NodeOption[]>([]);
-  const [editing, setEditing] = useState<Binding | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [domainEdit, setDomainEdit] = useState<{
+    open: boolean;
+    domain: Domain | null;
+  }>({
+    open: false,
+    domain: null,
+  });
+  const [lineEdit, setLineEdit] = useState<LineEdit>(null);
   const [busy, setBusy] = useState<number | null>(null);
 
   const load = useCallback(async () => {
-    const [c, b, n] = await Promise.all([
+    const [c, d, b, n] = await Promise.all([
       fetchApi("/admin/api/dns/credentials").then((r) => r.json()),
+      fetchApi("/admin/api/dns/domains").then((r) => r.json()),
       fetchApi("/admin/api/dns/bindings").then((r) => r.json()),
       fetchApi("/admin/api/hub/nodes").then((r) => r.json()),
     ]);
     setCredentials(c.credentials || []);
+    setDomains(d.domains || []);
     setBindings(b.bindings || []);
     setNodes(n.nodes || []);
   }, []);
@@ -44,23 +58,23 @@ export default function DnsPage() {
     return () => clearInterval(timer);
   }, [load]);
 
-  const groups = useMemo(() => {
+  // 每个域名的线路按 默认 → 境内 → 境外 排
+  const linesOf = useMemo(() => {
     const m = new Map<string, Binding[]>();
     for (const b of bindings)
       m.set(b.hostname, [...(m.get(b.hostname) || []), b]);
-    // 按线路排: 默认 → 境外 → 境内 (EdgeOne 只承接境内)
     const rank = (b: Binding) =>
-      b.kind === "edgeone" ? 2 : ["默认", "境外", "境内"].indexOf(b.record_line);
+      LINES.indexOf(b.record_line as (typeof LINES)[number]);
     for (const list of m.values()) list.sort((a, b) => rank(a) - rank(b));
-    return [...m.entries()];
+    return m;
   }, [bindings]);
 
   const run = async (
-    b: Binding,
+    id: number,
     fn: () => Promise<Response>,
     onOK?: (data: Record<string, unknown>) => void,
   ) => {
-    setBusy(b.id);
+    setBusy(id);
     try {
       const res = await fn();
       if (!res.ok) throw new Error(await readError(res));
@@ -77,118 +91,150 @@ export default function DnsPage() {
     }
   };
 
-  const check = (b: Binding) =>
-    run(b, () =>
-      fetchApi(`/admin/api/dns/bindings/${b.id}/check`, { method: "POST" }),
-    );
+  const post = (url: string, body?: unknown) =>
+    fetchApi(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
 
-  const switchTo = (b: Binding, nodeId: string) => {
-    const n = nodes.find((x) => x.node_id === nodeId);
-    const msg =
-      b.kind === "edgeone"
-        ? `把 ${b.hostname} 的 EdgeOne 源站切到 ${nodeId} (${n?.ipv4 || n?.ipv6})?\n该节点会成为首选。`
-        : b.kind === "dnspod_ip"
-          ? `把 ${b.hostname} 的 DNSPod「${b.record_line}」线路直接解析到 ${nodeId} (${n?.ipv4 || n?.ipv6})?\n该节点会成为首选。`
-          : `把 ${b.hostname} 切到 ${nodeId} (${n?.origin_host})?\n会同时修改 CF SaaS 回源与 DNSPod「${b.record_line}」线路记录, 该节点会成为首选。`;
-    if (!confirm(msg)) return;
-    run(
-      b,
-      () =>
-        fetchApi(`/admin/api/dns/bindings/${b.id}/switch`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ node_id: nodeId }),
-        }),
-      (data) => {
-        const errors = (data.errors as string[]) || [];
-        toast({
-          title: errors.length ? "部分失败" : "已切换",
-          description: `${b.kind === "edgeone" ? `EdgeOne ${data.eo}` : b.kind === "dnspod_ip" ? `DNSPod ${data.dnspod}` : `CF ${data.cf} · DNSPod ${data.dnspod}`}${errors.length ? ` · ${errors.join("; ")}` : ""}`,
-          variant: errors.length ? "destructive" : undefined,
-        });
-      },
-    );
+  const reportSwitch = (title: string) => (data: Record<string, unknown>) => {
+    const errors = (data.errors as string[]) || [];
+    const parts = (["cf", "dnspod", "eo"] as const)
+      .filter((k) => data[k] && data[k] !== "n/a")
+      .map(
+        (k) => `${{ cf: "CF", dnspod: "DNSPod", eo: "EdgeOne" }[k]} ${data[k]}`,
+      );
+    toast({
+      title: errors.length ? "部分失败" : title,
+      description: [...parts, ...errors].join(" · "),
+      variant: errors.length ? "destructive" : undefined,
+    });
   };
 
-  const remove = (b: Binding) => {
+  const switchTo = (b: Binding, nodeId: string) => {
+    const shared =
+      b.kind === "cf_dnspod"
+        ? (linesOf.get(b.hostname) || []).filter((l) => l.kind === "cf_dnspod")
+        : [b];
+    const which = shared.map((l) => `「${l.record_line}」`).join("");
     if (
       !confirm(
-        `删除 ${b.hostname} 的这条绑定? 只删中控里的记录, 不改线上解析。`,
+        `把 ${b.hostname} ${which}线路切到 ${nodeId}? 该节点会成为首选。`,
       )
     )
       return;
-    run(b, () =>
+    run(
+      b.id,
+      () => post(`/admin/api/dns/bindings/${b.id}/switch`, { node_id: nodeId }),
+      reportSwitch("已切换"),
+    );
+  };
+
+  const sync = (b: Binding) =>
+    run(
+      b.id,
+      () => post(`/admin/api/dns/bindings/${b.id}/sync`),
+      reportSwitch("已同步"),
+    );
+
+  const check = (b: Binding) =>
+    run(b.id, () => post(`/admin/api/dns/bindings/${b.id}/check`));
+
+  const removeLine = (b: Binding) => {
+    if (
+      !confirm(
+        `删除 ${b.hostname} 的「${b.record_line}」线路? 只删中控里的记录, 不改线上解析。`,
+      )
+    )
+      return;
+    run(b.id, () =>
       fetchApi(`/admin/api/dns/bindings/${b.id}`, { method: "DELETE" }),
     );
   };
 
-  const openDialog = (b: Binding | null) => {
-    setEditing(b);
-    setDialogOpen(true);
+  const removeDomain = (d: Domain) => {
+    if (
+      !confirm(
+        `删除 ${d.hostname} 及其全部线路? 只删中控里的记录, 不改线上解析。`,
+      )
+    )
+      return;
+    run(-d.id, () =>
+      fetchApi(`/admin/api/dns/domains/${d.id}`, { method: "DELETE" }),
+    );
   };
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="DNS 分流"
-        description="每条线路按优先级排列节点, 高亮的是当前承接流量的节点, 点击其他节点即可手动切换。节点失联 1 分钟且回源探测失败时自动切到下一个健康节点, 首选节点恢复 10 分钟后自动切回, 全程推送企业微信。"
+        description="每个域名配一次账号, 默认 / 境内 / 境外 各线路选走法与节点池。高亮的是当前承接流量的节点, 点击其他节点即切换。节点失联 1 分钟且回源探测失败时自动切到下一个健康节点, 首选节点恢复 10 分钟后自动切回, 全程推送企业微信。"
         actions={
           <>
             <Button variant="outline" size="sm" onClick={() => load()}>
               <RefreshCw className="size-4" />
               刷新
             </Button>
-            <Button size="sm" onClick={() => openDialog(null)}>
+            <Button
+              size="sm"
+              onClick={() => setDomainEdit({ open: true, domain: null })}
+            >
               <Plus className="size-4" />
-              新建绑定
+              添加域名
             </Button>
           </>
         }
       />
 
-      {groups.length === 0 && (
+      {domains.length === 0 && (
         <Card>
-          <CardContent className="py-12 text-center text-sm text-muted-foreground">
-            还没有绑定
+          <CardContent className="py-12 text-center text-sm text-foreground-muted">
+            还没有域名
           </CardContent>
         </Card>
       )}
 
-      {groups.map(([hostname, list]) => (
-        <Card key={hostname}>
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <Globe className="size-5 text-muted-foreground" />
-              {hostname}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {list.map((b) => (
-              <BindingLane
-                key={b.id}
-                binding={b}
-                nodes={nodes}
-                busy={busy === b.id}
-                onSwitch={switchTo}
-                onCheck={check}
-                onEdit={openDialog}
-                onDelete={remove}
-              />
-            ))}
-          </CardContent>
-        </Card>
+      {domains.map((d) => (
+        <DomainCard
+          key={d.id}
+          domain={d}
+          lines={linesOf.get(d.hostname) || []}
+          credentials={credentials}
+          nodes={nodes}
+          busy={busy}
+          onEditDomain={() => setDomainEdit({ open: true, domain: d })}
+          onDeleteDomain={() => removeDomain(d)}
+          onAddLine={() => setLineEdit({ domain: d, binding: null })}
+          onEditLine={(b) => setLineEdit({ domain: d, binding: b })}
+          onSwitch={switchTo}
+          onSync={sync}
+          onCheck={check}
+          onDeleteLine={removeLine}
+        />
       ))}
 
       <CredentialsCard credentials={credentials} onChange={() => load()} />
 
-      <BindingDialog
-        open={dialogOpen}
-        binding={editing}
+      <DomainDialog
+        open={domainEdit.open}
+        domain={domainEdit.domain}
         credentials={credentials}
-        nodes={nodes}
-        onClose={() => setDialogOpen(false)}
+        onClose={() => setDomainEdit((s) => ({ ...s, open: false }))}
         onSaved={() => {
-          setDialogOpen(false);
+          setDomainEdit((s) => ({ ...s, open: false }));
+          load();
+        }}
+      />
+      <LineDialog
+        open={!!lineEdit}
+        domain={lineEdit?.domain ?? null}
+        lines={lineEdit ? linesOf.get(lineEdit.domain.hostname) || [] : []}
+        binding={lineEdit?.binding ?? null}
+        nodes={nodes}
+        onClose={() => setLineEdit(null)}
+        onSaved={() => {
+          setLineEdit(null);
           load();
         }}
       />

@@ -27,20 +27,62 @@ export interface BindingCheck {
 
 export type BindingKind = "cf_dnspod" | "edgeone" | "dnspod_ip";
 
-// bindingTarget 该线路切到节点时写入的值: CF + DNSPod 用回源主机名, EdgeOne / DNSPod 纯 IP 用节点出口 IP
+// bindingTarget 该线路切到节点时写入的值: CF 线路用回源主机名, EdgeOne / DNSPod 纯 IP 用节点出口 IP
 export function bindingTarget(kind: BindingKind, n?: NodeOption): string {
   if (!n) return "";
   return kind === "cf_dnspod" ? n.origin_host : n.ipv4 || n.ipv6;
 }
 
-// bindingTitle 线路标题, 如「境内线路 · DNSPod 纯 IP」
-export function bindingTitle(
-  b: Pick<Binding, "kind" | "record_line" | "dnspod_target">,
-): string {
-  if (b.kind === "edgeone") return "境内线路 · EdgeOne";
-  if (b.kind === "dnspod_ip") return `${b.record_line}线路 · DNSPod 纯 IP`;
-  if (b.dnspod_target) return `${b.record_line}线路 · CF SaaS + 优选 CNAME`;
-  return `${b.record_line}线路 · CF SaaS + DNSPod`;
+export const LINES = ["默认", "境内", "境外"] as const;
+
+// Method 页面上的「走法」; cf_pref 存储上是 cf_dnspod + dnspod_target (优选域名)
+export type Method = "cf" | "cf_pref" | "edgeone" | "dnspod_ip";
+
+export const METHOD_LABEL: Record<Method, string> = {
+  cf: "CF 回源",
+  cf_pref: "CF 优选 CNAME",
+  edgeone: "EdgeOne",
+  dnspod_ip: "直连节点 IP",
+};
+
+export const METHOD_HINT: Record<Method, string> = {
+  cf: "DNSPod 线路 CNAME 到节点回源主机名, 经 CF SaaS 回源",
+  cf_pref: "DNSPod 线路固定 CNAME 到优选域名, 切换只改 CF SaaS 回源",
+  edgeone: "改 EdgeOne 加速域名的源站为节点出口 IP",
+  dnspod_ip: "DNSPod 线路直接解析到节点出口 IP, 不经 CDN",
+};
+
+export function methodOf(b: Pick<Binding, "kind" | "dnspod_target">): Method {
+  if (b.kind === "cf_dnspod") return b.dnspod_target ? "cf_pref" : "cf";
+  return b.kind;
+}
+
+export function kindOf(m: Method): BindingKind {
+  return m === "cf" || m === "cf_pref" ? "cf_dnspod" : m;
+}
+
+// missingFor 域名缺哪些配置导致这种走法用不了; 与中控 hub/dns_domains.ts 同口径
+export function missingFor(d: Domain, kind: BindingKind): string {
+  if (!d.tc_credential_id) return "域名未配置腾讯云凭据";
+  if (kind === "edgeone") return d.eo_zone_id ? "" : "域名未配置 EdgeOne 站点";
+  if (!d.dnspod_domain) return "域名未配置 DNSPod 域名";
+  if (kind === "cf_dnspod" && (!d.cf_credential_id || !d.saas_zone_id))
+    return "域名未配置 CF 凭据或 SaaS 区";
+  return "";
+}
+
+export interface Domain {
+  id: number;
+  hostname: string;
+  cf_credential_id: number;
+  saas_zone_id: string;
+  saas_zone_name: string;
+  tc_credential_id: number;
+  dnspod_domain: string;
+  record_name: string;
+  eo_zone_id: string;
+  eo_zone_name: string;
+  note: string;
 }
 
 export interface Binding {

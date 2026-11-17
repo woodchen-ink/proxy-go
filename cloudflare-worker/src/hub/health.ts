@@ -17,6 +17,7 @@
  * 切回: 首选节点 (pool[0]) 持续 up ≥ 10 分钟、探测通过、距上次切换 ≥ 10 分钟 → 切回。
  * 每 10 分钟对全部绑定做一次一致性巡检, 线下被改动时报一次漂移。
  */
+import { switchSucceeded } from '../dns/binding';
 import type { DnsService } from './dns_service';
 import { probeTwice, type ProbeResult } from './probe';
 
@@ -120,7 +121,9 @@ export class HealthMonitor {
 
 	private async evaluateBindings(): Promise<void> {
 		const now = Date.now();
-		for (const b of this.dns.listBindings()) {
+		for (const listed of this.dns.listBindings()) {
+			// 逐条重读: 同域名的 CF 线路共用回源, 前一条切换时已一并改了本条的 active_node / last_switch_at
+			const b = this.dns.getBinding(listed.id);
 			if (!b.enabled || !b.active_node) continue;
 			const active = this.nodeState(b.active_node);
 			if (!active) continue;
@@ -128,7 +131,8 @@ export class HealthMonitor {
 			// ---- 故障切换 ----
 			// 失联时长从最后活动算, 不再从判 down 的时刻另起 60s (两段叠加会拖到 2~3 分钟)
 			if (b.auto_failover && active.state === 'down' && now - active.lastSeen >= FAILOVER_AFTER_LOST_MS) {
-				const roundKey = `notice:${b.id}:${b.active_node}:${active.since}`;
+				// 同域名的 CF 线路共用回源, 按组算一个回合, 否则同一故障各探测、各切、各告警一次
+				const roundKey = `notice:${b.kind === 'cf_dnspod' ? `cf:${b.hostname}` : b.id}:${b.active_node}:${active.since}`;
 				// 回合状态: 空 = 首次处理; retry:<次数>:<时间> = 上次没切成, 间隔后重试;
 				// probe_ok:<时间> = 回源正常未切, 间隔后复探; 其余为终态
 				const state = this.getKV(roundKey);
@@ -177,8 +181,8 @@ export class HealthMonitor {
 					continue;
 				}
 				const res = await this.dns.switchTo(b.id, target, 'failover', `${b.active_node} 故障: ${activeProbe.error}`, attempt === 0);
-				const anyOK = [res.cf, res.dnspod, res.eo].some((r) => r === 'updated' || r === 'unchanged');
-				// 一处都没改成 (如 EdgeOne 部署中拒绝修改): active_node 未变, 按间隔重试; 改成任意一处即终态
+				const anyOK = switchSucceeded(b.kind, res);
+				// 决定流量的那一处没改成 (如 EdgeOne 部署中拒绝修改): active_node 未变, 按间隔重试
 				this.setKV(roundKey, anyOK ? 'switched' : `retry:${attempt + 1}:${now}`);
 				continue;
 			}

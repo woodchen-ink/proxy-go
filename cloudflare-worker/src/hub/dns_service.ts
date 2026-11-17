@@ -13,6 +13,8 @@ import {
 	parseKind,
 	rowToBinding,
 	switchBinding,
+	switchDnspodOnly,
+	switchSucceeded,
 	usesDnspodLine,
 	usesNodeIP,
 	type Binding,
@@ -20,6 +22,9 @@ import {
 	type BindingKind,
 	type SwitchResult,
 } from '../dns/binding';
+import { applyDomain, DomainStore, missingFor, normalizeHostname, type DnsDomain, type DomainInput } from './dns_domains';
+
+const LINES = ['默认', '境内', '境外'];
 
 export type EventFn = (level: 'info' | 'warning' | 'error', kind: string, subject: string, message: string, notify?: boolean) => void;
 
@@ -35,14 +40,8 @@ export interface CredentialInput {
 export interface BindingInput {
 	id?: number;
 	kind?: BindingKind;
-	hostname: string;
+	hostname: string; // 所属域名
 	enabled?: boolean;
-	cf_credential_id: number;
-	saas_zone_id: string;
-	saas_zone_name?: string;
-	dnspod_credential_id: number;
-	dnspod_domain: string;
-	record_name?: string;
 	record_line?: string;
 	dnspod_target?: string;
 	pool: string[];
@@ -57,7 +56,11 @@ export class DnsService {
 		private sql: SqlStorage,
 		private env: Env,
 		private event: EventFn,
-	) {}
+	) {
+		this.domains = new DomainStore(sql);
+	}
+
+	private domains: DomainStore;
 
 	creds(): Credentials {
 		return new Credentials(this.sql, this.env.CRED_KEY);
@@ -141,8 +144,8 @@ export class DnsService {
 	}
 
 	deleteCredential(id: number): void {
-		const used = this.sql.exec('SELECT hostname FROM dns_bindings WHERE cf_credential_id = ? OR dnspod_credential_id = ?', id, id).toArray();
-		if (used.length) throw new Error(`凭据仍被 ${used.map((r) => r.hostname).join(', ')} 使用`);
+		const used = this.domains.credentialUsers(id);
+		if (used.length) throw new Error(`凭据仍被 ${used.join(', ')} 使用`);
 		this.sql.exec('DELETE FROM dns_credentials WHERE id = ?', id);
 	}
 
@@ -169,58 +172,80 @@ export class DnsService {
 		return out;
 	}
 
-	// ---------- 绑定 ----------
+	// ---------- 域名 ----------
+
+	listDomains(): DnsDomain[] {
+		return this.domains.list();
+	}
+
+	saveDomain(input: DomainInput): number {
+		return this.domains.save(input);
+	}
+
+	deleteDomain(id: number): void {
+		this.domains.delete(id);
+	}
+
+	// ---------- 线路 (绑定) ----------
 
 	listBindings(): Binding[] {
-		return this.sql.exec('SELECT * FROM dns_bindings ORDER BY hostname').toArray().map(rowToBinding);
+		const domains = this.domains.byHostname();
+		return this.sql
+			.exec('SELECT * FROM dns_bindings ORDER BY hostname')
+			.toArray()
+			.map((r) => {
+				const b = rowToBinding(r);
+				return applyDomain(b, domains.get(b.hostname));
+			});
 	}
 
 	getBinding(id: number): Binding {
 		const r = this.sql.exec('SELECT * FROM dns_bindings WHERE id = ?', id).toArray()[0];
-		if (!r) throw new Error('绑定不存在');
-		return rowToBinding(r);
+		if (!r) throw new Error('线路不存在');
+		const b = rowToBinding(r);
+		return applyDomain(b, this.domains.get(b.hostname));
 	}
 
 	bindingsUsingNode(nodeId: string): string[] {
 		return this.listBindings()
 			.filter((b) => b.pool.includes(nodeId) || b.active_node === nodeId)
-			.map((b) => b.hostname);
+			.map((b) => `${b.hostname} ${b.record_line}`);
 	}
 
+	// saveBinding 保存一条线路: 账号配置取自所属域名, 这里只存走法、线路、节点池与开关
 	saveBinding(input: BindingInput): number {
 		const kind = parseKind(input.kind);
-		const hostname = (input.hostname ?? '').trim().toLowerCase().replace(/\.$/, '');
-		if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(hostname)) throw new Error('访问域名格式不对');
-		if (kind === 'edgeone') {
-			if (!input.dnspod_credential_id || !input.saas_zone_id) throw new Error('缺少腾讯云凭据或 EdgeOne 站点');
-		} else {
-			if (kind === 'cf_dnspod' && (!input.cf_credential_id || !input.saas_zone_id)) throw new Error('缺少 CF 凭据或 SaaS 区');
-			if (!input.dnspod_credential_id || !input.dnspod_domain) throw new Error('缺少 DNSPod 凭据或域名');
-		}
-		const dnspodDomain = usesDnspodLine(kind) ? (input.dnspod_domain ?? '').trim().toLowerCase() : '';
-		const recordName = (input.record_name ?? '@').trim() || '@';
-		const recordLine = usesDnspodLine(kind) ? (input.record_line ?? '默认').trim() || '默认' : '默认';
-		const dnspodTarget = kind === 'cf_dnspod' ? (input.dnspod_target ?? '').trim().toLowerCase().replace(/\.$/, '') : '';
+		const domain = this.domains.get(normalizeHostname(input.hostname));
+		if (!domain) throw new Error('域名不存在, 先添加域名');
+		const missing = missingFor(domain, kind);
+		if (missing) throw new Error(missing);
+		const hostname = domain.hostname;
+		const recordLine = LINES.includes(input.record_line ?? '') ? String(input.record_line) : '默认';
+		const dnspodTarget = kind === 'cf_dnspod' ? normalizeHostname(input.dnspod_target) : '';
 		if (dnspodTarget && !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(dnspodTarget)) throw new Error('优选域名格式不对');
 		if (dnspodTarget === hostname) throw new Error('优选域名不能是访问域名本身');
-		this.assertNoConflict(input.id ?? 0, kind, hostname, dnspodDomain, recordName, recordLine);
+		this.assertNoConflict(input.id ?? 0, kind, hostname, recordLine);
 		const pool = [...new Set((input.pool ?? []).map((s) => s.trim()).filter(Boolean))];
 		if (pool.length === 0) throw new Error('节点池不能为空');
 		for (const id of pool) {
 			if (!this.targetOf(kind, id)) throw new Error(usesNodeIP(kind) ? `节点 ${id} 没有上报出口 IP` : `节点 ${id} 未登记回源主机名`);
 		}
-		const active = input.active_node && pool.includes(input.active_node) ? input.active_node : pool[0];
+		// 同域名已有 CF 线路时, CF 回源当前指向它们的当前节点, 新线路沿用
+		const sibling = kind === 'cf_dnspod' ? this.listBindings().find((o) => o.kind === 'cf_dnspod' && o.hostname === hostname && o.id !== (input.id ?? 0)) : undefined;
+		const active = [input.active_node, sibling?.active_node].find((n) => n && pool.includes(n)) ?? pool[0];
+		const eo = kind === 'edgeone';
 		const now = Date.now();
+		// 账号列以域名为准 (读取时覆盖), 这里照写一份便于直接查表
 		const args = [
 			kind,
 			hostname,
 			input.enabled === false ? 0 : 1,
-			kind === 'cf_dnspod' ? input.cf_credential_id : 0,
-			kind === 'dnspod_ip' ? '' : input.saas_zone_id,
-			kind === 'dnspod_ip' ? '' : (input.saas_zone_name ?? ''),
-			input.dnspod_credential_id,
-			dnspodDomain,
-			recordName,
+			kind === 'cf_dnspod' ? domain.cf_credential_id : 0,
+			eo ? domain.eo_zone_id : kind === 'cf_dnspod' ? domain.saas_zone_id : '',
+			eo ? domain.eo_zone_name : kind === 'cf_dnspod' ? domain.saas_zone_name : '',
+			domain.tc_credential_id,
+			usesDnspodLine(kind) ? domain.dnspod_domain : '',
+			domain.record_name,
 			recordLine,
 			dnspodTarget,
 			JSON.stringify(pool),
@@ -231,9 +256,11 @@ export class DnsService {
 			now,
 		];
 		if (input.id) {
-			// 改了类型或线路, 旧的巡检结果描述的是另一处解析, 清掉等下次检查
+			// 改了走法、线路或优选域名, 旧的巡检结果描述的是另一处解析, 清掉等下次检查
 			const old = this.getBinding(input.id);
-			if (old.kind !== kind || old.record_line !== recordLine || old.dnspod_target !== dnspodTarget) this.sql.exec("UPDATE dns_bindings SET last_check = '' WHERE id = ?", input.id);
+			if (old.kind !== kind || old.record_line !== recordLine || old.dnspod_target !== dnspodTarget) {
+				this.sql.exec("UPDATE dns_bindings SET last_check = '' WHERE id = ?", input.id);
+			}
 			this.sql.exec(
 				`UPDATE dns_bindings SET kind=?, hostname=?, enabled=?, cf_credential_id=?, saas_zone_id=?, saas_zone_name=?,
 				 dnspod_credential_id=?, dnspod_domain=?, record_name=?, record_line=?, dnspod_target=?, pool=?, active_node=?,
@@ -241,9 +268,10 @@ export class DnsService {
 				...args,
 				input.id,
 			);
+			this.syncCfGroup(hostname, kind, args);
 			return input.id;
 		}
-		return Number(
+		const id = Number(
 			this.sql
 				.exec(
 					`INSERT INTO dns_bindings (kind, hostname, enabled, cf_credential_id, saas_zone_id, saas_zone_name,
@@ -253,18 +281,31 @@ export class DnsService {
 				)
 				.one().id,
 		);
+		this.syncCfGroup(hostname, kind, args);
+		return id;
 	}
 
-	// assertNoConflict 两条绑定不能改同一处: CF SaaS 回源 / EdgeOne 源站每个访问域名只有一份, DNSPod 线路记录同理
-	private assertNoConflict(id: number, kind: BindingKind, hostname: string, domain: string, name: string, line: string): void {
+	// syncCfGroup CF 线路共用一份回源, 节点池 / 当前节点 / 自动切换开关以最近保存的那条为准同步到同域名其他 CF 线路
+	private syncCfGroup(hostname: string, kind: BindingKind, args: unknown[]): void {
+		if (kind !== 'cf_dnspod') return;
+		const [pool, active, failover, failback] = args.slice(11, 15);
+		this.sql.exec(
+			"UPDATE dns_bindings SET pool = ?, active_node = ?, auto_failover = ?, auto_failback = ? WHERE hostname = ? AND kind = 'cf_dnspod'",
+			pool as string,
+			active as string,
+			failover as number,
+			failback as number,
+			hostname,
+		);
+	}
+
+	// assertNoConflict 一个域名每条线路只有一种走法; EdgeOne 源站每个域名只有一份, 只能给一条线路用
+	// (CF 线路可以多条, 共用 CF 回源与节点池, 见 cfGroup)
+	private assertNoConflict(id: number, kind: BindingKind, hostname: string, line: string): void {
 		for (const o of this.listBindings()) {
-			if (o.id === id) continue;
-			if (o.hostname === hostname && o.kind === kind && kind !== 'dnspod_ip') {
-				throw new Error(`${hostname} 已有一条${kind === 'edgeone' ? ' EdgeOne' : ' CF SaaS'} 绑定`);
-			}
-			if (usesDnspodLine(kind) && usesDnspodLine(o.kind) && o.dnspod_domain === domain && o.record_name === name && o.record_line === line) {
-				throw new Error(`DNSPod ${name}.${domain} 的「${line}」线路已被 ${o.hostname} 的另一条绑定使用`);
-			}
+			if (o.id === id || o.hostname !== hostname) continue;
+			if (o.record_line === line) throw new Error(`${hostname} 的「${line}」线路已配置`);
+			if (o.kind === 'edgeone' && kind === 'edgeone') throw new Error(`EdgeOne 源站每个域名只有一份, 已用在「${o.record_line}」线路`);
 		}
 	}
 
@@ -297,17 +338,26 @@ export class DnsService {
 		return result;
 	}
 
-	// switchTo 把绑定切到 nodeId; 至少一处改成功即更新 active_node (结果如实记录, 巡检会标出半切状态)
+	// cfGroup 同域名下全部 CF 线路 (共用一份 CF SaaS 回源, 因此共用节点池与当前节点); 非 CF 线路只有自己
+	private cfGroup(b: Binding): Binding[] {
+		if (b.kind !== 'cf_dnspod') return [b];
+		// 停用的线路不跟着改 DNSPod 记录
+		return [b, ...this.listBindings().filter((o) => o.kind === 'cf_dnspod' && o.enabled && o.hostname === b.hostname && o.id !== b.id)];
+	}
+
+	// switchTo 把线路切到 nodeId; 决定流量的那一处改成功即更新 active_node (见 switchSucceeded, 其余失败如实记录)。
+	// CF 线路连同同域名的其他 CF 线路一起切: CF 回源改一次, 各 DNSPod 线路各改各的。kind=sync 是把当前节点重新推到线上
 	async switchTo(
 		id: number,
 		nodeId: string,
-		kind: 'switch' | 'failover' | 'failback',
+		kind: 'switch' | 'failover' | 'failback' | 'sync',
 		reason: string,
 		notifyFailure = true,
 	): Promise<SwitchResult & { check: BindingCheck }> {
 		const b = this.getBinding(id);
 		const origin = this.targetOf(b.kind, nodeId);
 		if (!origin) throw new Error(usesNodeIP(b.kind) ? `节点 ${nodeId} 没有上报出口 IP` : `节点 ${nodeId} 未登记回源主机名`);
+		const group = this.cfGroup(b);
 
 		let result: SwitchResult;
 		try {
@@ -315,29 +365,35 @@ export class DnsService {
 		} catch (e) {
 			result = { cf: 'failed', dnspod: 'failed', eo: 'failed', errors: [errText(e)] };
 		}
-
-		const anyOK = [result.cf, result.dnspod, result.eo].some((r) => r === 'updated' || r === 'unchanged');
-		// last_switch_at 记"最近一次尝试": 全部失败也要推进, 否则自动切回每 20s 重试一次并刷告警
-		this.sql.exec('UPDATE dns_bindings SET last_switch_at = ? WHERE id = ?', Date.now(), id);
-		if (anyOK) {
-			// 手动切换即表达新的首选: 目标挪到池首, 否则自动切回会在 10 分钟后把人工决定撤销
-			const pool = kind === 'switch' ? [nodeId, ...b.pool.filter((n) => n !== nodeId)] : b.pool;
-			this.sql.exec(
-				'UPDATE dns_bindings SET active_node = ?, pool = ?, last_switch_at = ? WHERE id = ?',
-				nodeId,
-				JSON.stringify(pool),
-				Date.now(),
-				id,
-			);
+		for (const sib of group.slice(1)) {
+			const r = await switchDnspodOnly(sib, this.creds(), origin);
+			if (r.dnspod === 'failed' || result.dnspod === 'failed') result.dnspod = 'failed';
+			else if (r.dnspod === 'updated') result.dnspod = 'updated';
+			result.errors.push(...r.errors.map((e) => `[${sib.record_line}] ${e}`));
 		}
+
+		const anyOK = switchSucceeded(b.kind, result);
+		const now = Date.now();
+		// 手动切换即表达新的首选: 目标挪到池首, 否则自动切回会在 10 分钟后把人工决定撤销
+		const pool = kind === 'switch' ? [nodeId, ...b.pool.filter((n) => n !== nodeId)] : b.pool;
+		for (const g of group) {
+			// last_switch_at 记"最近一次尝试": 全部失败也要推进, 否则自动切回每 20s 重试一次并刷告警
+			if (anyOK) this.sql.exec('UPDATE dns_bindings SET active_node = ?, pool = ?, last_switch_at = ? WHERE id = ?', nodeId, JSON.stringify(pool), now, g.id);
+			else this.sql.exec('UPDATE dns_bindings SET last_switch_at = ? WHERE id = ?', now, g.id);
+		}
+		const lines = group.map((g) => g.record_line).join('+');
 		const parts = b.kind === 'edgeone' ? `EdgeOne ${result.eo}` : b.kind === 'dnspod_ip' ? `DNSPod ${result.dnspod}` : `CF ${result.cf}, DNSPod ${result.dnspod}`;
-		const tag = b.kind === 'edgeone' ? '[EdgeOne] ' : b.kind === 'dnspod_ip' ? `[${b.record_line} IP] ` : '';
-		const detail = `${tag}${b.active_node || '-'} → ${nodeId} (${origin}); ${parts}${reason ? `; ${reason}` : ''}`;
+		const tag = b.kind === 'edgeone' ? `[${b.record_line} EdgeOne] ` : b.kind === 'dnspod_ip' ? `[${b.record_line} IP] ` : `[${lines} CF] `;
+		const arrow = kind === 'sync' ? `同步 ${nodeId}` : `${b.active_node || '-'} → ${nodeId}`;
+		const detail = `${tag}${arrow} (${origin}); ${parts}${reason ? `; ${reason}` : ''}`;
 		if (result.errors.length) {
 			this.event('error', 'switch_failed', b.hostname, `${detail}; ${result.errors.join('; ')}`, notifyFailure);
+		} else if (kind === 'sync') {
+			this.event('info', 'sync', b.hostname, detail, false);
 		} else {
 			this.event(kind === 'switch' ? 'info' : 'warning', kind, b.hostname, detail, true);
 		}
+		for (const g of group.slice(1)) await this.check(g.id).catch(() => undefined);
 		const check = await this.check(id);
 		return { ...result, check };
 	}
