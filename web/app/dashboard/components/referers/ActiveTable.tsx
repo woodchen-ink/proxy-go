@@ -4,6 +4,7 @@ import { Fragment, useState } from "react"
 import { ChevronRight } from "lucide-react"
 import { formatBytes } from "@/lib/format"
 import HostBadges from "./HostBadges"
+import HostLink from "./HostLink"
 import PathList from "./PathList"
 import RowActions from "./RowActions"
 import { PATH_CAP, type ActiveHost, type HostAction } from "./types"
@@ -53,11 +54,14 @@ export default function ActiveTable({ rows, colorOf, onToggleChart, onAction, bu
                   />
                 </td>
                 <td className="px-2 py-2">
-                  <button type="button" onClick={() => setOpen(expanded ? null : r.host)} className="flex min-w-0 items-center gap-1.5 text-left">
-                    <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-foreground-subtle transition-transform ${expanded ? "rotate-90" : ""}`} />
-                    <span className="truncate font-mono font-medium">{r.host}</span>
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <button type="button" onClick={() => setOpen(expanded ? null : r.host)} className="flex min-w-0 items-center gap-1.5 text-left">
+                      <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-foreground-subtle transition-transform ${expanded ? "rotate-90" : ""}`} />
+                      <span className="truncate font-mono font-medium">{r.host}</span>
+                    </button>
+                    <HostLink host={r.host} />
                     <HostBadges isNew={r.is_new} isOwn={r.is_own} isBanned={r.is_banned} wholeSite={r.distinct_paths >= PATH_CAP} />
-                  </button>
+                  </div>
                 </td>
                 <td className="px-3 py-2 text-right">{r.requests.toLocaleString()}</td>
                 <td className="px-3 py-2 text-right text-foreground-muted">{formatBytes(r.bytes)}</td>
