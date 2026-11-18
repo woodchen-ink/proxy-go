@@ -1,5 +1,5 @@
 /**
- * 路径访问趋势 (小时桶) 与 Referer 天级序列的视图组装
+ * 路径访问趋势 (小时桶) 的视图组装 (引用来源见 referers.ts)
  *
  * 数据来自 D1 (节点每 5 分钟 UPSERT, worker 侧跨节点求和), 按东八区切日;
  * 视图形状与节点时代 handler/timeseries.go / referer_daily.go 保持一致。
@@ -108,57 +108,4 @@ export async function buildTimeseries(env: Env, daysParam: string | null) {
 
 	const paths = [...byPath.values()].sort((a, b) => b.month_requests - a.month_requests || a.path.localeCompare(b.path));
 	return { generated_at: nowSec, timezone: TZ_NAME, days, paths };
-}
-
-export async function buildRefererDaily(env: Env, daysParam: string | null, topParam: string | null) {
-	let days = parseInt(daysParam ?? '', 10);
-	if (!(days >= 1 && days <= 30)) days = 30;
-	let top = parseInt(topParam ?? '', 10);
-	if (!(top >= 1 && top <= 200)) top = 50;
-
-	const nowSec = Math.floor(Date.now() / 1000);
-	const maxDate = localDayNumber(nowSec);
-	const minDate = maxDate - (days - 1);
-	const startDay = localMidnightSec(nowSec) - (days - 1) * 86400;
-
-	let points: db.AggregatedRefererDayPoint[] = [];
-	try {
-		points = await db.getAggregatedRefererDaily(env.DB, minDate, maxDate);
-	} catch (e) {
-		console.error('referer daily load failed', e);
-	}
-
-	const byHost = new Map<
-		string,
-		{ host: string; daily: DayPoint[]; total_requests: number; total_bytes: number; total_errors: number; first_seen_date: string; last_seen_date: string }
-	>();
-	for (const p of points) {
-		let v = byHost.get(p.host);
-		if (!v) {
-			v = {
-				host: p.host,
-				daily: Array.from({ length: days }, (_, i) => ({ date: formatLocalDate(startDay + i * 86400), requests: 0, bytes: 0, errors: 0 })),
-				total_requests: 0,
-				total_bytes: 0,
-				total_errors: 0,
-				first_seen_date: '',
-				last_seen_date: '',
-			};
-			byHost.set(p.host, v);
-		}
-		const idx = Number(p.ts_date) - minDate;
-		if (idx < 0 || idx >= days) continue;
-		const d = v.daily[idx];
-		d.requests += Number(p.requests);
-		d.bytes += Number(p.bytes);
-		d.errors += Number(p.errors);
-		v.total_requests += Number(p.requests);
-		v.total_bytes += Number(p.bytes);
-		v.total_errors += Number(p.errors);
-		if (!v.first_seen_date || d.date < v.first_seen_date) v.first_seen_date = d.date;
-		if (d.date > v.last_seen_date) v.last_seen_date = d.date;
-	}
-
-	const hosts = [...byHost.values()].sort((a, b) => b.total_requests - a.total_requests || a.host.localeCompare(b.host)).slice(0, top);
-	return { generated_at: nowSec, timezone: TZ_NAME, days, hosts };
 }

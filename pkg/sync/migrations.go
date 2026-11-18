@@ -282,6 +282,33 @@ var migrations = []Migration{
 			`CREATE INDEX IF NOT EXISTS idx_node_timeseries_hour ON node_timeseries(ts_hour)`,
 		},
 	},
+	{
+		// 引用来源加细节 (拦截 / 分流次数、当天不同路径数、前 10 个被引用路径 JSON) 与长期汇总表。
+		// referer_daily 只留 35 天; 中控清理前把要删的天按 host 累加进 referer_hosts, host 永久保留。
+		// peak_* 记单日请求最多那天的路径快照, 供 30 天外的 host 回看"当时拿了什么"。
+		ID: "0009_referer_details_and_archive",
+		Statements: []string{
+			`ALTER TABLE referer_daily ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE referer_daily ADD COLUMN redirected INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE referer_daily ADD COLUMN distinct_paths INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE referer_daily ADD COLUMN top_paths TEXT`,
+			`CREATE TABLE IF NOT EXISTS referer_hosts (
+				host TEXT PRIMARY KEY,
+				first_date INTEGER NOT NULL,
+				last_date INTEGER NOT NULL,
+				requests INTEGER NOT NULL DEFAULT 0,
+				bytes INTEGER NOT NULL DEFAULT 0,
+				errors INTEGER NOT NULL DEFAULT 0,
+				blocked INTEGER NOT NULL DEFAULT 0,
+				redirected INTEGER NOT NULL DEFAULT 0,
+				peak_date INTEGER NOT NULL DEFAULT 0,
+				peak_requests INTEGER NOT NULL DEFAULT 0,
+				peak_paths TEXT,
+				updated_at INTEGER NOT NULL DEFAULT 0
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_referer_hosts_last_date ON referer_hosts(last_date)`,
+		},
+	},
 }
 
 // MigrationResult 启动期迁移汇总, 仅用于日志

@@ -12,9 +12,10 @@ import { fail, HttpError, json, readJSON } from '../lib/http';
 import type { CacheStats } from '../hub/protocol';
 import { currentUser, handleAuthRoutes, isSameOrigin } from './auth';
 import { activeProvider, purge, type PurgeRequest } from './cdn';
-import { readConfig, readConfigVersion, validateProviders, writeConfig, type CDNProvider } from './config';
+import { readConfig, readConfigVersion, saveAndBroadcast, validateProviders, type CDNProvider } from './config';
 import { registerReleaseRoutes } from './release';
-import { buildRefererDaily, buildTimeseries } from './series';
+import { buildTimeseries } from './series';
+import { registerRefererRoutes } from './referers';
 import { CLUSTER_ROWS_KEY, buildMetrics, buildNodeStats, buildPathStats, loadSources } from './stats';
 import { cachedJSON, dropCached } from '../lib/read_cache';
 import { buildNodesOverview, buildNodesSeries, type SeriesRange } from './nodes_view';
@@ -34,6 +35,7 @@ function route(method: string, pattern: string, h: Handler) {
 	routes.push([method, new RegExp(`^${pattern}$`), h]);
 }
 registerReleaseRoutes(route);
+registerRefererRoutes(route);
 
 export async function handleAdminAPI(request: Request, env: Env, url: URL): Promise<Response> {
 	try {
@@ -97,12 +99,6 @@ route('GET', '/admin/api/metrics/timeseries', async ({ env, url }) => {
 	return json(await cachedJSON(`timeseries-v1:${days}`, 60, () => buildTimeseries(env, days)));
 });
 
-route('GET', '/admin/api/metrics/referer-daily', async ({ env, url }) => {
-	const days = url.searchParams.get('days');
-	const top = url.searchParams.get('top');
-	return json(await cachedJSON(`referer-daily-v1:${days}:${top}`, 60, () => buildRefererDaily(env, days, top)));
-});
-
 // resetStats 删全节点 D1 行 + 写重置 marker (同一事务), 再下发 pulse 让各节点立即清自己的内存
 async function resetStats(env: Env, prefix: string, user: string): Promise<Response> {
 	const resetAt = Date.now();
@@ -132,12 +128,6 @@ route('POST', '/admin/api/path-stats/reset', async ({ env, request, user }) => {
 route('POST', '/admin/api/path-stats/reset-all', async ({ env, user }) => resetStats(env, '', user));
 
 // ---------- 配置 ----------
-
-async function saveAndBroadcast(env: Env, cfg: Awaited<ReturnType<typeof readConfig>>['config'], user: string) {
-	const version = await writeConfig(env, cfg);
-	const cmd = await hubStub(env).issueCommand('pulse', { reason: 'config', version }, user);
-	return { version, command: cmd };
-}
 
 // 配置读写的乐观锁: 读时在 X-Config-Version 头带回版本, 保存时以 If-Match 回传;
 // 版本已变 (别的标签页 / 缓存与 CDN 页签经单独接口改过) 时拒绝整份覆盖, 前端重新加载

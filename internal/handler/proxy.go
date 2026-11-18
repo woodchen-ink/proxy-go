@@ -284,7 +284,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					http.Redirect(w, r, targetURL, http.StatusFound)
 					log.Printf("[RefererRedirect] %s %s (referer=%q) -> 302 %s from %s",
 						r.Method, r.URL.Path, referer, targetURL, utils.GetRequestSource(r))
-					collector.RecordRequest(r.URL.Path, matchResult.MatchedPrefix, http.StatusFound, time.Since(start), 0, security.ClientIP(r), r)
+					collector.RecordRefererAction(r.URL.Path, matchResult.MatchedPrefix, http.StatusFound, time.Since(start), security.ClientIP(r), r, metrics.RefererRedirected)
 					return
 				}
 			}
@@ -295,7 +295,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if matchers := h.pathRefererMatchers.Load(); matchers != nil {
 		if m, ok := (*matchers)[matchResult.MatchedPrefix]; ok && m.IsBlocked(r.URL.Path, referer) {
 			http.Error(w, "Forbidden: referer not allowed", http.StatusForbidden)
-			collector.RecordRequest(r.URL.Path, matchResult.MatchedPrefix, http.StatusForbidden, time.Since(start), 0, security.ClientIP(r), r)
+			collector.RecordRefererAction(r.URL.Path, matchResult.MatchedPrefix, http.StatusForbidden, time.Since(start), security.ClientIP(r), r, metrics.RefererBlocked)
 			return
 		}
 	}

@@ -120,7 +120,8 @@ D1 数据库使用列式存储:
 |------|------|
 | `path_stats` | 每个路径的请求量 / 错误率 / 缓存命中率等 |
 | `path_timeseries` | 路径维度的小时级桶, 跨节点 `(path, ts_hour, node_id)` 主键 |
-| `referer_daily` | Referer host 天级桶, 本地时区切日 |
+| `referer_daily` | Referer host 天级桶, 本地时区切日 (含拦截 / 分流 / 被引用路径) |
+| `referer_hosts` | Referer host 长期汇总, `DELETE /metrics/referer-daily` 时先累加再删 |
 | `banned_ips` / `banned_ips_history` | 当前封禁与历史记录 |
 | `config_maps` | 路径级配置 (target、扩展规则、缓存策略) |
 | `config_other` | 系统级配置 (compression、security、cache、mirror_cache) |

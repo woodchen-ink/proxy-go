@@ -348,14 +348,22 @@ func (ms *MetricsStorage) getRefererDailyPoints() []sync.RefererDailyPoint {
 	now := time.Now().UnixMilli()
 	out := make([]sync.RefererDailyPoint, 0, len(buckets))
 	for _, b := range buckets {
+		paths := make([]sync.RefererPathHits, len(b.TopPaths))
+		for i, p := range b.TopPaths {
+			paths[i] = sync.RefererPathHits{Path: p.Path, Requests: p.Requests}
+		}
 		out = append(out, sync.RefererDailyPoint{
-			Host:      b.Host,
-			TsDate:    b.Date,
-			NodeID:    nodeID,
-			Requests:  b.Requests,
-			Bytes:     b.Bytes,
-			Errors:    b.Errors,
-			UpdatedAt: now,
+			Host:          b.Host,
+			TsDate:        b.Date,
+			NodeID:        nodeID,
+			Requests:      b.Requests,
+			Bytes:         b.Bytes,
+			Errors:        b.Errors,
+			UpdatedAt:     now,
+			Blocked:       b.Blocked,
+			Redirected:    b.Redirected,
+			DistinctPaths: b.DistinctPaths,
+			TopPaths:      paths,
 		})
 	}
 	return out

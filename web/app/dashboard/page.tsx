@@ -12,7 +12,7 @@ import LatencyChart from "./components/LatencyChart"
 import PathTrendChart from "./components/PathTrendChart"
 import PathTotalsChart from "./components/PathTotalsChart"
 import PathStatsList from "./components/PathStatsList"
-import RefererDailyChart from "./components/RefererDailyChart"
+import RefererPanel from "./components/referers/RefererPanel"
 import CacheStatsTiles from "./components/CacheStatsTiles"
 import ClusterBadge from "./components/ClusterBadge"
 import NodeCompareTable from "./components/NodeCompareTable"
@@ -171,7 +171,7 @@ export default function DashboardPage() {
               colors={colors}
             />
             <TopReferers rows={metrics?.top_referers ?? []} />
-            <RefererDailyChart />
+            <RefererPanel />
           </TabsContent>
 
           <TabsContent value="cache" className="mt-0 space-y-5">

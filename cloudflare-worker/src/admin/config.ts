@@ -9,7 +9,7 @@
  * 写入在一个 D1 batch (事务) 里完成, 并单调递增 __config_version。
  */
 import * as db from '../db';
-import type { Env } from '../env';
+import { hubStub, type Env } from '../env';
 import { HttpError } from '../lib/http';
 
 const EXTRA_KEYS = ['DefaultTargets', 'RedirectMode', 'CFImageOpt', 'RefererBan', 'RefererRedirect'] as const;
@@ -191,4 +191,11 @@ export async function writeConfig(env: Env, cfg: ProxyConfig): Promise<number> {
 	const results = await env.DB.batch(stmts);
 	const row = results[results.length - 1].results?.[0] as { value?: string } | undefined;
 	return parseInt(row?.value ?? '0', 10) || now;
+}
+
+// saveAndBroadcast 写配置后广播 pulse, 各节点立即拉取生效
+export async function saveAndBroadcast(env: Env, cfg: ProxyConfig, user: string) {
+	const version = await writeConfig(env, cfg);
+	const cmd = await hubStub(env).issueCommand('pulse', { reason: 'config', version }, user);
+	return { version, command: cmd };
 }

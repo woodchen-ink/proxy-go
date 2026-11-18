@@ -3,6 +3,7 @@ package middleware
 import (
 	"fmt"
 	"net/http"
+	"proxy-go/internal/metrics"
 	"proxy-go/internal/security"
 	"strings"
 	"sync/atomic"
@@ -60,6 +61,7 @@ func (sm *SecurityMiddleware) IPBanMiddleware(next http.Handler) http.Handler {
 		// 全局 Referer 黑名单
 		if p := sm.refererPolicy.Load(); p != nil && p.IsBlocked(r.URL.Path, r.Header.Get("Referer")) {
 			http.Error(w, "Forbidden: referer not allowed", http.StatusForbidden)
+			metrics.GetCollector().RecordGlobalRefererBlocked(r)
 			return
 		}
 

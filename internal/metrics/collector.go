@@ -84,6 +84,7 @@ type RequestMetric struct {
 	Request     *http.Request
 	CacheHit    bool  // 是否缓存命中
 	BytesSaved  int64 // 通过缓存节省的字节数
+	Referer     RefererAction // Referer 规则的处理结果 (拦截 / 分流), 计入引用来源天桶
 }
 
 var requestChan chan RequestMetric
@@ -180,6 +181,35 @@ func (c *Collector) RecordRequest(fullPath, statsPrefix string, status int, late
 		// ok
 	default:
 		c.recordDrop()
+	}
+}
+
+// RecordRefererAction 记录被路径级 Referer 规则拦截 (403) 或分流 (302) 的请求
+func (c *Collector) RecordRefererAction(fullPath, statsPrefix string, status int, latency time.Duration, clientIP string, r *http.Request, action RefererAction) {
+	metric := RequestMetric{
+		FullPath:    fullPath,
+		StatsPrefix: statsPrefix,
+		Status:      status,
+		Latency:     latency,
+		ClientIP:    clientIP,
+		Request:     r,
+		Referer:     action,
+	}
+	select {
+	case requestChan <- metric:
+	default:
+		c.recordDrop()
+	}
+}
+
+// RecordGlobalRefererBlocked 记录被全局 Referer 黑名单拦截的请求: 只进引用来源天桶,
+// 不进路径统计 (此时还没匹配路径) 也不进最近请求
+func (c *Collector) RecordGlobalRefererBlocked(r *http.Request) {
+	if c == nil || r == nil {
+		return
+	}
+	if host := extractRefererHost(r.Referer()); host != "" {
+		c.refererDaySeries.Record(host, r.URL.Path, 0, false, RefererBlocked, time.Now())
 	}
 }
 
@@ -629,7 +659,7 @@ func (c *Collector) updateMetricsBatch(batch []RequestMetric) {
 
 				// 同时按 host 维度落入天级桶, 供 D1 上报近 30 天数据
 				if host := extractRefererHost(referer); host != "" {
-					c.refererDaySeries.Record(host, m.Bytes, m.Status >= 400, time.Now())
+					c.refererDaySeries.Record(host, m.Request.URL.Path, m.Bytes, m.Status >= 400, m.Referer, time.Now())
 				}
 			}
 		}

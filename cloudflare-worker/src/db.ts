@@ -447,7 +447,13 @@ export async function pruneOldTimeseries(db: D1Database, cutoffHour: number): Pr
 // Referer 天级时间序列 (referer_daily 表)
 // ============================================
 
-// RefererDailyPoint 单节点单天单 host 的桶记录
+// RefererPathHits 某 host 当天被引用的一条路径 (p = 路径, n = 次数)
+export interface RefererPathHits {
+	p: string;
+	n: number;
+}
+
+// RefererDailyPoint 单节点单天单 host 的桶记录; blocked 之后的字段由迁移 0009 引入, 旧节点不带
 export interface RefererDailyPoint {
 	host: string;
 	ts_date: number;
@@ -456,28 +462,77 @@ export interface RefererDailyPoint {
 	bytes: number;
 	errors: number;
 	updated_at: number;
+	blocked?: number;
+	redirected?: number;
+	distinct_paths?: number;
+	top_paths?: RefererPathHits[] | null;
 }
 
-// AggregatedRefererDayPoint 聚合后的单天单 host 记录 (跨 node_id 求和)
+// AggregatedRefererDayPoint 聚合后的单天单 host 记录 (跨 node_id 求和); paths 为各节点 top_paths JSON, 以 \x1e 分隔
 export interface AggregatedRefererDayPoint {
 	host: string;
 	ts_date: number;
 	requests: number;
 	bytes: number;
 	errors: number;
+	blocked: number;
+	redirected: number;
+	distinct_paths: number;
+	paths: string | null;
 }
 
 // batchUpsertRefererDaily 批量写入本节点上报的天桶
-// 使用 MAX 语义, 与 path_timeseries 一致, 避免节点重启清零后踩回历史值
-export async function batchUpsertRefererDaily(
-	db: D1Database,
-	points: RefererDailyPoint[]
-): Promise<void> {
+// 使用 MAX 语义, 与 path_timeseries 一致, 避免节点重启清零后踩回历史值;
+// WHERE 只在计数变大时才写, 未变化的行不计 D1 写入。
+// 带 top_paths 的上报来自已跑过迁移 0009 的新节点, 才写新列; 旧节点走原语句
+export async function batchUpsertRefererDaily(db: D1Database, points: RefererDailyPoint[]): Promise<void> {
 	if (points.length === 0) return;
+	const detailed = points.some((p) => p.top_paths !== undefined);
+	try {
+		await upsertRefererDaily(db, points, detailed);
+	} catch (e) {
+		// 节点启动迁移失败时新列不存在: 退回旧语句, 不能让整个心跳 (含配置 / 重置下行) 失败
+		if (!detailed) throw e;
+		console.error('referer_daily detailed upsert failed, fallback:', e);
+		await upsertRefererDaily(db, points, false);
+	}
+}
 
+async function upsertRefererDaily(db: D1Database, points: RefererDailyPoint[], detailed: boolean): Promise<void> {
 	const batch = points.map((p) =>
-		db.prepare(
-			`INSERT INTO referer_daily (host, ts_date, node_id, requests, bytes, errors, updated_at)
+		detailed
+			? db
+					.prepare(
+						`INSERT INTO referer_daily (host, ts_date, node_id, requests, bytes, errors, blocked, redirected, distinct_paths, top_paths, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+       ON CONFLICT(host, ts_date, node_id) DO UPDATE SET
+         requests = MAX(excluded.requests, requests),
+         bytes = MAX(excluded.bytes, bytes),
+         errors = MAX(excluded.errors, errors),
+         blocked = MAX(excluded.blocked, blocked),
+         redirected = MAX(excluded.redirected, redirected),
+         distinct_paths = MAX(excluded.distinct_paths, distinct_paths),
+         top_paths = CASE WHEN excluded.requests >= requests AND excluded.top_paths IS NOT NULL THEN excluded.top_paths ELSE top_paths END,
+         updated_at = excluded.updated_at
+       WHERE excluded.requests > requests OR excluded.bytes > bytes OR excluded.errors > errors
+          OR excluded.blocked > blocked OR excluded.redirected > redirected`
+					)
+					.bind(
+						p.host,
+						p.ts_date,
+						p.node_id || 'default',
+						p.requests,
+						p.bytes,
+						p.errors,
+						p.blocked ?? 0,
+						p.redirected ?? 0,
+						p.distinct_paths ?? 0,
+						p.top_paths?.length ? JSON.stringify(p.top_paths) : null,
+						p.updated_at
+					)
+			: db
+					.prepare(
+						`INSERT INTO referer_daily (host, ts_date, node_id, requests, bytes, errors, updated_at)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
        ON CONFLICT(host, ts_date, node_id) DO UPDATE SET
          requests = MAX(excluded.requests, requests),
@@ -485,47 +540,121 @@ export async function batchUpsertRefererDaily(
          errors = MAX(excluded.errors, errors),
          updated_at = excluded.updated_at
        WHERE excluded.requests > requests OR excluded.bytes > bytes OR excluded.errors > errors`
-		).bind(
-			p.host,
-			p.ts_date,
-			p.node_id || 'default',
-			p.requests,
-			p.bytes,
-			p.errors,
-			p.updated_at
-		)
+					)
+					.bind(p.host, p.ts_date, p.node_id || 'default', p.requests, p.bytes, p.errors, p.updated_at)
 	);
-
 	await db.batch(batch);
 }
 
 // getAggregatedRefererDaily 读取 [minDate, maxDate] 范围内的聚合天桶 (跨节点求和)
+// 迁移 0009 之前的库没有新列, 退回只读基础列
 export async function getAggregatedRefererDaily(
 	db: D1Database,
 	minDate: number,
 	maxDate: number
 ): Promise<AggregatedRefererDayPoint[]> {
-	const result = await db
-		.prepare(
-			`SELECT host, ts_date,
-              SUM(requests) AS requests,
-              SUM(bytes) AS bytes,
-              SUM(errors) AS errors
+	try {
+		const result = await db
+			.prepare(
+				`SELECT host, ts_date,
+              SUM(requests) AS requests, SUM(bytes) AS bytes, SUM(errors) AS errors,
+              SUM(blocked) AS blocked, SUM(redirected) AS redirected,
+              MAX(distinct_paths) AS distinct_paths,
+              GROUP_CONCAT(top_paths, char(30)) AS paths
          FROM referer_daily
         WHERE ts_date >= ?1 AND ts_date <= ?2
-        GROUP BY host, ts_date
-        ORDER BY ts_date, host`
-		)
-		.bind(minDate, maxDate)
-		.all<AggregatedRefererDayPoint>();
-	return result.results || [];
+        GROUP BY host, ts_date`
+			)
+			.bind(minDate, maxDate)
+			.all<AggregatedRefererDayPoint>();
+		return result.results || [];
+	} catch {
+		const result = await db
+			.prepare(
+				`SELECT host, ts_date, SUM(requests) AS requests, SUM(bytes) AS bytes, SUM(errors) AS errors,
+              0 AS blocked, 0 AS redirected, 0 AS distinct_paths, NULL AS paths
+         FROM referer_daily
+        WHERE ts_date >= ?1 AND ts_date <= ?2
+        GROUP BY host, ts_date`
+			)
+			.bind(minDate, maxDate)
+			.all<AggregatedRefererDayPoint>();
+		return result.results || [];
+	}
 }
 
-// pruneOldRefererDaily 删除 ts_date < cutoff 的旧数据
+// RefererHostArchive 长期汇总: 已滚出 referer_daily 的天按 host 累加
+export interface RefererHostArchive {
+	host: string;
+	first_date: number;
+	last_date: number;
+	requests: number;
+	bytes: number;
+	errors: number;
+	blocked: number;
+	redirected: number;
+	peak_date: number;
+	peak_requests: number;
+	peak_paths: string | null;
+}
+
+const ARCHIVE_COLS = 'host, first_date, last_date, requests, bytes, errors, blocked, redirected, peak_date, peak_requests, peak_paths';
+
+// getRefererHostArchive 读长期汇总: 指定 host (按主键) + 最近出现的 limit 个 (走 last_date 索引), 不全表扫;
+// 表还没建 (节点未升级) 时返回空
+export async function getRefererHostArchive(db: D1Database, hosts: string[], limit: number): Promise<RefererHostArchive[]> {
+	try {
+		const [byHost, recent] = await db.batch<RefererHostArchive>([
+			db.prepare(`SELECT ${ARCHIVE_COLS} FROM referer_hosts WHERE host IN (SELECT value FROM json_each(?1))`).bind(JSON.stringify(hosts)),
+			db.prepare(`SELECT ${ARCHIVE_COLS} FROM referer_hosts ORDER BY last_date DESC LIMIT ?1`).bind(limit),
+		]);
+		const out = new Map<string, RefererHostArchive>();
+		for (const r of [...(byHost.results ?? []), ...(recent.results ?? [])]) out.set(r.host, r);
+		return [...out.values()];
+	} catch {
+		return [];
+	}
+}
+
+// pruneOldRefererDaily 把 ts_date < cutoff 的天累加进 referer_hosts 后删除, 同一 batch (事务) 内完成,
+// 多个节点同时触发也只会有一个事务看到这些行, 不会重复累加。
+// 汇总表还没建 (迁移 0009 未跑) 时不删, 留到下次, 免得 host 历史丢失
 export async function pruneOldRefererDaily(db: D1Database, cutoffDate: number): Promise<number> {
-	const result = await db
-		.prepare(`DELETE FROM referer_daily WHERE ts_date < ?1`)
-		.bind(cutoffDate)
-		.run();
-	return result.meta?.changes || 0;
+	const now = Date.now();
+	const rollup = db
+		.prepare(
+			`INSERT INTO referer_hosts (host, first_date, last_date, requests, bytes, errors, blocked, redirected, peak_date, peak_requests, peak_paths, updated_at)
+       SELECT d.host, d.first_date, d.last_date, d.requests, d.bytes, d.errors, d.blocked, d.redirected,
+              p.ts_date, p.requests, p.paths, ?2
+         FROM (SELECT host, MIN(ts_date) AS first_date, MAX(ts_date) AS last_date,
+                      SUM(requests) AS requests, SUM(bytes) AS bytes, SUM(errors) AS errors,
+                      SUM(blocked) AS blocked, SUM(redirected) AS redirected
+                 FROM referer_daily WHERE ts_date < ?1 GROUP BY host) d
+         JOIN (SELECT host, ts_date, SUM(requests) AS requests, GROUP_CONCAT(top_paths, char(30)) AS paths,
+                      ROW_NUMBER() OVER (PARTITION BY host ORDER BY SUM(requests) DESC, ts_date DESC) AS rn
+                 FROM referer_daily WHERE ts_date < ?1 GROUP BY host, ts_date) p
+           ON p.host = d.host AND p.rn = 1
+        WHERE true
+       ON CONFLICT(host) DO UPDATE SET
+         first_date = MIN(first_date, excluded.first_date),
+         last_date = MAX(last_date, excluded.last_date),
+         requests = requests + excluded.requests,
+         bytes = bytes + excluded.bytes,
+         errors = errors + excluded.errors,
+         blocked = blocked + excluded.blocked,
+         redirected = redirected + excluded.redirected,
+         peak_date = CASE WHEN excluded.peak_requests > peak_requests THEN excluded.peak_date ELSE peak_date END,
+         peak_paths = CASE WHEN excluded.peak_requests > peak_requests AND excluded.peak_paths IS NOT NULL THEN excluded.peak_paths ELSE peak_paths END,
+         peak_requests = MAX(peak_requests, excluded.peak_requests),
+         updated_at = excluded.updated_at`
+		)
+		.bind(cutoffDate, now);
+	const del = db.prepare(`DELETE FROM referer_daily WHERE ts_date < ?1`).bind(cutoffDate);
+	try {
+		const res = await db.batch([rollup, del]);
+		return res[1].meta?.changes || 0;
+	} catch (e) {
+		console.error('referer rollup failed, keep rows:', e);
+		return 0;
+	}
 }

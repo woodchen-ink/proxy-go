@@ -18,6 +18,7 @@ import { DnsService } from './dns_service';
 import { ReleaseStore, type Release } from './release_store';
 import { RolloutService } from './rollout';
 import { releaseOp } from './release_ops';
+import { RefererWatch, type RefererSettings } from './referer_watch';
 import type {
 	CommandFrame,
 	CommandType,
@@ -82,6 +83,8 @@ export interface HubAPI {
 	releaseOp(op: string, args?: Record<string, unknown>): Promise<unknown>;
 	registerRelease(input: Release): Promise<Release>;
 	getRelease(version: string): Promise<Release | null>;
+	refererSettings(): Promise<RefererSettings>;
+	updateRefererSettings(patch: Record<string, unknown>): Promise<RefererSettings>;
 }
 
 interface Attachment {
@@ -107,6 +110,7 @@ export class Hub extends DurableObject<Env> implements HubAPI {
 	readonly dns: DnsService;
 	readonly releases: ReleaseStore;
 	readonly rollouts: RolloutService;
+	readonly referers: RefererWatch;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -126,6 +130,7 @@ export class Hub extends DurableObject<Env> implements HubAPI {
 			rpcNode: (id, method, params, timeoutMs) => this.rpcNode(id, method, params, timeoutMs),
 			event: (lvl, kind, subject, msg, notify) => this.recordEvent(lvl, kind, subject, msg, notify),
 		});
+		this.referers = new RefererWatch(this.sql, env, (subject, msg) => this.recordEvent('warning', 'referer_new', subject, msg, true));
 	}
 
 	// ============ WebSocket 接入 ============
@@ -498,6 +503,14 @@ export class Hub extends DurableObject<Env> implements HubAPI {
 		return rel;
 	}
 
+	async refererSettings(): Promise<RefererSettings> {
+		return this.referers.settings();
+	}
+
+	async updateRefererSettings(patch: Record<string, unknown>): Promise<RefererSettings> {
+		return this.referers.update(patch);
+	}
+
 	async getRelease(version: string): Promise<Release | null> {
 		return this.releases.get(version);
 	}
@@ -514,6 +527,11 @@ export class Hub extends DurableObject<Env> implements HubAPI {
 			await this.rollouts.tick();
 		} catch (e) {
 			console.error('rollout tick failed:', e);
+		}
+		try {
+			await this.referers.tick();
+		} catch (e) {
+			console.error('referer tick failed:', e);
 		}
 		await this.ctx.storage.setAlarm(Date.now() + ALARM_INTERVAL_MS);
 	}
@@ -559,6 +577,7 @@ export class Hub extends DurableObject<Env> implements HubAPI {
 }
 
 const EVENT_TITLES: Record<string, string> = {
+	referer_new: '新引用来源',
 	node_join: '新节点接入',
 	node_down: '节点掉线',
 	node_up: '节点恢复',

@@ -667,6 +667,17 @@ type RefererDailyPoint struct {
 	Bytes     int64  `json:"bytes"`
 	Errors    int64  `json:"errors"`
 	UpdatedAt int64  `json:"updated_at"`
+	// 以下由迁移 0009 引入; 中控按 top_paths 是否存在判断节点是否已升级
+	Blocked       int64             `json:"blocked"`
+	Redirected    int64             `json:"redirected"`
+	DistinctPaths int64             `json:"distinct_paths"`
+	TopPaths      []RefererPathHits `json:"top_paths"`
+}
+
+// RefererPathHits 某 host 当天被引用的一条路径
+type RefererPathHits struct {
+	Path     string `json:"p"`
+	Requests int64  `json:"n"`
 }
 
 // AggregatedRefererDayPoint 聚合后单天单 host 记录 (跨节点求和)
