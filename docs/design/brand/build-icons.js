@@ -10,8 +10,10 @@
  * 产物:
  *   web/app/icon.svg                小尺寸符号 (Next 自动挂 <link rel="icon">, 浏览器标签亮暗通用)
  *   web/app/apple-icon.png          180 白色满幅底 + 渐变标志 (长边 70%), 去 alpha 由 build-ico.py 完成
- *   web/components/brand-icon.tsx   BrandLogo (页头 / 登录页, 暗色主题白色) / BrandGlyph (侧栏收起)
- *   docs/design/brand/.ico/*.png    favicon 各档位图 (16 / 32 符号, 48 透明底标志), 由 build-ico.py 打包
+ *   web/components/brand-icon.tsx   BrandLogo (侧栏页头 / 登录页, 暗色主题白色)
+ *   docs/design/brand/.ico/*.png    favicon 各档位图 (16 符号, 32 / 48 透明底标志), 由 build-ico.py 打包
+ *
+ * 小尺寸符号只用于 16 / 20px 档 (icon.svg、favicon 16); 24px 及以上一律用完整标志
  */
 const fs = require("fs")
 const path = require("path")
@@ -57,20 +59,17 @@ function png(svg, file) {
 
 fs.writeFileSync(path.join(ROOT, "web/app/icon.svg"), glyphSquare(256) + "\n")
 png(square(180, 0.7, "#fff"), path.join(ROOT, "web/app/apple-icon.png"))
-for (const n of [16, 32]) png(glyphSquare(n), path.join(DIR, `.ico/${n}.png`))
-png(square(48, 0.92, null), path.join(DIR, ".ico/48.png"))
+png(glyphSquare(16), path.join(DIR, ".ico/16.png"))
+for (const n of [32, 48]) png(square(n, 0.92, null), path.join(DIR, `.ico/${n}.png`))
 
 // 内联组件: 渐变 id 用 useId 防同页多实例冲突; 暗色主题标志改纯白
 const vb = (o) => `${o.x} ${o.y} ${o.w} ${o.h}`
 const comp = `// 由 docs/design/brand/build-icons.js 生成, 不要手改; 改标志请更新 mark.svg / glyph.svg 后重跑
 import { useId } from "react"
 
-import { cn } from "@/lib/utils"
-
 const MARK = "${mark.d}"
-const GLYPH = "${glyph.d}"
 
-// BrandLogo Proxy Go 完整标志 (云朵括弧 + 双向箭头), 透明底, 亮色渐变 / 暗色白色; 用于 ≥40px 的位置
+// BrandLogo Proxy Go 完整标志 (云朵括弧 + 双向箭头), 透明底, 亮色渐变 / 暗色白色; 24px 以上各处都用它
 export function BrandLogo({ className }: { className?: string }) {
   const id = useId()
   return (
@@ -86,14 +85,6 @@ export function BrandLogo({ className }: { className?: string }) {
   )
 }
 
-// BrandGlyph Proxy Go 小尺寸符号 (双向箭头), 透明底 #2EA7E0; 用于 ≤32px 的位置
-export function BrandGlyph({ className }: { className?: string }) {
-  return (
-    <svg viewBox="${vb(glyph)}" className={cn("overflow-visible", className)} aria-hidden>
-      <path fill="${FROM}" d={GLYPH} />
-    </svg>
-  )
-}
 `
 fs.writeFileSync(path.join(ROOT, "web/components/brand-icon.tsx"), comp)
 console.log("icons written")

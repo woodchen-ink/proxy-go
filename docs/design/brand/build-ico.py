@@ -1,4 +1,4 @@
-"""把 build-icons.js 输出的 16 / 32 (小尺寸符号) / 48 (透明底完整标志) 位图打包成 web/app/favicon.ico, 并给 apple-icon 去 alpha
+"""把 build-icons.js 输出的 16 (小尺寸符号) / 32 / 48 (透明底完整标志) 位图打包成 web/app/favicon.ico, 并给 apple-icon 去 alpha
 
     python docs/design/brand/build-ico.py
 """
