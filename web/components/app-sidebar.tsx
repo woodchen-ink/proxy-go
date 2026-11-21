@@ -1,6 +1,6 @@
 "use client"
 
-import { BrandGlyph } from "@/components/brand-icon"
+import { BrandGlyph, BrandLogo } from "@/components/brand-icon"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
@@ -88,7 +88,8 @@ export function AppSidebar() {
               <Link href="/dashboard" onClick={() => setOpenMobile(false)}>
                 {/* 包一层: SidebarMenuButton 会把直接子级 svg 强制成 size-4 */}
                 <span className="flex size-10 shrink-0 items-center justify-center group-data-[collapsible=icon]:size-8">
-                  <BrandGlyph className="size-full p-1" />
+                  <BrandLogo className="size-full group-data-[collapsible=icon]:hidden" />
+                  <BrandGlyph className="hidden size-full p-1 group-data-[collapsible=icon]:block" />
                 </span>
                 <span className="truncate font-semibold tracking-tight">Proxy Go 中控</span>
               </Link>
