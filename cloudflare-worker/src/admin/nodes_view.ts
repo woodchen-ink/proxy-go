@@ -14,6 +14,7 @@ import type { NodeStatus } from '../hub/hub';
 import type { NodeSeriesPoint, NodeSnapshot } from '../hub/protocol';
 import { TZ_NAME, formatLocalDate, localDayNumber, localMidnightSec } from '../lib/time';
 import { SPEED_COLUMNS, loadNodeHours, type NodeHourRow } from '../node_timeseries';
+import { warmingNodes } from './stats';
 
 type LiveMap = Record<string, NodeSnapshot & { received_at: number }>;
 
@@ -185,6 +186,7 @@ export async function buildNodesOverview(env: Env, live: LiveMap, nodes: NodeSta
 		generated_at: nowSec,
 		timezone: TZ_NAME,
 		speed_labels: SPEED_LABELS,
+		warming: warmingNodes(live, nodes),
 		nodes: rows,
 		cluster: {
 			bandwidth_bps: clusterBps,

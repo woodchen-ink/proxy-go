@@ -53,6 +53,11 @@ export async function loadSources(env: Env, live: LiveMap, nodes: NodeStatus[]):
 	return { live, pathRows, statusRows, latencyRows, nodes, allNodeIds: [...ids].sort() };
 }
 
+// warmingNodes 连接在线但中控内存里还没有快照的节点: DO 休眠唤醒 / 重启后内存清空, 各节点下一次快照 (≤15s) 前处于此状态
+export function warmingNodes(live: LiveMap, nodes: NodeStatus[]): string[] {
+	return nodes.filter((n) => n.online && !(n.node_id in live)).map((n) => n.node_id);
+}
+
 export function clusterInfo(src: ClusterSources) {
 	return {
 		node_id: '',
@@ -61,6 +66,7 @@ export function clusterInfo(src: ClusterSources) {
 		live_nodes: Object.keys(src.live).sort(),
 		aggregated: src.allNodeIds.length > 1,
 		degraded: false,
+		warming: warmingNodes(src.live, src.nodes),
 		fetched_at: Math.floor(Date.now() / 1000),
 	};
 }

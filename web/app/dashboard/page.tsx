@@ -57,11 +57,25 @@ export interface ClusterInfo {
   hub?: boolean
   aggregated: boolean
   degraded: boolean
+  warming?: string[] // 在线但中控还没收到快照的节点 (中控休眠唤醒后 ≤15s)
 }
 
 // 节点快照 15s 推一次, 轮询再快也拿不到更新的数据
 const METRICS_POLL_MS = 10_000
 const OVERVIEW_POLL_MS = 15_000
+// 中控休眠唤醒后内存快照清空, 各节点下一次快照前响应里实时部分是空的;
+// 期间沿用上一份数据, 连续最多跳过这么多次 (防止某节点一直不发快照时页面永远不更新)
+const MAX_WARMING_SKIPS = 3
+
+// keepPrevious 响应里有快照未到齐的节点时沿用上一份数据, 连续超过 MAX_WARMING_SKIPS 次后照常更新
+function keepPrevious(warming: string[] | undefined, skips: { current: number }) {
+  if (warming?.length && skips.current < MAX_WARMING_SKIPS) {
+    skips.current++
+    return true
+  }
+  skips.current = 0
+  return false
+}
 
 export default function DashboardPage() {
   const [metrics, setMetrics] = useState<Metrics | null>(null)
@@ -73,13 +87,17 @@ export default function DashboardPage() {
   const [recentNode, setRecentNode] = useState("")
   const { toast } = useToast()
   const lastToastRef = useRef(0)
+  const metricsSkips = useRef(0)
+  const overviewSkips = useRef(0)
 
   const loadMetrics = useCallback(async () => {
     try {
       const qs = recentNode ? `?node=${encodeURIComponent(recentNode)}` : ""
       const res = await fetchApi(`/admin/api/metrics${qs}`)
       if (!res.ok) throw new Error("加载监控数据失败")
-      setMetrics(await res.json())
+      const next: Metrics = await res.json()
+      if (keepPrevious(next.cluster?.warming, metricsSkips)) setMetrics((prev) => prev ?? next)
+      else setMetrics(next)
       setError(null)
       return true
     } catch (e) {
@@ -97,7 +115,9 @@ export default function DashboardPage() {
     try {
       const res = await fetchApi("/admin/api/nodes/overview")
       if (!res.ok) throw new Error("加载节点数据失败")
-      setOverview(await res.json())
+      const next: NodesOverview = await res.json()
+      if (keepPrevious(next.warming, overviewSkips)) setOverview((prev) => prev ?? next)
+      else setOverview(next)
       setOverviewError(null)
       return true
     } catch (e) {

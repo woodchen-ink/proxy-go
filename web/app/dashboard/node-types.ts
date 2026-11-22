@@ -43,6 +43,7 @@ export interface NodeOverviewRow {
 export interface NodesOverview {
   generated_at: number
   speed_labels: string[]
+  warming?: string[] // 在线但中控还没收到快照的节点 (中控休眠唤醒后 ≤15s)
   nodes: NodeOverviewRow[]
   cluster: {
     bandwidth_bps: number
