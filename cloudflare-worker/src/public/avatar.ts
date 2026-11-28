@@ -74,9 +74,10 @@ function relay(upstream: Response, source: string, head: boolean, ttl?: number):
 	return new Response(head ? null : upstream.body, { status: upstream.status, headers });
 }
 
-// findQQ 查表结果 (含未命中) 缓存在本机房, 同一哈希 7 天内不再读 R2
+// findQQ 查表结果 (含未命中) 缓存在本机房, 同一哈希 7 天内不再读 R2; 查表出错不缓存
+// 键带版本号: 表或缓存语义变了就换版本, 让旧结果整体失效 (v1 曾把"表未上传"当未命中缓存)
 async function findQQ(bucket: R2Bucket, ctx: ExecutionContext, origin: string, algo: Algo, hash: string): Promise<number | null> {
-	const key = new Request(`${origin}/__avatar_lookup/${algo}/${hash}`);
+	const key = new Request(`${origin}/__avatar_lookup/v2/${algo}/${hash}`);
 	const cache = caches.default;
 	const hit = await cache.match(key);
 	if (hit) {
@@ -92,13 +93,14 @@ async function lookupTable(bucket: R2Bucket, algo: Algo, hash: string): Promise<
 	const target = hexBytes(hash);
 	const file = `${algo}/${hash.slice(0, 2)}.bin`;
 	const group = (target[1] << 8) | target[2];
+	// 表文件缺失或读不全时抛错而不是当作未命中: 未命中会缓存 7 天, 表补传后仍查不到
 	const head = await readRange(bucket, file, group * 4, 8);
-	if (!head) return null; // 表未上传
+	if (!head) throw new Error(`table missing or short: ${file}`);
 	const start = head.getUint32(0, true);
 	const end = head.getUint32(4, true);
 	if (end <= start) return null;
 	const ids = await readRange(bucket, file, (HEADER_ENTRIES + start) * 4, (end - start) * 4);
-	if (!ids) return null;
+	if (!ids) throw new Error(`table missing or short: ${file}`);
 
 	const enc = new TextEncoder();
 	const digestName = algo === 'md5' ? 'MD5' : 'SHA-256';
