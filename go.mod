@@ -6,7 +6,7 @@ toolchain go1.25.12
 
 require (
 	github.com/joho/godotenv v1.5.1
-	github.com/woodchen-ink/go-web-utils v1.7.0
+	github.com/woodchen-ink/go-web-utils v1.10.1
 	golang.org/x/net v0.56.0
 )
 
