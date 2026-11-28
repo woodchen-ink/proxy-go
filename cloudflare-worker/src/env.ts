@@ -16,6 +16,8 @@ export interface Env {
 	DB: D1Database;
 	HUB: DurableObjectNamespace;
 	ASSETS: Fetcher;
+	// QQ 邮箱哈希 → QQ 号对照表 (cmd/qqavatar 生成上传); 未绑定时 /avatar 只反代 Gravatar
+	QQ_AVATAR?: R2Bucket;
 	API_TOKEN?: string;
 	CACHE_CLEAR_REMOTE_TOKEN?: string;
 	OAUTH_CLIENT_ID?: string;

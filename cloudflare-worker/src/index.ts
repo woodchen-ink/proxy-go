@@ -6,6 +6,7 @@
  *   /node/releases           CI 登记新版本 (Bearer RELEASE_TOKEN)
  *   /node/release/<v>/<arch> 节点下载新程序 (Bearer API_TOKEN, 代理 GitHub Release)
  *   /api/cache/clear-url     公开清缓存 (Bearer CACHE_CLEAR_REMOTE_TOKEN)
+ *   /avatar/<hash>           公开 Gravatar 兼容头像, QQ 邮箱回落 QQ 头像 (R2 对照表)
  *   /admin/api/*             管理 API (OAuth 会话 cookie)
  *   /admin/*                 管理前端静态资源 (Next.js 静态导出, basePath=/admin)
  *   其余带 Bearer API_TOKEN  节点 REST 旧协议 (D1 读写 / 心跳), 见 legacy.ts
@@ -16,6 +17,7 @@ import { handleLegacy } from './legacy';
 import { bearerMatches, json } from './lib/http';
 import { handleCacheClearURL } from './public/cache_clear';
 import { handleNodeRelease } from './public/release';
+import { handleAvatar } from './public/avatar';
 
 export { Hub } from './hub/hub';
 
@@ -40,6 +42,7 @@ export default {
 		}
 
 		if (path === '/api/cache/clear-url') return handleCacheClearURL(request, env, ctx);
+		if (path.startsWith('/avatar/')) return handleAvatar(request, env, ctx, url);
 
 		// 旧协议的通用 SQL 执行器挂在 /admin/sql/*, 必须先于管理前端的 /admin/* 分发
 		if (path.startsWith('/admin/sql/')) {
